@@ -1,0 +1,132 @@
+//
+//  ModDownloader.swift
+//  PCL-Mac
+//
+//  Independent Mod downloader using Modrinth API
+//
+
+import Foundation
+
+public struct ModrinthMod: Identifiable, Codable {
+    public let id: String
+    public let slug: String
+    public let title: String
+    public let description: String?
+    public let icon_url: String?
+    public let downloads: Int
+    public let versions: [String]
+    
+    public var identifier: String { id }
+}
+
+public struct ModrinthVersion: Codable {
+    public let id: String
+    public let name: String
+    public let version_number: String
+    public let game_versions: [String]
+    public let loaders: [String]
+    public let files: [ModrinthFile]
+    
+    public struct ModrinthFile: Codable {
+        public let url: String
+        public let filename: String
+        public let primary: Bool
+        public let size: Int
+    }
+}
+
+public enum ModLoader: String, CaseIterable {
+    case fabric, forge, quilt, neoforge
+}
+
+public class ModDownloader {
+    private let baseURL = "https://api.modrinth.com/v2"
+    private let userAgent = "PCL-Mac/1.0 (ModDownloader)"
+    
+    private func request(_ path: String) -> URLRequest {
+        let url = URL(string: baseURL + path)!
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        return req
+    }
+    
+    /// 搜索模组
+    public func searchMods(query: String, limit: Int = 20, loader: ModLoader? = nil, gameVersion: String? = nil) async throws -> [ModrinthMod] {
+        var components = URLComponents(string: baseURL + "/search")!
+        var queryItems = [URLQueryItem(name: "query", value: query),
+                          URLQueryItem(name: "limit", value: "\(limit)")]
+        if let loader = loader {
+            queryItems.append(URLQueryItem(name: "facets", value: "[[\"project_type:mod\"],[\"categories:\(loader.rawValue)\"]]"))
+        }
+        if let gameVersion = gameVersion {
+            queryItems.append(URLQueryItem(name: "facets", value: "[[\"versions:\(gameVersion)\"]]"))
+        }
+        components.queryItems = queryItems
+        let req = URLRequest(url: components.url!)
+        let (data, _) = try await URLSession.shared.data(for: req)
+        let result = try JSONDecoder().decode(SearchResult.self, from: data)
+        return result.hits
+    }
+    
+    /// 获取模组的所有版本
+    public func getVersions(modId: String, loaders: [ModLoader]? = nil, gameVersions: [String]? = nil) async throws -> [ModrinthVersion] {
+        var components = URLComponents(string: baseURL + "/project/\(modId)/version")!
+        var queryItems: [URLQueryItem] = []
+        if let loaders = loaders {
+            let loaderStr = loaders.map { $0.rawValue }.joined(separator: ",")
+            queryItems.append(URLQueryItem(name: "loaders", value: "[\"\(loaderStr)\"]"))
+        }
+        if let gameVersions = gameVersions {
+            let versionsStr = gameVersions.map { "\"\($0)\"" }.joined(separator: ",")
+            queryItems.append(URLQueryItem(name: "game_versions", value: "[\(versionsStr)]"))
+        }
+        components.queryItems = queryItems.isEmpty ? nil : queryItems
+        let req = URLRequest(url: components.url!)
+        let (data, _) = try await URLSession.shared.data(for: req)
+        return try JSONDecoder().decode([ModrinthVersion].self, from: data)
+    }
+    
+    /// 下载指定版本的文件到本地
+    @discardableResult
+    public func downloadMod(version: ModrinthVersion, destination: URL, progressHandler: ((Double) -> Void)? = nil) async throws -> URL {
+        guard let primaryFile = version.files.first(where: { $0.primary }) ?? version.files.first else {
+            throw ModError.noDownloadableFile
+        }
+        let fileURL = URL(string: primaryFile.url)!
+        let destURL = destination.appendingPathComponent(primaryFile.filename)
+        
+        let (tempURL, _) = try await URLSession.shared.download(from: fileURL)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        if FileManager.default.fileExists(atPath: destURL.path) {
+            try FileManager.default.removeItem(at: destURL)
+        }
+        try FileManager.default.moveItem(at: tempURL, to: destURL)
+        return destURL
+    }
+    
+    /// 便捷方法：根据 mod ID 和游戏版本、加载器下载最新兼容版本
+    public func downloadLatestMod(modId: String, gameVersion: String, loader: ModLoader, destination: URL) async throws -> URL {
+        let versions = try await getVersions(modId: modId, loaders: [loader], gameVersions: [gameVersion])
+        guard let latest = versions.first else {
+            throw ModError.noCompatibleVersion
+        }
+        return try await downloadMod(version: latest, destination: destination)
+    }
+    
+    private struct SearchResult: Codable {
+        let hits: [ModrinthMod]
+    }
+    
+    public enum ModError: Error, LocalizedError {
+        case noDownloadableFile
+        case noCompatibleVersion
+        
+        public var errorDescription: String? {
+            switch self {
+            case .noDownloadableFile: return "模组版本没有可下载的文件"
+            case .noCompatibleVersion: return "未找到兼容的模组版本"
+            }
+        }
+    }
+}

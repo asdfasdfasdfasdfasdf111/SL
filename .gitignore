@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+
+# Xcode 用户数据 & 增量构建产物
+xcuserdata/
+xcuserdatad/
+*.xcuserstate
+build/
+*.o
+
+# 应用打包产物
+*.app
+*.dmg
+tmp_dmg_build/
+qwq 2026-05-30 15-51-29 2/
+qwq 2026-05-30 15-51-29.zip
+*.zip
+
+# 备份目录
+.backups/
+
+# 辅助参考/静态资源目录
+apple-reference/
+
+# 仅忽略「根目录」下散落的截图与图片（不递归，保留 qwq/ 内的资源图片）
+/*.png
+/*.jpg
+/*.jpeg
+
+# 旧的临时/杂项文件
+未命名文件夹/
+index.html
+mpegts.min.js
+screencast_server.py
+sl-apple.html

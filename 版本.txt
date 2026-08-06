@@ -1,0 +1,321 @@
+//
+//  MinecraftInstaller.swift
+//  PCL-Mac
+//
+//  Refactored - API unchanged, performance improved.
+//
+
+import Foundation
+import Zip
+
+public class MinecraftInstaller {
+    private init() {}
+    
+    // 并发控制队列
+    private static let downloadQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 8
+        queue.qualityOfService = .userInitiated
+        return queue
+    }()
+    
+    // MARK: - 内部下载函数（支持重试）
+    private static func downloadFile(
+        from url: URL,
+        to destination: URL,
+        retries: Int = 3
+    ) async throws {
+        var lastError: Error?
+        for attempt in 1...retries {
+            do {
+                let (tempURL, response) = try await URLSession.shared.download(from: url)
+                guard let httpResponse = response as? HTTPURLResponse,
+                      httpResponse.statusCode == 200 else {
+                    throw URLError(.badServerResponse)
+                }
+                try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(),
+                                                        withIntermediateDirectories: true)
+                if FileManager.default.fileExists(atPath: destination.path) {
+                    try FileManager.default.removeItem(at: destination)
+                }
+                try FileManager.default.moveItem(at: tempURL, to: destination)
+                return
+            } catch {
+                lastError = error
+                debug("下载失败 (尝试 \(attempt)/\(retries)): \(url.absoluteString), 错误: \(error)")
+                if attempt < retries {
+                    try await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(attempt)) * 1_000_000_000))
+                }
+            }
+        }
+        throw lastError ?? URLError(.unknown)
+    }
+    
+    private static func downloadJSON(
+        from url: URL,
+        to destination: URL,
+        retries: Int = 3
+    ) async throws -> [String: Any] {
+        let data = try await downloadData(from: url, retries: retries)
+        try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        let formatted = JsonUtils.formatJSON(String(data: data, encoding: .utf8)!) ?? "{}"
+        try formatted.write(to: destination, atomically: true, encoding: .utf8)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw URLError(.cannotParseResponse)
+        }
+        return json
+    }
+    
+    private static func downloadData(from url: URL, retries: Int = 3) async throws -> Data {
+        var lastError: Error?
+        for attempt in 1...retries {
+            do {
+                let (data, response) = try await URLSession.shared.data(from: url)
+                guard let httpResponse = response as? HTTPURLResponse,
+                      httpResponse.statusCode == 200 else {
+                    throw URLError(.badServerResponse)
+                }
+                return data
+            } catch {
+                lastError = error
+                debug("下载JSON失败 (尝试 \(attempt)/\(retries)): \(url.absoluteString)")
+                if attempt < retries {
+                    try await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(attempt)) * 1_000_000_000))
+                }
+            }
+        }
+        throw lastError ?? URLError(.unknown)
+    }
+    
+    // MARK: - 公开 API（完全保留原签名，内部使用 async/await 封装）
+    public static func downloadClientJar(_ task: InstallTask, _ callback: @escaping () -> Void) {
+        Task {
+            await task.updateStage(.clientJar)
+            let clientJarUrl = task.versionUrl.appendingPathComponent(task.minecraftVersion.getDisplayName() + ".jar")
+            if FileManager.default.fileExists(atPath: clientJarUrl.path) {
+                await task.decrement()
+                await MainActor.run { callback() }
+                return
+            }
+            let url = URL(string: "https://bmclapi2.bangbang93.com/version/\(task.minecraftVersion.getDisplayName())/client")!
+            do {
+                try await downloadFile(from: url, to: clientJarUrl)
+                await task.decrement()
+                await MainActor.run { callback() }
+            } catch {
+                err("下载 client.jar 失败: \(error)")
+                await task.fail(error: error)
+            }
+        }
+    }
+    
+    public static func downloadClientManifest(_ task: InstallTask, _ callback: @escaping () -> Void) {
+        Task {
+            let version = task.minecraftVersion.getDisplayName()
+            let clientJsonUrl = task.versionUrl.appendingPathComponent("\(version).json")
+            if FileManager.default.fileExists(atPath: clientJsonUrl.path),
+               let data = try? Data(contentsOf: clientJsonUrl),
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                let jsonString = String(data: data, encoding: .utf8)!
+                await task.setManifest(ClientManifest.decode(jsonString.data(using: .utf8)!))
+                await task.decrement()
+                await MainActor.run { callback() }
+                return
+            }
+            let url = URL(string: "https://bmclapi2.bangbang93.com/version/\(version)/json")!
+            do {
+                let json = try await downloadJSON(from: url, to: clientJsonUrl)
+                let jsonString = try String(contentsOf: clientJsonUrl, encoding: .utf8)
+                await task.setManifest(ClientManifest.decode(jsonString.data(using: .utf8)!))
+                await task.decrement()
+                await MainActor.run { callback() }
+            } catch {
+                err("下载 manifest 失败: \(error)")
+                await task.fail(error: error)
+            }
+        }
+    }
+    
+    public static func downloadHashResourceFiles(_ task: InstallTask, _ saveUrl: URL? = nil, _ callback: @escaping () -> Void) {
+        Task {
+            await task.updateStage(.clientResources)
+            guard let manifest = await task.manifest else {
+                callback()
+                return
+            }
+            let assetIndex = manifest.assetIndex.id
+            let dotMinecraft = task.versionUrl.deletingLastPathComponent().deletingLastPathComponent()
+            let saveUrl = saveUrl ?? dotMinecraft.appendingPathComponent("assets")
+            let indexUrl = saveUrl.appendingPathComponent("indexes").appendingPathComponent("\(assetIndex).json")
+            
+            let indexData: Data
+            if FileManager.default.fileExists(atPath: indexUrl.path) {
+                indexData = try Data(contentsOf: indexUrl)
+            } else {
+                let downloadUrl = URL(string: manifest.assetIndex.url)!
+                indexData = try await downloadData(from: downloadUrl)
+                try indexData.write(to: indexUrl)
+            }
+            guard let index = try JSONSerialization.jsonObject(with: indexData) as? [String: [String: [String: Any]]],
+                  let objects = index["objects"] else {
+                callback()
+                return
+            }
+            let total = objects.count
+            await task.setTotalFiles(total + 2 + manifest.getNeededLibraries().count + manifest.getNeededNatives().count)
+            await task.setRemainingFiles(total)
+            
+            await withThrowingTaskGroup(of: Void.self) { group in
+                for (_, obj) in objects {
+                    guard let hash = obj["hash"] as? String else { continue }
+                    let objectPath = saveUrl.appendingPathComponent("objects").appendingPathComponent(String(hash.prefix(2))).appendingPathComponent(hash)
+                    if FileManager.default.fileExists(atPath: objectPath.path) {
+                        await task.decrement()
+                        continue
+                    }
+                    let downloadUrl = URL(string: "https://resources.download.minecraft.net")!
+                        .appendingPathComponent(String(hash.prefix(2)))
+                        .appendingPathComponent(hash)
+                    group.addTask {
+                        try await downloadFile(from: downloadUrl, to: objectPath)
+                        await task.decrement()
+                    }
+                    if group.taskCount >= 8 {
+                        try await group.next()
+                    }
+                }
+                try await group.waitForAll()
+            }
+            await MainActor.run { callback() }
+        }
+    }
+    
+    public static func downloadLibraries(_ task: InstallTask, _ saveUrl: URL? = nil, _ callback: @escaping () -> Void) {
+        Task {
+            await task.updateStage(.cliendLibraries)
+            guard let manifest = await task.manifest else {
+                callback()
+                return
+            }
+            let libraries = manifest.getNeededLibraries()
+            let dotMinecraft = task.versionUrl.deletingLastPathComponent().deletingLastPathComponent()
+            let librariesDir = saveUrl ?? dotMinecraft.appendingPathComponent("libraries")
+            try FileManager.default.createDirectory(at: librariesDir, withIntermediateDirectories: true)
+            
+            await withThrowingTaskGroup(of: Void.self) { group in
+                for library in libraries {
+                    guard let artifact = library.getArtifact() else {
+                        await task.decrement()
+                        continue
+                    }
+                    let target = librariesDir.appendingPathComponent(artifact.path)
+                    if FileManager.default.fileExists(atPath: target.path) {
+                        await task.decrement()
+                        continue
+                    }
+                    let downloadUrl = URL(string: artifact.url)!
+                    group.addTask {
+                        try await downloadFile(from: downloadUrl, to: target)
+                        await task.decrement()
+                    }
+                    if group.taskCount >= 8 {
+                        try await group.next()
+                    }
+                }
+                try await group.waitForAll()
+            }
+            await MainActor.run { callback() }
+        }
+    }
+    
+    public static func downloadNatives(_ task: InstallTask, _ callback: @escaping () -> Void) {
+        Task {
+            await task.updateStage(.natives)
+            guard let manifest = await task.manifest else {
+                callback()
+                return
+            }
+            let libraries = manifest.libraries
+            let dotMinecraft = task.versionUrl.deletingLastPathComponent().deletingLastPathComponent()
+            let librariesDir = dotMinecraft.appendingPathComponent("libraries")
+            let nativesDir = task.versionUrl.appendingPathComponent("natives")
+            try FileManager.default.createDirectory(at: nativesDir, withIntermediateDirectories: true)
+            
+            await withThrowingTaskGroup(of: Void.self) { group in
+                for library in libraries {
+                    guard let native = library.getNativesArtifact() else { continue }
+                    let target = librariesDir.appendingPathComponent(native.path)
+                    if FileManager.default.fileExists(atPath: target.path) {
+                        await task.decrement()
+                        continue
+                    }
+                    var downloadUrl = URL(string: native.url)!
+                    // 替换 LWJGL 链接
+                    if library.name.hasPrefix("org.lwjgl:") {
+                        let components = library.name.split(separator: ":")
+                        guard components.count >= 2 else { continue }
+                        let artifactId = String(components[1])
+                        let arch = ExecArchitectury.SystemArch
+                        let base = "https://libraries.minecraft.net/org/lwjgl/\(artifactId)/3.3.3/"
+                        let fileName: String
+                        if arch == .arm64 {
+                            fileName = "\(artifactId)-3.3.3-natives-macos-arm64.jar"
+                        } else {
+                            fileName = "\(artifactId)-3.3.3-natives-macos-patch.jar"
+                        }
+                        downloadUrl = URL(string: base + fileName)!
+                    }
+                    group.addTask {
+                        try await downloadFile(from: downloadUrl, to: target)
+                        // 解压
+                        try Zip.unzipFile(target, destination: nativesDir, overwrite: true, password: nil)
+                        // 清理非 dylib
+                        let contents = try FileManager.default.contentsOfDirectory(at: nativesDir, includingPropertiesForKeys: nil)
+                        for file in contents {
+                            if file.pathExtension != "dylib" {
+                                try FileManager.default.removeItem(at: file)
+                            }
+                        }
+                        await task.decrement()
+                    }
+                    if group.taskCount >= 4 { // 原生库解压较消耗资源，限制并发数
+                        try await group.next()
+                    }
+                }
+                try await group.waitForAll()
+            }
+            await MainActor.run { callback() }
+        }
+    }
+    
+    public static func copyLog4j2(_ task: InstallTask) {
+        let targetUrl = task.versionUrl.appendingPathComponent("log4j2.xml")
+        guard !FileManager.default.fileExists(atPath: targetUrl.path) else { return }
+        let version = task.minecraftVersion as? ReleaseMinecraftVersion ?? ReleaseMinecraftVersion.fromString("1.16.5")!
+        let sourceName = version >= ReleaseMinecraftVersion.fromString("1.12.2")! ? "log4j2.xml" : "log4j2-1.12-.xml"
+        let source = Constants.ApplicationResourcesUrl.appendingPathComponent(sourceName)
+        do {
+            try FileManager.default.copyItem(at: source, to: targetUrl)
+        } catch {
+            err("无法拷贝 log4j2.xml: \(error)")
+        }
+    }
+    
+    public static func createTask(_ versionUrl: URL, _ minecraftVersion: String, _ completeCallback: (() -> Void)? = nil) -> InstallTask {
+        let task = InstallTask(versionUrl: versionUrl, minecraftVersion: minecraftVersion) { task in
+            downloadClientManifest(task) {
+                downloadHashResourceFiles(task) {
+                    downloadLibraries(task) {
+                        downloadNatives(task) {
+                            copyLog4j2(task)
+                            task.complete()
+                            completeCallback?()
+                        }
+                    }
+                }
+            }
+        }
+        return task
+    }
+}

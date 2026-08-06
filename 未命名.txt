@@ -1,0 +1,336 @@
+// 完整的 MCIM API 集成组件 - 真实调用版本
+// 文件名: MCIMRealAPI.swift
+// 创建日期: 2026-05-28
+
+import Foundation
+
+// MARK: - 1. 定义 API 的返回模型
+
+/// Modrinth 项目信息模型（镜像 API）
+struct ModrinthProject: Decodable {
+    let id: String
+    let slug: String
+    let title: String
+    let description: String
+    let projectType: String    // 项目类型："mod", "resourcepack", "shader" 等
+    let versions: [String]     // 该项目的所有版本 ID
+}
+
+/// Modrinth 翻译响应模型（翻译服务）
+struct ModrinthTranslation: Decodable {
+    let project_id: String
+    let title: String?          // 翻译后的标题
+    let description: String?    // 翻译后的描述
+    let status: String          // "cached" 表示已缓存，"uncached" 表示未找到
+}
+
+/// Modrinth 版本详情模型（官方 API，用于获取文件信息）
+struct ModrinthVersion: Decodable {
+    let id: String
+    let project_id: String
+    let files: [ModrinthFile]
+}
+
+/// Modrinth 文件模型
+struct ModrinthFile: Decodable {
+    let url: URL                // 原始文件下载地址（来自 Modrinth CDN）
+    let filename: String
+    let primary: Bool           // 是否为主要文件
+}
+
+// MARK: - 2. 定义错误类型
+
+enum MCIMAPIError: Error, LocalizedError {
+    case invalidURL
+    case requestFailed(statusCode: Int)
+    case noData
+    case decodingFailed(Error)
+    case translationNotFound   // 翻译不存在
+    case noVersionFound        // 未找到版本
+    case noFileFound           // 未找到文件
+    
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL:
+            return "无效的 URL"
+        case .requestFailed(let statusCode):
+            return "请求失败，状态码：\(statusCode)"
+        case .noData:
+            return "未收到数据"
+        case .decodingFailed(let error):
+            return "数据解析失败：\(error.localizedDescription)"
+        case .translationNotFound:
+            return "未找到该项目的翻译"
+        case .noVersionFound:
+            return "该项目没有可用版本"
+        case .noFileFound:
+            return "版本中没有可下载的文件"
+        }
+    }
+}
+
+// MARK: - 3. 核心服务类
+
+/// MCIM API 核心服务
+class MCIMService {
+    static let shared = MCIMService()
+    
+    // API 端点地址
+    private let mcinBaseURL = "https://mod.mcimirror.top"
+    private let officialBaseURL = "https://api.modrinth.com/v2"
+    
+    // URL 会话配置
+    private let session: URLSession
+    
+    private init() {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30
+        self.session = URLSession(configuration: config)
+    }
+    
+    // MARK: - 通用网络请求方法
+    
+    /// 执行网络请求并解码为指定类型
+    private func request<T: Decodable>(
+        urlString: String,
+        method: String = "GET"
+    ) async throws -> T {
+        guard let url = URL(string: urlString) else {
+            throw MCIMAPIError.invalidURL
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        // 设置 User-Agent 是必须的！
+        request.setValue("MCIMSwiftDemo/1.0 (contact@example.com)", forHTTPHeaderField: "User-Agent")
+        
+        print("🌐 请求: \(urlString)")
+        
+        let (data, response) = try await session.data(for: request)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw MCIMAPIError.noData
+        }
+        
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw MCIMAPIError.requestFailed(statusCode: httpResponse.statusCode)
+        }
+        
+        do {
+            let decoder = JSONDecoder()
+            return try decoder.decode(T.self, from: data)
+        } catch {
+            throw MCIMAPIError.decodingFailed(error)
+        }
+    }
+    
+    // MARK: - 镜像 API：获取 Modrinth 项目信息
+    
+    /// 获取 Modrinth 项目信息（ID 或 slug 均可）
+    func fetchProject(slugOrId: String) async throws -> ModrinthProject {
+        let url = "\(mcinBaseURL)/modrinth/v2/project/\(slugOrId)"
+        return try await request(urlString: url)
+    }
+    
+    // MARK: - 翻译 API：获取项目描述的中文翻译
+    
+    /// 获取 Modrinth 项目的翻译
+    /// - Parameter projectId: 项目 ID（例如 "AANobbMI"）
+    /// - Returns: 翻译内容
+    /// - Throws: translationNotFound 当翻译不存在时
+    func fetchTranslation(projectId: String) async throws -> ModrinthTranslation {
+        let url = "\(mcinBaseURL)/translate/modrinth?project_id=\(projectId)"
+        let translation: ModrinthTranslation = try await request(urlString: url)
+        
+        // 检查翻译是否存在
+        if translation.status != "cached" {
+            throw MCIMAPIError.translationNotFound
+        }
+        
+        return translation
+    }
+    
+    // MARK: - 官方 API：获取版本详情（内含下载链接）
+    
+    /// 获取 Modrinth 版本的详细信息
+    func fetchVersionDetails(versionId: String) async throws -> ModrinthVersion {
+        let url = "\(officialBaseURL)/version/\(versionId)"
+        return try await request(urlString: url)
+    }
+    
+    /// 获取项目最新版本的下载地址（使用官方 API）
+    func getLatestDownloadURL(projectId: String) async throws -> (url: URL, filename: String) {
+        // 1. 先获取项目信息，拿到版本列表
+        let project = try await fetchProject(slugOrId: projectId)
+        
+        guard let latestVersionId = project.versions.first else {
+            throw MCIMAPIError.noVersionFound
+        }
+        
+        // 2. 获取版本详情，找到 primary 文件
+        let version = try await fetchVersionDetails(versionId: latestVersionId)
+        
+        guard let primaryFile = version.files.first(where: { $0.primary }) ?? version.files.first else {
+            throw MCIMAPIError.noFileFound
+        }
+        
+        return (primaryFile.url, primaryFile.filename)
+    }
+    
+    // MARK: - 文件 CDN：通过镜像加速下载（可选）
+    
+    /// 通过 MCIM 文件 CDN 获取下载重定向地址
+    /// 注意：此 API 返回的响应可能是一个重定向（302），你需要使用 URLSession 的 .followRedirects 策略自动跟随
+    func getCDNDownloadURL(projectId: String, versionId: String, fileName: String) -> URL? {
+        let urlString = "\(mcinBaseURL)/data/\(projectId)/versions/\(versionId)/\(fileName)"
+        return URL(string: urlString)
+    }
+    
+    // MARK: - 一站式获取：项目信息 + 翻译 + 下载链接
+    
+    /// 获取项目的完整信息（原始数据 + 翻译 + 下载地址）
+    func fetchCompleteProjectInfo(slugOrId: String) async throws -> (
+        project: ModrinthProject,
+        translation: ModrinthTranslation?,
+        downloadURL: URL,
+        filename: String
+    ) {
+        // 并行获取：项目信息、翻译、下载地址
+        async let projectTask = fetchProject(slugOrId: slugOrId)
+        async let translationTask = try? fetchTranslation(projectId: slugOrId)
+        async let downloadTask = getLatestDownloadURL(projectId: slugOrId)
+        
+        let project = try await projectTask
+        let translation = await translationTask
+        let (downloadURL, filename) = try await downloadTask
+        
+        return (project, translation, downloadURL, filename)
+    }
+}
+
+// MARK: - 4. SwiftUI 示例视图（概念演示）
+import SwiftUI
+
+/// 示例视图：展示如何调用 MCIMService
+struct ModDetailView: View {
+    let projectSlug: String
+    
+    @State private var project: ModrinthProject?
+    @State private var translation: ModrinthTranslation?
+    @State private var downloadURL: URL?
+    @State private var filename: String?
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+    
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if isLoading {
+                    ProgressView("加载中...")
+                } else if let error = errorMessage {
+                    Text("错误: \(error)")
+                        .foregroundColor(.red)
+                } else if let project = project {
+                    // 标题
+                    Text(translation?.title ?? project.title)
+                        .font(.largeTitle)
+                        .bold()
+                    
+                    // 类型标签
+                    Text("类型: \(project.projectType)")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    
+                    // 描述（优先显示翻译）
+                    Text(translation?.description ?? project.description)
+                        .font(.body)
+                    
+                    // 下载按钮
+                    if let url = downloadURL, let name = filename {
+                        Link(destination: url) {
+                            Label("下载 \(name)", systemImage: "arrow.down.circle")
+                                .padding()
+                                .background(Color.blue)
+                                .foregroundColor(.white)
+                                .cornerRadius(8)
+                        }
+                    }
+                }
+            }
+            .padding()
+        }
+        .navigationTitle("模组详情")
+        .task {
+            await loadData()
+        }
+    }
+    
+    private func loadData() async {
+        isLoading = true
+        defer { isLoading = false }
+        
+        do {
+            let (project, translation, downloadURL, filename) = try await MCIMService.shared.fetchCompleteProjectInfo(slugOrId: projectSlug)
+            
+            self.project = project
+            self.translation = translation
+            self.downloadURL = downloadURL
+            self.filename = filename
+            
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+// MARK: - 5. 使用示例（纯代码）
+/// 命令行测试示例
+func runMCIMDemo() async {
+    let service = MCIMService.shared
+    
+    do {
+        // 示例 1：获取 Sodium 模组信息
+        print("=== 获取 Sodium 模组信息 ===")
+        let project = try await service.fetchProject(slugOrId: "sodium")
+        print("项目 ID: \(project.id)")
+        print("标题: \(project.title)")
+        print("描述: \(project.description)")
+        print("版本列表: \(project.versions.prefix(3))...")
+        
+        // 示例 2：获取翻译（如果存在）
+        print("\n=== 获取翻译 ===")
+        do {
+            let translation = try await service.fetchTranslation(projectId: project.id)
+            print("翻译状态: \(translation.status)")
+            print("翻译标题: \(translation.title ?? "无")")
+            print("翻译描述: \(translation.description ?? "无")")
+        } catch MCIMAPIError.translationNotFound {
+            print("该项目暂无中文翻译")
+        }
+        
+        // 示例 3：获取下载链接
+        print("\n=== 获取下载链接 ===")
+        let (downloadURL, filename) = try await service.getLatestDownloadURL(projectId: "sodium")
+        print("文件名: \(filename)")
+        print("下载地址: \(downloadURL)")
+        
+        // 示例 4：使用 CDN 加速地址
+        if let cdnURL = service.getCDNDownloadURL(projectId: "sodium", 
+                                                    versionId: project.versions.first ?? "", 
+                                                    fileName: filename) {
+            print("\n=== CDN 加速地址 ===")
+            print("CDN 地址: \(cdnURL)")
+            print("提示: 此地址会返回 302 重定向，需要跟随重定向获取实际文件")
+        }
+        
+    } catch {
+        print("发生错误: \(error.localizedDescription)")
+    }
+}
+
+// MARK: - 在主函数中调用的示例
+/*
+ Task {
+     await runMCIMDemo()
+ }
+ */
