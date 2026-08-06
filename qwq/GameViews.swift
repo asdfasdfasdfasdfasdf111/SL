@@ -723,10 +723,13 @@ struct DownloadCategoryView: View {
         let normalized = id.replacingOccurrences(of: "point", with: ".")
         if aprilFoolVersions.contains(normalized.lowercased()) { return true }
         guard type == "snapshot" else { return false }
-        // 不是标准快照格式（如 23w33a）
-        let pattern = #"^[0-9]{2}w[0-9]{2}[a-z]$"#
-        let isStandardSnapshot = normalized.range(of: pattern, options: .regularExpression) != nil
-        if isStandardSnapshot { return false }
+        // 新版 Mojang 命名（2026 起）：快照为「主版本号-snapshot-N」如 26.3-snapshot-7，
+        // 正式版为「主版本号」如 26.2，这些是正式内容，绝不能判为愚人节。
+        let snapshotPattern = #"^[0-9][0-9]?(\.[0-9]+)?-snapshot-[0-9]+$"#
+        if normalized.range(of: snapshotPattern, options: .regularExpression) != nil { return false }
+        // 旧版标准快照格式（如 23w33a、24w14a）：正式快照，非愚人节
+        let oldSnapshotPattern = #"^[0-9]{2}w[0-9]{2}[a-z]$"#
+        if normalized.range(of: oldSnapshotPattern, options: .regularExpression) != nil { return false }
         // 至少有一个字母（筛掉 1.x 与 1.x.x），且不是 -pre/-rc
         if normalized.rangeOfCharacter(from: .letters) == nil { return false }
         if normalized.contains("-pre") || normalized.contains("-rc") { return false }
@@ -1222,11 +1225,12 @@ struct ModDetailView: View {
         }
         .scaleEffect(entryScale)
         .opacity(entryOpacity)
-        // 详情页左侧不缩进，内容左边缘贴紧左侧分类栏（分隔线）边界；
-        // 顶部/底部/右侧保留边距，避免贴住窗口边缘。
+        // 页面框架与背景不动（左侧贴紧分类栏边界）。
+        // 内容距左侧的间距由 detailPageContent 内容层 .padding(.leading) 单独控制，
+        // 保证页面背景从左边缘正常渲染，仅内容文字右移（含返回、标题、下载按钮）。
         .padding(.top, 20)
-        .padding(.trailing, 20)
         .padding(.bottom, 20)
+        .padding(.trailing, 20)
         .overlay(alignment: .bottomTrailing) {
             // 下载按钮：初始在右下角，圆按钮出现后动画左移
             if !selectedVersion.isEmpty {
@@ -1269,10 +1273,13 @@ struct ModDetailView: View {
         let normalized = id.replacingOccurrences(of: "point", with: ".")
         if aprilFoolVersions.contains(normalized.lowercased()) { return true }
         guard type == "snapshot" else { return false }
-        // 不是标准快照格式（如 23w33a）
-        let pattern = #"^[0-9]{2}w[0-9]{2}[a-z]$"#
-        let isStandardSnapshot = normalized.range(of: pattern, options: .regularExpression) != nil
-        if isStandardSnapshot { return false }
+        // 新版 Mojang 命名（2026 起）：快照为「主版本号-snapshot-N」如 26.3-snapshot-7，
+        // 正式版为「主版本号」如 26.2，这些是正式内容，绝不能判为愚人节。
+        let snapshotPattern = #"^[0-9][0-9]?(\.[0-9]+)?-snapshot-[0-9]+$"#
+        if normalized.range(of: snapshotPattern, options: .regularExpression) != nil { return false }
+        // 旧版标准快照格式（如 23w33a）：正式快照，非愚人节
+        let oldSnapshotPattern = #"^[0-9]{2}w[0-9]{2}[a-z]$"#
+        if normalized.range(of: oldSnapshotPattern, options: .regularExpression) != nil { return false }
         // 至少有一个字母（筛掉 1.x 与 1.x.x），且不是 -pre/-rc
         if normalized.rangeOfCharacter(from: .letters) == nil { return false }
         if normalized.contains("-pre") || normalized.contains("-rc") { return false }
@@ -1315,10 +1322,24 @@ struct ModDetailView: View {
         }
     }
 
+    // 加载器支持检测：内存缓存，避免同一版本反复联网请求（PCL 速度来源之一）。
+    // 键 = 游戏版本（如 "26.2"），值 = 该版本支持的加载器显示名列表（已按 loaderOrder 排序）。
+    private static var loaderSupportCache: [String: [String]] = [:]
+
     private static let loaderOrder = ["Fabric", "Forge", "NeoForged", "Quilt"]
 
     private func fetchLoaderSupport(for version: String) {
         guard !version.isEmpty else { return }
+        // 命中本地缓存：直接使用，不联网，秒级返回
+        if let cached = Self.loaderSupportCache[version] {
+            availableLoaders = cached
+            isLoadingLoaders = false
+            if !cached.contains(selectedLoader), let first = cached.first {
+                selectedLoader = first
+            }
+            return
+        }
+        // 未命中缓存：联网并发检测
         isLoadingLoaders = true
         Task {
             let candidates: [(key: String, display: String)] = [
@@ -1342,6 +1363,8 @@ struct ModDetailView: View {
             supported.sort {
                 (Self.loaderOrder.firstIndex(of: $0) ?? 99) < (Self.loaderOrder.firstIndex(of: $1) ?? 99)
             }
+            // 写入内存缓存，同版本下次直接命中
+            Self.loaderSupportCache[version] = supported
             await MainActor.run {
                 availableLoaders = supported
                 isLoadingLoaders = false
@@ -1354,33 +1377,60 @@ struct ModDetailView: View {
 
     private func checkLoaderSupport(key: String, version: String) async -> Bool {
         let encoded = version.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? version
-        let url: URL?
+        var urls: [URL] = []
         switch key {
         case "fabric":
-            url = URL(string: "https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader/\(encoded)")
+            urls = [URL(string: "https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader/\(encoded)")].compactMap { $0 }
         case "forge":
-            url = URL(string: "https://bmclapi2.bangbang93.com/forge/minecraft/\(encoded)")
+            urls = [URL(string: "https://bmclapi2.bangbang93.com/forge/minecraft/\(encoded)")].compactMap { $0 }
         case "neoforge":
-            url = URL(string: "https://bmclapi2.bangbang93.com/neoforge/list/\(encoded)")
+            urls = [URL(string: "https://bmclapi2.bangbang93.com/neoforge/list/\(encoded)")].compactMap { $0 }
         case "quilt":
-            url = URL(string: "https://bmclapi2.bangbang93.com/quilt-meta/v3/versions/loader/\(encoded)")
+            // bmclapi 的 quilt-meta 端点通常未实现（返回 404），优先官方 Quilt Meta API；
+            // 官方失败时再尝试 bmclapi，避免单点故障导致误判「不支持」。
+            urls = [
+                URL(string: "https://meta.quiltmc.org/v3/versions/loader/\(encoded)"),
+                URL(string: "https://bmclapi2.bangbang93.com/quilt-meta/v3/versions/loader/\(encoded)")
+            ].compactMap { $0 }
         default:
-            url = nil
+            urls = []
         }
-        guard let url else { return false }
-        do {
-            var req = URLRequest(url: url)
-            req.httpMethod = "GET"
-            req.setValue("Swim111Launcher/1.0 (Minecraft Launcher)", forHTTPHeaderField: "User-Agent")
-            let (data, resp) = try await AppContext.shared.apiSession.data(for: req)
-            if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                return false
+        guard !urls.isEmpty else { return false }
+        // 加载器 API（bmclapi / quilt meta）在高峰期不稳定，可能偶发超时或 5xx。
+        // 参考 PCL.Mac：不设置过短的超时，并对「可用端点列表」逐个尝试；
+        // 每个端点最多重试 2 次，只要任意一次返回非空数组即视为支持。
+        for url in urls {
+            for attempt in 0..<3 {
+                var req = URLRequest(url: url)
+                req.httpMethod = "GET"
+                req.setValue("Swim111Launcher/1.0 (Minecraft Launcher)", forHTTPHeaderField: "User-Agent")
+                // 独立于 apiSession 的较长超时（30s 请求 / 45s 资源），容忍慢速响应
+                let cfg = URLSessionConfiguration.ephemeral
+                cfg.timeoutIntervalForRequest = 30
+                cfg.timeoutIntervalForResource = 45
+                cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+                let session = URLSession(configuration: cfg)
+                do {
+                    let (data, resp) = try await session.data(for: req)
+                    if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                        if attempt < 2 { try? await Task.sleep(nanoseconds: 600_000_000) }
+                        continue
+                    }
+                    // Fabric/Quilt meta 返回「loader 数组」；Forge 返回版本数组；NeoForge list 返回数组
+                    guard let array = try JSONSerialization.jsonObject(with: data) as? [Any] else {
+                        if attempt < 2 { try? await Task.sleep(nanoseconds: 600_000_000) }
+                        continue
+                    }
+                    return !array.isEmpty
+                } catch {
+                    if attempt < 2 {
+                        try? await Task.sleep(nanoseconds: 600_000_000)
+                        continue
+                    }
+                }
             }
-            guard let array = try JSONSerialization.jsonObject(with: data) as? [Any] else { return false }
-            return !array.isEmpty
-        } catch {
-            return false
         }
+        return false
     }
 
     /// 读取本地游戏根目录 versions 文件夹，返回本地实际安装的有效版本列表。
@@ -1820,6 +1870,7 @@ struct ModDetailView: View {
                                     }
                                 }
                             }
+                            .padding(.horizontal, 10)
                             .padding(.vertical, 10)
                         }
                         .scrollBounceIfAvailable()
@@ -1861,7 +1912,7 @@ struct ModDetailView: View {
                                 VersionLoaderCard(
                                     version: version,
                                     isSelected: selectedVersion == version,
-                                    loader: projectLoaders.first ?? getLoaderForVersion(version)
+                                    loader: assetName(for: projectLoaders.first ?? getLoaderForVersion(version))
                                 ) {
                                     withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
                                         selectedVersion = version
@@ -1869,6 +1920,8 @@ struct ModDetailView: View {
                                 }
                             }
                         }
+                        // 水平方向预留放大动画空间（scaleEffect 1.08 放大时最左/最右卡片不被裁剪）
+                        .padding(.horizontal, 10)
                         .padding(.vertical, 10)
                     }
                 }
@@ -1947,6 +2000,9 @@ struct ModDetailView: View {
                     .padding(.top, 4)
                 }
             }
+            // 内容距左侧 28pt：仅内容（返回、标题、正文）右移，
+            // 页面背景仍从左侧分类栏边界铺满渲染（间距由内容层 padding 提供）。
+            .padding(.leading, 28)
             .padding(.vertical, 8)
         }
         .padding(.bottom, 90)
