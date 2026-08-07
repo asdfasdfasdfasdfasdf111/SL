@@ -14,6 +14,7 @@ public class CacheStorage {
     
     private let rootURL: URL
     private var libraries: [Library]
+    private let lock = NSRecursiveLock()
     
     public init(rootURL: URL) {
         self.rootURL = rootURL
@@ -34,6 +35,8 @@ public class CacheStorage {
     }
     
     public func save() {
+        lock.lock()
+        defer { lock.unlock() }
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
         do {
@@ -51,6 +54,8 @@ public class CacheStorage {
     }
     
     public func copy(name: String, to dest: URL) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
         if FileManager.default.fileExists(atPath: dest.path) {
             return true
         }
@@ -77,6 +82,8 @@ public class CacheStorage {
     }
     
     public func add(name: String, path: URL) {
+        lock.lock()
+        defer { lock.unlock() }
         if libraries.contains(where: { $0.name == name }) {
             return
         }

@@ -462,6 +462,22 @@ class JavaManager {
         return nil
     }
 
+    /// 解析一个可用的 Java 可执行文件：优先用户显式选择的 Java，其次扫描列表中的最佳版本，最后回退系统自带。
+    static func resolveJavaExecutable(minimumMajor: Int = 8) -> URL? {
+        if let selected = LauncherSettings.shared.selectedJavaPath,
+           FileManager.default.isExecutableFile(atPath: selected) {
+            return URL(fileURLWithPath: selected)
+        }
+        let list = JavaManager.shared.scanInstalledJava(useCache: true)
+        if let best = JavaManager.shared.selectBestJava(requiredMajor: minimumMajor, from: list) {
+            return URL(fileURLWithPath: best.path)
+        }
+        if FileManager.default.isExecutableFile(atPath: "/usr/bin/java") {
+            return URL(fileURLWithPath: "/usr/bin/java")
+        }
+        return nil
+    }
+
     // MARK: - Java 下载（参考 PCL.Mac：Azul Zulu API）
 
     func downloadJava(version: Int, progressHandler: @escaping (Double) -> Void, completion: @escaping (Result<URL, Error>) -> Void) {

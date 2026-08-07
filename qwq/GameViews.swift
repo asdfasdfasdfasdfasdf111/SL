@@ -26,8 +26,10 @@ struct DownloadCategoryView: View {
     @State private var contentOpacity: Double = 1
     @State private var contentOffset: CGFloat = 0
     @State private var fetchTask: Task<Void, Never>?
-    @State private var translatingIds: Set<String> = []
     @State private var translateTask: Task<Void, Never>?
+    @State private var translatedSubtitles: [String: String] = [:]
+    @State private var pendingTranslationIDs: Set<String> = []
+    @State private var lastAnchorItemID: String? = nil
     @State private var searchPopInIds: Set<String> = []
     @State private var selectedModItem: DownloadedItem? = nil
     @State private var showDetail = false
@@ -135,7 +137,7 @@ struct DownloadCategoryView: View {
                     filteredResults = filtered
                     searchPopInIds = []
                 }
-                startSequentialTranslation(for: Array(filtered.prefix(200)))
+                startSequentialTranslation(for: filtered)
                 return
             }
             // 目录不可用时：中文先翻译成英文，再调用 API 搜索全库（检索标题与简介）
@@ -270,6 +272,7 @@ struct DownloadCategoryView: View {
             Self.loadCacheFromDisk()
             let idx = computedHighlightIndex
             sectionHighlightY = sidebarOffsets[idx]
+            Self.preloadLocalCatalog()
             fetchItems()
             Self.preTranslateAllCategories()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -455,30 +458,63 @@ struct DownloadCategoryView: View {
     }
 
     private func resultsGrid(cardPadding: CGFloat, columns: Int, cardWidth: CGFloat) -> some View {
-        ScrollView {
-            LazyVGrid(
-                columns: Array(repeating: GridItem(.flexible(), spacing: cardPadding), count: columns),
-                spacing: cardPadding
-            ) {
-                ForEach(filteredResults) { item in
-                    ContentCard(
-                        title: item.name,
-                        subtitle: item.subtitle,
-                        cardWidth: cardWidth,
-                        tags: item.tags,
-                        isTranslating: translatingIds.contains(item.id),
-                        isSearchPopIn: searchPopInIds.contains(item.id),
-                        action: { openDetail(item) }
-                    )
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(), spacing: cardPadding), count: columns),
+                    spacing: cardPadding
+                ) {
+                    ForEach(filteredResults) { item in
+                        ContentCard(
+                            title: item.name,
+                            subtitle: translatedSubtitles[item.id] ?? item.subtitle,
+                            cardWidth: cardWidth,
+                            tags: item.tags,
+                            action: { openDetail(item) }
+                        )
+                        .id(item.id)
+                        .background(
+                            GeometryReader { geo in
+                                Color.clear
+                                    .onAppear {
+                                        trackVisibility(item, geo)
+                                    }
+                            }
+                        )
+                    }
+                }
+                .padding(.horizontal, cardPadding)
+                .padding(.bottom, cardPadding)
+            }
+            .coordinateSpace(name: "listScroll")
+            .onAppear {
+                if let id = lastAnchorItemID {
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(id, anchor: .top)
+                    }
                 }
             }
-            .padding(.horizontal, cardPadding)
-            .padding(.bottom, cardPadding)
         }
     }
 
+    /// 卡片进入可视区域时：更新滚动恢复锚点，并按需发起翻译
+    private func trackVisibility(_ item: DownloadedItem, _ geo: GeometryProxy) {
+        let frame = geo.frame(in: .named("listScroll"))
+        if frame.minY > -60 && frame.minY < 160 {
+            lastAnchorItemID = item.id
+        }
+        requestTranslation(for: item)
+    }
+
     private func openDetail(_ item: DownloadedItem) {
-        if let updated = items.first(where: { $0.id == item.id }) { selectedModItem = updated } else { selectedModItem = item }
+        let display = DownloadedItem(
+            id: item.id,
+            name: item.name,
+            subtitle: translatedSubtitles[item.id] ?? item.subtitle,
+            iconURL: item.iconURL,
+            tags: item.tags
+        )
+        selectedModItem = display
         withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
             showDetail = true
         }
@@ -489,6 +525,8 @@ struct DownloadCategoryView: View {
             showDetail = false
             selectedModItem = nil
         }
+        // 详情页翻译过的条目立即回写列表卡片（缓存已在磁盘）
+        startSequentialTranslation(for: filteredResults)
     }
 
     private func navigateTo(_ idx: Int) {
@@ -542,9 +580,7 @@ struct DownloadCategoryView: View {
                         filteredResults = result
                         searchPopInIds = []
                     }
-                    if targetSection != .game {
-                        startSequentialTranslation(for: Array(result.prefix(200)))
-                    }
+                    startSequentialTranslation(for: result)
                 }
                 return
             }
@@ -571,19 +607,19 @@ struct DownloadCategoryView: View {
             case .game:
                 result = await fetchMinecraftVersions(subCategory: selectedSubCategory)
             case .mod:
-                let r = await fetchRawModrinthItems(type: "mod", label: "模组")
+                let r = await fetchRawModrinthItems(type: "mod", label: "模组", limit: 100)
                 result = r.items; totalHits = r.totalHits
                 if !result.isEmpty { Self.cachedModItems = result; Self.saveCacheToDisk(result, for: .mod) }
             case .resourcePack:
-                let r = await fetchRawModrinthItems(type: "resourcepack", label: "资源包")
+                let r = await fetchRawModrinthItems(type: "resourcepack", label: "资源包", limit: 100)
                 result = r.items; totalHits = r.totalHits
                 if !result.isEmpty { Self.cachedResourcePackItems = result; Self.saveCacheToDisk(result, for: .resourcePack) }
             case .shader:
-                let r = await fetchRawModrinthItems(type: "shader", label: "光影")
+                let r = await fetchRawModrinthItems(type: "shader", label: "光影", limit: 100)
                 result = r.items; totalHits = r.totalHits
                 if !result.isEmpty { Self.cachedShaderItems = result; Self.saveCacheToDisk(result, for: .shader) }
             case .modpack:
-                let r = await fetchRawModrinthItems(type: "modpack", label: "整合包")
+                let r = await fetchRawModrinthItems(type: "modpack", label: "整合包", limit: 100)
                 result = r.items; totalHits = r.totalHits
                 if !result.isEmpty { Self.cachedModpackItems = result; Self.saveCacheToDisk(result, for: .modpack) }
             }
@@ -600,77 +636,55 @@ struct DownloadCategoryView: View {
         }
     }
 
+    /// 批量应用磁盘翻译缓存（全量遍历仅查内存缓存，速度快）；网络翻译由卡片可见性按需触发
     private func startSequentialTranslation(for items: [DownloadedItem]) {
         translateTask?.cancel()
-        let targetIds = items.map { $0.id }
-        let itemMap = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0.subtitle) })
         let service = TranslationService.shared
         translateTask = Task.detached(priority: .background) {
-            // 先批量应用缓存
-            var uncachedIds: [String] = []
-            for id in targetIds {
+            var batch: [String: String] = [:]
+            for item in items {
                 if Task.isCancelled { return }
-                let desc = itemMap[id] ?? ""
-                if let cached = service.cachedTranslation(for: id) {
-                    if !cached.isEmpty {
-                        guard !Task.isCancelled else { return }
-                        await MainActor.run {
-                            self.applyTranslation(id: id, text: cached)
-                        }
-                    }
-                } else {
-                    uncachedIds.append(id)
+                if let cached = service.cachedTranslation(for: item.id), !cached.isEmpty {
+                    batch[item.id] = cached
                 }
             }
-            // 并发翻译未缓存的项（最多 8 个并发）
-            let batchSize = 8
-            var index = 0
-            while index < uncachedIds.count {
-                if Task.isCancelled { return }
-                let batchEnd = min(index + batchSize, uncachedIds.count)
-                let batch = Array(uncachedIds[index..<batchEnd])
-                await withTaskGroup(of: (String, String).self) { group in
-                    for id in batch {
-                        group.addTask {
-                            let desc = itemMap[id] ?? ""
-                            do {
-                                let translated = try await service.translateText(text: desc, projectId: id)
-                                return (id, translated)
-                            } catch {
-                                return (id, desc)
-                            }
-                        }
-                    }
-                    for await (id, translated) in group {
-                        guard !Task.isCancelled else { return }
-                        await MainActor.run {
-                            self.applyTranslation(id: id, text: translated)
+            if !batch.isEmpty {
+                await MainActor.run {
+                    guard !Task.isCancelled else { return }
+                    for (id, text) in batch {
+                        if !text.isEmpty, Self.isViewActive {
+                            self.translatedSubtitles[id] = text
                         }
                     }
                 }
-                index = batchEnd
             }
         }
     }
 
-    private func applyTranslation(id: String, text: String) {
-        guard !text.isEmpty, Self.isViewActive else { return }
-        var newItems = items
-        if let idx = newItems.firstIndex(where: { $0.id == id }) {
-            newItems[idx].subtitle = text
-            items = newItems
+    /// 按需翻译单个卡片：缓存命中直接应用，否则排队翻译（滚动到哪翻译到哪）
+    private func requestTranslation(for item: DownloadedItem) {
+        let id = item.id
+        guard !id.isEmpty, translatedSubtitles[id] == nil, !pendingTranslationIDs.contains(id) else { return }
+        let service = TranslationService.shared
+        if let cached = service.cachedTranslation(for: id), !cached.isEmpty {
+            translatedSubtitles[id] = cached
+            return
         }
-        var newFiltered = filteredResults
-        if let fIdx = newFiltered.firstIndex(where: { $0.id == id }) {
-            newFiltered[fIdx].subtitle = text
-            filteredResults = newFiltered
-        }
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.45)) {
-            translatingIds.insert(id)
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.45)) {
-                _ = translatingIds.remove(id)
+        pendingTranslationIDs.insert(id)
+        let subtitle = item.subtitle
+        Task.detached(priority: .background) {
+            do {
+                let translated = try await service.translateText(text: subtitle, projectId: id)
+                await MainActor.run {
+                    self.pendingTranslationIDs.remove(id)
+                    if !translated.isEmpty, Self.isViewActive {
+                        self.translatedSubtitles[id] = translated
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.pendingTranslationIDs.remove(id)
+                }
             }
         }
     }
@@ -747,6 +761,8 @@ struct DownloadCategoryView: View {
             return false
         }
         merged.sort { ($0["releaseTime"] as? String ?? "") > ($1["releaseTime"] as? String ?? "") }
+        // 只在拉取成功（非空）时更新缓存；全部失败时保留旧缓存，避免空结果被缓存 5 分钟
+        guard !merged.isEmpty else { return mergedManifestCache ?? merged }
         mergedManifestCache = merged
         mergedManifestFetchDate = Date()
         return merged
@@ -796,12 +812,12 @@ struct DownloadCategoryView: View {
         let downloads: Int
     }
 
-    private static let localCatalogLock = NSLock()
-    private static var localCatalog: [LocalCatalogItem]?
-    private static var localCatalogItemsByType: [String: [DownloadedItem]] = [:]
+    private nonisolated(unsafe) static let localCatalogLock = NSLock()
+    private nonisolated(unsafe) static var localCatalog: [LocalCatalogItem]?
+    private nonisolated(unsafe) static var localCatalogItemsByType: [String: [DownloadedItem]] = [:]
 
     /// 解压 gzip 数据（系统 libz，windowBits=31 支持 gzip 格式）
-    private static func inflateGzipData(_ input: Data) -> Data? {
+    nonisolated private static func inflateGzipData(_ input: Data) -> Data? {
         return input.withUnsafeBytes { (srcRaw: UnsafeRawBufferPointer) -> Data? in
             let src = srcRaw.bindMemory(to: UInt8.self)
             var stream = z_stream()
@@ -832,7 +848,7 @@ struct DownloadCategoryView: View {
     }
 
     /// 从 bundle 读取 modrinth_catalog.json.gz 并解析（全量目录缓存）
-    static func loadLocalCatalog() -> [LocalCatalogItem] {
+    nonisolated static func loadLocalCatalog() -> [LocalCatalogItem] {
         localCatalogLock.lock()
         defer { localCatalogLock.unlock() }
         if let localCatalog { return localCatalog }
@@ -861,8 +877,8 @@ struct DownloadCategoryView: View {
         return catalog
     }
 
-    /// 按分类返回本地全量条目（首次按类型映射缓存）
-    static func localItems(for section: GameSidebarSection) -> [DownloadedItem] {
+    /// 按分类返回本地全量条目（首次按类型映射缓存，线程安全）
+    nonisolated static func localItems(for section: GameSidebarSection) -> [DownloadedItem] {
         let type: String
         switch section {
         case .mod: type = "mod"
@@ -871,7 +887,12 @@ struct DownloadCategoryView: View {
         case .modpack: type = "modpack"
         default: return []
         }
-        if let cached = localCatalogItemsByType[type] { return cached }
+        localCatalogLock.lock()
+        if let cached = localCatalogItemsByType[type] {
+            localCatalogLock.unlock()
+            return cached
+        }
+        localCatalogLock.unlock()
         let catalog = loadLocalCatalog()
         guard !catalog.isEmpty else { return [] }
         let mapped = catalog
@@ -885,8 +906,24 @@ struct DownloadCategoryView: View {
                     tags: $0.categories
                 )
             }
+        localCatalogLock.lock()
+        if let existing = localCatalogItemsByType[type] {
+            localCatalogLock.unlock()
+            return existing
+        }
         localCatalogItemsByType[type] = mapped
+        localCatalogLock.unlock()
         return mapped
+    }
+
+    /// 后台预加载四类本地目录，避免首次切页时阻塞主线程
+    private static func preloadLocalCatalog() {
+        Task.detached(priority: .utility) {
+            _ = localItems(for: .mod)
+            _ = localItems(for: .resourcePack)
+            _ = localItems(for: .shader)
+            _ = localItems(for: .modpack)
+        }
     }
 
     private static func preTranslateAllCategories() {
@@ -1105,14 +1142,9 @@ struct ContentCard: View {
     let subtitle: String
     let cardWidth: CGFloat
     var tags: [String] = []
-    var isTranslating: Bool = false
-    var isSearchPopIn: Bool = false
     var action: (() -> Void)? = nil
     @ObservedObject var theme = ThemeManager.shared
     @State private var scale: CGFloat = 1.0
-    @State private var shakeOffset: CGFloat = 0
-    @State private var popScale: CGFloat = 1.0
-    @State private var popOpacity: Double = 1.0
 
     private var translatedTags: [String] {
         tags.compactMap { ModrinthTagMap[$0] }
@@ -1159,7 +1191,7 @@ struct ContentCard: View {
             .frame(width: cardWidth, height: cardWidth * 0.55)
             .background(
                 RoundedRectangle(cornerRadius: 20)
-                    .fill(.ultraThinMaterial)
+                    .fill(Color.primary.opacity(0.06))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 20)
@@ -1168,43 +1200,7 @@ struct ContentCard: View {
         }
         .buttonStyle(.plain)
         .scaleEffect(scale)
-        .scaleEffect(popScale)
-        .opacity(popOpacity)
-        .offset(y: shakeOffset)
         .animation(.spring(response: 0.4, dampingFraction: 0.5), value: scale)
-        .animation(.spring(response: 0.35, dampingFraction: 0.45), value: shakeOffset)
-        .onChange(of: isTranslating) { newValue in
-            if newValue {
-                withAnimation(.interpolatingSpring(mass: 1, stiffness: 400, damping: 8, initialVelocity: 5)) {
-                    shakeOffset = -4
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                    withAnimation(.interpolatingSpring(mass: 1, stiffness: 300, damping: 10, initialVelocity: 0)) {
-                        shakeOffset = 3
-                    }
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                    withAnimation(.interpolatingSpring(mass: 1, stiffness: 200, damping: 12, initialVelocity: 0)) {
-                        shakeOffset = -1.5
-                    }
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-                        shakeOffset = 0
-                    }
-                }
-            }
-        }
-        .onChange(of: isSearchPopIn) { newValue in
-            if newValue {
-                popScale = 0.6
-                popOpacity = 0
-                withAnimation(.interpolatingSpring(mass: 0.8, stiffness: 200, damping: 12, initialVelocity: 4)) {
-                    popScale = 1.0
-                    popOpacity = 1.0
-                }
-            }
-        }
     }
 }
 
@@ -1986,7 +1982,7 @@ struct ModDetailView: View {
                         .font(.system(size: 18, weight: .semibold))
                         .foregroundColor(.primary)
                         .shadow(color: .black.opacity(0.08), radius: 1)
-                        .frame(width: 36, height: 36)
+                        .frame(width: 44, height: 44)
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)

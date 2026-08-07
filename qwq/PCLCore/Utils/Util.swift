@@ -84,21 +84,6 @@ public class Util {
         }
     }
     
-    public static func clearTemp() {
-        do {
-            let contents = try FileManager.default.contentsOfDirectory(
-                at: SharedConstants.shared.temperatureURL,
-                includingPropertiesForKeys: nil,
-                options: []
-            )
-            for itemURL in contents {
-                try FileManager.default.removeItem(at: itemURL)
-            }
-        } catch {
-            err("在清理时发生错误: \(error.localizedDescription)")
-        }
-    }
-    
     public static func unzip(archiveURL: URL, destination: URL, replace: Bool = true) {
         let archive: Archive
         do {
@@ -110,7 +95,14 @@ public class Util {
         
         for entry in archive {
             do {
-                let destinationFileURL = destination.appendingPathComponent(entry.path)
+                // ZIP Slip 防御：拒绝绝对路径与包含 .. 的条目，防止写入目标目录之外
+                let entryPath = entry.path.replacingOccurrences(of: "\\", with: "/")
+                let normalizedPath = (entryPath as NSString).standardizingPath
+                if normalizedPath.hasPrefix("/") || normalizedPath.components(separatedBy: "/").contains("..") {
+                    err("已跳过存在路径遍历风险的条目: \(entry.path)")
+                    continue
+                }
+                let destinationFileURL = destination.appendingPathComponent(normalizedPath)
                 if FileManager.default.fileExists(atPath: destinationFileURL.path) && replace {
                     try FileManager.default.removeItem(at: destinationFileURL)
                     debug("已删除重复文件 \(destinationFileURL.lastPathComponent)")

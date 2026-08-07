@@ -35,15 +35,9 @@ public class TemperatureDirectory {
     
     public func free() {
         do {
-            let contents = try FileManager.default.contentsOfDirectory(
-                at: SharedConstants.shared.temperatureURL,
-                includingPropertiesForKeys: nil,
-                options: []
-            )
-            for itemURL in contents {
-                try FileManager.default.removeItem(at: itemURL)
+            if FileManager.default.fileExists(atPath: root.path) {
+                try FileManager.default.removeItem(at: root)
             }
-            try? FileManager.default.removeItem(at: root)
         } catch {
             err("在释放 \(name) 时发生错误: \(error)")
         }

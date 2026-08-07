@@ -59,7 +59,8 @@ public class MinecraftInstaller {
         try await SingleFileDownloader.download(
             task: task,
             url: url,
-            destination: task.versionURL.appending(path: "\(task.name).jar")
+            destination: task.versionURL.appending(path: "\(task.name).jar"),
+            expectedSHA1: task.manifest?.clientDownload?.sha1
         )
     }
     
@@ -115,7 +116,7 @@ public class MinecraftInstaller {
                 }
                 
                 libraryNames.append(library.name)
-                items.append(.init(DownloadSourceManager.shared.getDownloadSource(), { $0.getLibraryURL(library)! }, destination: dest))
+                items.append(.init(DownloadSourceManager.shared.getDownloadSource(), { $0.getLibraryURL(library)! }, destination: dest, sha1: artifact.sha1))
             }
         }
         
@@ -142,7 +143,7 @@ public class MinecraftInstaller {
             }
             
             libraryNames.append(library.name)
-            items.append(.init(DownloadSourceManager.shared.getDownloadSource(), { $0.getLibraryURL(library)! }, destination: dest))
+            items.append(.init(DownloadSourceManager.shared.getDownloadSource(), { $0.getLibraryURL(library)! }, destination: dest, sha1: artifact.sha1))
         }
         
         try? FileManager.default.createDirectory(at: task.versionURL.appending(path: "natives"), withIntermediateDirectories: true)
@@ -227,8 +228,12 @@ public class MinecraftInstaller {
         
         // 修改 GLFW
         if let glfw = task.manifest!.getNeededLibraries().find({ $0.name.contains("lwjgl-glfw") }) {
+            guard let javaURL = JavaManager.resolveJavaExecutable() else {
+                err("未找到可用的 Java 运行时，无法运行 glfw-patcher")
+                return
+            }
             let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/java")
+            process.executableURL = javaURL
             process.environment = ProcessInfo.processInfo.environment
             process.currentDirectoryURL = URL(fileURLWithPath: "/tmp")
             process.arguments = ["-jar", SharedConstants.shared.applicationResourcesURL.appending(path: "glfw-patcher.jar").path, task.minecraftDirectory.librariesURL.appending(path: glfw.artifact!.path).path]

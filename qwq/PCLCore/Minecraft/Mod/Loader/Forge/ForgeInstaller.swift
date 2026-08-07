@@ -101,7 +101,10 @@ public class ForgeInstaller {
         
         let process = Process()
         process.currentDirectoryURL = temp.root
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/java")
+        guard let javaURL = JavaManager.resolveJavaExecutable() else {
+            throw MyLocalizedError(reason: "未找到可用的 Java 运行时，无法执行 Forge 处理器")
+        }
+        process.executableURL = javaURL
         process.arguments = [
             // processor 初始化逻辑中往 classpath 里添加了它本身的 jar，这里直接 map
             "-cp", processor.classpath.map { minecraftDirectory.librariesURL.appending(path: $0).path }.joined(separator: ":"),

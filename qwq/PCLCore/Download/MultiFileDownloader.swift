@@ -10,21 +10,24 @@ import Foundation
 public struct DownloadItem {
     public let url: URL
     public let destination: URL
+    public let sha1: String?
     
     fileprivate var fallbackURL: URL? {
         fallbackURLProvider?()
     }
     private var fallbackURLProvider: (() -> URL)?
     
-    public init(_ downloadSource: DownloadSource, _ urlProvider: @escaping (DownloadSource) -> URL, destination: URL) {
+    public init(_ downloadSource: DownloadSource, _ urlProvider: @escaping (DownloadSource) -> URL, destination: URL, sha1: String? = nil) {
         self.url = urlProvider(downloadSource)
         self.fallbackURLProvider = { urlProvider(OfficialDownloadSource.shared) }
         self.destination = destination
+        self.sha1 = sha1
     }
     
-    public init(_ url: URL, _ destination: URL) {
+    public init(_ url: URL, _ destination: URL, sha1: String? = nil) {
         self.url = url
         self.destination = destination
+        self.sha1 = sha1
     }
 }
 
@@ -134,7 +137,7 @@ public class MultiFileDownloader {
         var lastProgress: Double = 0
         
         do {
-            try await SingleFileDownloader.download(url: item.url, destination: item.destination, replaceMethod: replaceMethod) { progress in
+            try await SingleFileDownloader.download(url: item.url, destination: item.destination, replaceMethod: replaceMethod, expectedSHA1: item.sha1) { progress in
                 self.totalProgress += (progress - lastProgress)
                 lastProgress = progress
             }
@@ -142,7 +145,7 @@ public class MultiFileDownloader {
             guard let fallback = item.fallbackURL else {
                 throw error
             }
-            try await SingleFileDownloader.download(url: fallback, destination: item.destination, replaceMethod: .replace) { progress in
+            try await SingleFileDownloader.download(url: fallback, destination: item.destination, replaceMethod: .replace, expectedSHA1: item.sha1) { progress in
                 self.totalProgress += (progress - lastProgress)
                 lastProgress = progress
             }
