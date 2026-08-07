@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Combine
+import zlib
 
 // ScrollBounceModifier → Core/ScrollBounceModifier.swift
 // VersionButton → UI/VersionButton.swift
@@ -119,7 +120,25 @@ struct DownloadCategoryView: View {
                 }
                 return
             }
-            // 其余分类：中文先翻译成英文，再调用 API 搜索全库（检索标题与简介）
+            // 其余分类：优先本地全量目录过滤（标题/简介/标签，含中文标签直接匹配）
+            let local = Self.localItems(for: selectedSection)
+            if !local.isEmpty {
+                let filtered = local.filter { item in
+                    item.name.localizedCaseInsensitiveContains(normalized) ||
+                    item.subtitle.localizedCaseInsensitiveContains(normalized) ||
+                    item.tags.contains { $0.localizedCaseInsensitiveContains(normalized) } ||
+                    ModrinthTagMap.contains { $1 == normalized && item.tags.contains($0) }
+                }
+                await MainActor.run {
+                    debouncedSearchText = searchText
+                    activeSearchQuery = ""
+                    filteredResults = filtered
+                    searchPopInIds = []
+                }
+                startSequentialTranslation(for: Array(filtered.prefix(200)))
+                return
+            }
+            // 目录不可用时：中文先翻译成英文，再调用 API 搜索全库（检索标题与简介）
             var searchQuery = normalized
             let range = NSRange(normalized.startIndex..., in: normalized)
             let hasChinese = Self.hasChineseRegex.firstMatch(in: normalized, range: range) != nil
@@ -505,6 +524,32 @@ struct DownloadCategoryView: View {
     private func fetchItems() {
         fetchTask?.cancel()
 
+        // 本地全量目录模式：mod/resourcepack/shader/modpack 直接加载全量（不翻译）
+        if selectedSection != .game {
+            let local = Self.localItems(for: selectedSection)
+            if !local.isEmpty {
+                isLoading = true
+                items = []
+                filteredResults = []
+                fetchTask = Task {
+                    let result = Self.localItems(for: selectedSection)
+                    if Task.isCancelled { return }
+                    await MainActor.run {
+                        items = result
+                        currentOffset = result.count
+                        hasMore = false
+                        isLoading = false
+                        filteredResults = result
+                        searchPopInIds = []
+                    }
+                    if targetSection != .game {
+                        startSequentialTranslation(for: Array(result.prefix(200)))
+                    }
+                }
+                return
+            }
+        }
+
         if let cached = Self.cache(for: selectedSection, sub: selectedSubCategory) {
             items = cached
             currentOffset = cached.count
@@ -615,6 +660,11 @@ struct DownloadCategoryView: View {
             newItems[idx].subtitle = text
             items = newItems
         }
+        var newFiltered = filteredResults
+        if let fIdx = newFiltered.firstIndex(where: { $0.id == id }) {
+            newFiltered[fIdx].subtitle = text
+            filteredResults = newFiltered
+        }
         withAnimation(.spring(response: 0.35, dampingFraction: 0.45)) {
             translatingIds.insert(id)
         }
@@ -651,6 +701,8 @@ struct DownloadCategoryView: View {
     static func clearStaticCaches() {
         versionManifestCache = nil
         lastSubCategory = nil
+        mergedManifestCache = nil
+        mergedManifestFetchDate = nil
         cachedModItems = nil
         cachedResourcePackItems = nil
         cachedShaderItems = nil
@@ -658,6 +710,53 @@ struct DownloadCategoryView: View {
         searchTranslationCacheLock.lock()
         searchTranslationCache.removeAll()
         searchTranslationCacheLock.unlock()
+    }
+
+    // MARK: - 版本清单合并（官方 + 未列出，并发拉取）
+
+    private static let officialManifestURL = URL(string: "https://piston-meta.mojang.com/mc/game/version_manifest.json")!
+    private static let unlistedManifestURL = URL(string: "https://alist.8mi.tech/d/mirror/unlisted-versions-of-minecraft/Auto/version_manifest.json")!
+    private static let unlistedManifestRoot = "https://zkitefly.github.io/unlisted-versions-of-minecraft"
+    private static let unlistedManifestMirrorRoot = "https://alist.8mi.tech/d/mirror/unlisted-versions-of-minecraft/Auto"
+
+    private static var mergedManifestCache: [[String: Any]]?
+    private static var mergedManifestFetchDate: Date?
+
+    /// 并发拉取官方 + 未列出版本清单并合并（按 releaseTime 降序；未列出版本 URL 重写到 alist 镜像）
+    fileprivate static func fetchMergedVersionManifest() async -> [[String: Any]] {
+        if let cached = mergedManifestCache,
+           let date = mergedManifestFetchDate,
+           Date().timeIntervalSince(date) < 300 {
+            return cached
+        }
+        async let official = fetchManifestList(url: officialManifestURL)
+        async let unlisted = fetchManifestList(url: unlistedManifestURL)
+        var (merged, unlistedVersions) = await (official, unlisted)
+        for i in unlistedVersions.indices {
+            if let url = unlistedVersions[i]["url"] as? String {
+                unlistedVersions[i]["url"] = url.replacingOccurrences(of: unlistedManifestRoot, with: unlistedManifestMirrorRoot)
+            }
+            merged.append(unlistedVersions[i])
+        }
+        // 按 id 去重（保留官方条目），再按 releaseTime 降序
+        var seen = Set<String>()
+        merged.removeAll { entry in
+            let id = entry["id"] as? String ?? ""
+            if id.isEmpty || seen.contains(id) { return true }
+            seen.insert(id)
+            return false
+        }
+        merged.sort { ($0["releaseTime"] as? String ?? "") > ($1["releaseTime"] as? String ?? "") }
+        mergedManifestCache = merged
+        mergedManifestFetchDate = Date()
+        return merged
+    }
+
+    private static func fetchManifestList(url: URL) async -> [[String: Any]] {
+        guard let (data, _) = try? await AppContext.shared.apiSession.data(from: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let versions = json["versions"] as? [[String: Any]] else { return [] }
+        return versions
     }
 
     private enum CacheKey: String {
@@ -683,6 +782,111 @@ struct DownloadCategoryView: View {
 
     private static func saveCacheToDisk(_ items: [DownloadedItem], for key: CacheKey) {
         AppContext.shared.cacheManager.setObject(items, forKey: key.rawValue)
+    }
+
+    // MARK: - 本地全量目录（crawl_modrinth.py 生成：mod/resourcepack/shader/modpack 全部条目，不翻译）
+
+    struct LocalCatalogItem {
+        let projectID: String
+        let projectType: String
+        let title: String
+        let description: String
+        let categories: [String]
+        let iconURL: String?
+        let downloads: Int
+    }
+
+    private static let localCatalogLock = NSLock()
+    private static var localCatalog: [LocalCatalogItem]?
+    private static var localCatalogItemsByType: [String: [DownloadedItem]] = [:]
+
+    /// 解压 gzip 数据（系统 libz，windowBits=31 支持 gzip 格式）
+    private static func inflateGzipData(_ input: Data) -> Data? {
+        return input.withUnsafeBytes { (srcRaw: UnsafeRawBufferPointer) -> Data? in
+            let src = srcRaw.bindMemory(to: UInt8.self)
+            var stream = z_stream()
+            stream.next_in = UnsafeMutablePointer<UInt8>(mutating: src.baseAddress!)
+            stream.avail_in = uInt(input.count)
+            guard inflateInit2_(&stream, 16 + 15, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size)) == Z_OK else { return nil }
+            defer { inflateEnd(&stream) }
+            var output = Data()
+            let buffer = [UInt8](repeating: 0, count: 1 << 16)
+            var lastStatus: Int32 = Z_OK
+            while true {
+                var localBuffer = buffer
+                let produced = localBuffer.withUnsafeMutableBytes { (dstRaw: UnsafeMutableRawBufferPointer) -> Int in
+                    stream.next_out = dstRaw.bindMemory(to: UInt8.self).baseAddress!
+                    stream.avail_out = uInt(buffer.count)
+                    lastStatus = inflate(&stream, Z_NO_FLUSH)
+                    if lastStatus == Z_OK || lastStatus == Z_STREAM_END {
+                        return buffer.count - Int(stream.avail_out)
+                    }
+                    return -1
+                }
+                if produced < 0 { return nil }
+                if produced > 0 { output.append(localBuffer, count: produced) }
+                if lastStatus == Z_STREAM_END { return output }
+                if stream.avail_in == 0 && lastStatus == Z_OK { return nil }
+            }
+        }
+    }
+
+    /// 从 bundle 读取 modrinth_catalog.json.gz 并解析（全量目录缓存）
+    static func loadLocalCatalog() -> [LocalCatalogItem] {
+        localCatalogLock.lock()
+        defer { localCatalogLock.unlock() }
+        if let localCatalog { return localCatalog }
+        guard let url = Bundle.main.url(forResource: "modrinth_catalog", withExtension: "json.gz"),
+              let compressed = try? Data(contentsOf: url),
+              let data = inflateGzipData(compressed),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let entries = json["items"] as? [[String: Any]] else {
+            return []
+        }
+        let catalog = entries.compactMap { entry -> LocalCatalogItem? in
+            guard let projectID = entry["i"] as? String,
+                  let projectType = entry["t"] as? String,
+                  let title = entry["n"] as? String else { return nil }
+            return LocalCatalogItem(
+                projectID: projectID,
+                projectType: projectType,
+                title: title,
+                description: entry["d"] as? String ?? "",
+                categories: entry["c"] as? [String] ?? [],
+                iconURL: entry["u"] as? String,
+                downloads: entry["x"] as? Int ?? 0
+            )
+        }
+        localCatalog = catalog
+        return catalog
+    }
+
+    /// 按分类返回本地全量条目（首次按类型映射缓存）
+    static func localItems(for section: GameSidebarSection) -> [DownloadedItem] {
+        let type: String
+        switch section {
+        case .mod: type = "mod"
+        case .resourcePack: type = "resourcepack"
+        case .shader: type = "shader"
+        case .modpack: type = "modpack"
+        default: return []
+        }
+        if let cached = localCatalogItemsByType[type] { return cached }
+        let catalog = loadLocalCatalog()
+        guard !catalog.isEmpty else { return [] }
+        let mapped = catalog
+            .filter { $0.projectType == type }
+            .map {
+                DownloadedItem(
+                    id: $0.projectID,
+                    name: $0.title,
+                    subtitle: $0.description,
+                    iconURL: $0.iconURL,
+                    tags: $0.categories
+                )
+            }
+        localCatalogItemsByType[type] = mapped
+        return mapped
     }
 
     private static func preTranslateAllCategories() {
@@ -740,23 +944,19 @@ struct DownloadCategoryView: View {
         if subCategory == Self.lastSubCategory, let cached = Self.versionManifestCache {
             return cached
         }
-        let url = URL(string: "https://launchermeta.mojang.com/mc/game/version_manifest.json")!
-        guard let (data, _) = try? await AppContext.shared.apiSession.data(from: url),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let versions = json["versions"] as? [[String: Any]] else {
-            return Self.versionManifestCache ?? []
-        }
+        let versions = await Self.fetchMergedVersionManifest()
+        guard !versions.isEmpty else { return Self.versionManifestCache ?? [] }
         let filtered: [[String: Any]]
         switch subCategory {
         case .release:
             // 正式版：所有 type == "release" 的版本（不截断，包含 1.7.x、1.8、1.12.2 等老版本）
             filtered = versions.filter { ($0["type"] as? String) == "release" }
         case .snapshot:
-            // 快照：标准快照（排除愚人节版本，它们归到远古版）
+            // 快照：标准快照 + 未列出的 pending（combat/实验快照），排除愚人节版本（它们归到远古版）
             filtered = versions.filter { v in
                 let t = v["type"] as? String ?? ""
                 let id = v["id"] as? String ?? ""
-                return t == "snapshot" && !Self.isAprilFoolVersion(id: id, type: t)
+                return (t == "snapshot" || t == "pending") && !Self.isAprilFoolVersion(id: id, type: t)
             }
         case .ancient:
             // 远古版：alpha/beta + 愚人节版本（参考 PCL.Mac）
@@ -1288,10 +1488,8 @@ struct ModDetailView: View {
 
     private func fetchManifestVersions() {
         Task {
-            let url = URL(string: "https://launchermeta.mojang.com/mc/game/version_manifest.json")!
-            guard let (data, _) = try? await AppContext.shared.apiSession.data(from: url),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let versions = json["versions"] as? [[String: Any]] else { return }
+            let versions = await DownloadCategoryView.fetchMergedVersionManifest()
+            guard !versions.isEmpty else { return }
             let filtered: [String]
             switch gameSubCategory {
             case .release:
@@ -1301,7 +1499,7 @@ struct ModDetailView: View {
                 filtered = versions.filter { v in
                     let t = v["type"] as? String ?? ""
                     let id = v["id"] as? String ?? ""
-                    return t == "snapshot" && !Self.isAprilFoolVersion(id: id, type: t)
+                    return (t == "snapshot" || t == "pending") && !Self.isAprilFoolVersion(id: id, type: t)
                 }.compactMap { $0["id"] as? String }
             case .ancient:
                 filtered = versions.filter {
