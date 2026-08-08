@@ -118,6 +118,13 @@ public class MinecraftLauncher {
         // -Xmx 内存：manifest 一般不含，始终追加
         args.append("-Xmx\(instance.config.maxMemory)m")
 
+        // -Xms 堆初始大小：与 -Xmx 同级避免堆扩张时的 GC 停顿（参考 Swift Craft Launcher）。
+        // 默认取 maxMemory 的一半，下限 256m；用户/清单已显式指定则不覆盖
+        if !args.contains(where: { $0.contains("-Xms") }) {
+            let xms = max(256, instance.config.maxMemory / 2)
+            args.append("-Xms\(xms)m")
+        }
+
         // -Djna.tmpdir：若 manifest 未提供则补齐
         let hasJnaTmp = manifestJVM.contains { $0.contains("jna.tmpdir") }
         if !hasJnaTmp {
@@ -143,6 +150,33 @@ public class MinecraftLauncher {
            javaMajor <= 8,
            !args.contains(where: { $0.contains("UseG1GC") }) {
             args.append("-XX:+UseG1GC")
+        }
+
+        // Java 9+（默认 G1）：无显式 GC 选择时注入低风险 G1 停顿调优
+        // （-XX:+ParallelRefProcEnabled / -XX:MaxGCPauseMillis=200，参考 Swift Craft Launcher balanced 预设），
+        // 用户若显式指定了 ZGC/Shenandoah 等其他收集器则整组跳过
+        if let javaPath = options.javaPath,
+           let javaMajor = MinecraftInstance.readJavaMajorVersion(at: javaPath),
+           javaMajor >= 9 {
+            let explicitGC = ["UseG1GC", "UseZGC", "UseShenandoahGC", "UseParallelGC", "UseSerialGC", "UseEpsilonGC"]
+                .contains { gc in args.contains { $0.contains(gc) } }
+            if !explicitGC {
+                if !args.contains(where: { $0.contains("ParallelRefProcEnabled") }) {
+                    args.append("-XX:+ParallelRefProcEnabled")
+                }
+                if !args.contains(where: { $0.contains("MaxGCPauseMillis") }) {
+                    args.append("-XX:MaxGCPauseMillis=200")
+                }
+            }
+        }
+
+        // 异常热路径优化：重复抛同一异常只保留首次堆栈（-XX:+OmitStackTraceInFastThrow），
+        // 字符串拼接改为 StringBuilder 式优化（-XX:+OptimizeStringConcat）；均为零风险参数
+        if !args.contains(where: { $0.contains("OmitStackTraceInFastThrow") }) {
+            args.append("-XX:+OmitStackTraceInFastThrow")
+        }
+        if !args.contains(where: { $0.contains("OptimizeStringConcat") }) {
+            args.append("-XX:+OptimizeStringConcat")
         }
 
         // 诊断：OOM 时留下堆转储现场（零运行开销，仅在崩溃时写文件）

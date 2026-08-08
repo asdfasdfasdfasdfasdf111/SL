@@ -26,6 +26,7 @@
 - 下载校验：客户端 jar、依赖库、原生库下载接入 SHA-1 校验
 - 本地 Modrinth 全量目录更新至 122,477 条目（模组 71,706 / 资源包 31,918 / 光影 781 / 整合包 18,072），覆盖更完整
 - JVM 启动参数动态补齐：按平台与 Java 主版本自动注入缺失参数（macOS 补 `-XstartOnFirstThread`、Java 8 及以下补 `-XX:+UseG1GC`、补 `-XX:+HeapDumpOnOutOfMemoryError` 与 `-Dfile.encoding=UTF-8`），全部先查重再追加，与版本清单自带参数不冲突
+- 借鉴 GitHub 开源项目 Swift-Craft-Launcher（AGPL-3.0，仅参考思路）进一步深化 JVM 参数优化：`-Xms` 堆初始大小动态补齐（默认 maxMemory 的一半、下限 256m，消除堆扩张停顿）；Java 9+ 且未显式指定 GC 时注入 G1 停顿调优（`-XX:+ParallelRefProcEnabled` / `-XX:MaxGCPauseMillis=200`）；补 `-XX:+OmitStackTraceInFastThrow` 与 `-XX:+OptimizeStringConcat` 零风险运行时优化，全部查重后追加
 
 ### 变更
 
