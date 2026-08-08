@@ -636,7 +636,7 @@ struct DownloadCategoryView: View {
         }
     }
 
-    /// 批量应用磁盘翻译缓存（全量遍历仅查内存缓存，速度快）；网络翻译由卡片可见性按需触发
+    /// 批量应用内存翻译缓存（纯内存扫描，速度快；磁盘命中的翻译由可见卡片按需回读）
     private func startSequentialTranslation(for items: [DownloadedItem]) {
         translateTask?.cancel()
         let service = TranslationService.shared
@@ -644,7 +644,7 @@ struct DownloadCategoryView: View {
             var batch: [String: String] = [:]
             for item in items {
                 if Task.isCancelled { return }
-                if let cached = service.cachedTranslation(for: item.id), !cached.isEmpty {
+                if let cached = service.cachedTranslationInMemory(for: item.id), !cached.isEmpty {
                     batch[item.id] = cached
                 }
             }

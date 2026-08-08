@@ -35,6 +35,10 @@ private let BuiltinProjectTranslation: [String: String] = [
 final class TranslationService {
     static let shared = TranslationService()
 
+    /// 全局翻译并发上限（用户要求"默认大小最多 12 个"）
+    private static let concurrencyLimit = 12
+    private static let translationSemaphore = DispatchSemaphore(value: concurrencyLimit)
+
     private let cache = AppContext.shared.cacheManager
     private let session = AppContext.shared.translateSession
     private let lock = NSLock()
@@ -90,6 +94,10 @@ final class TranslationService {
         defer {
             lock.lock(); inFlight.remove(projectId); lock.unlock()
         }
+
+        // 4a. 全局并发限制（最多 12 个同时翻译）
+        Self.translationSemaphore.wait()
+        defer { Self.translationSemaphore.signal() }
 
         // 5. 并行请求 Modrinth 项目详情 + 镜像翻译，减少等待时间
         async let modrinthResult = fetchModrinthProject(projectId: projectId, fallback: text)
@@ -206,6 +214,18 @@ final class TranslationService {
             return builtin
         }
         if let cached: String = cache.object(String.self, forKey: "tr_\(projectId)"),
+           !cached.isEmpty, containsChinese(cached) {
+            return cached
+        }
+        return nil
+    }
+
+    /// 仅查内存缓存（不触碰磁盘），用于全量批量扫描场景，避免海量磁盘 IO
+    func cachedTranslationInMemory(for projectId: String) -> String? {
+        if let builtin = BuiltinProjectTranslation[projectId] ?? BuiltinProjectTranslation[projectId.lowercased()] {
+            return builtin
+        }
+        if let cached: String = cache.memoryObject(String.self, forKey: "tr_\(projectId)"),
            !cached.isEmpty, containsChinese(cached) {
             return cached
         }

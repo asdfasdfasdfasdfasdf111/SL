@@ -73,6 +73,12 @@ final class CacheManager {
         return nil
     }
 
+    /// 仅查内存缓存（不触碰磁盘），用于批量快速扫描场景
+    func memoryObject<T: Codable>(_ type: T.Type, forKey key: String) -> T? {
+        guard let data = memoryGet(key) else { return nil }
+        return try? JSONDecoder().decode(T.self, from: data)
+    }
+
     func setObject<T: Codable>(_ object: T, forKey key: String) {
         guard let data = try? JSONEncoder().encode(object) else { return }
         memorySet(key, data: data)
