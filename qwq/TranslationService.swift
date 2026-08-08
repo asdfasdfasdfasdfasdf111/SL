@@ -35,8 +35,8 @@ private let BuiltinProjectTranslation: [String: String] = [
 final class TranslationService {
     static let shared = TranslationService()
 
-    /// 全局翻译并发上限（用户要求"默认大小最多 12 个"）
-    private static let concurrencyLimit = 12
+    /// 全局翻译并发上限（最多 24 个同时翻译）
+    private static let concurrencyLimit = 24
     private static let translationSemaphore = DispatchSemaphore(value: concurrencyLimit)
 
     private let cache = AppContext.shared.cacheManager
@@ -95,7 +95,7 @@ final class TranslationService {
             lock.lock(); inFlight.remove(projectId); lock.unlock()
         }
 
-        // 4a. 全局并发限制（最多 12 个同时翻译）
+        // 4a. 全局并发限制（最多 24 个同时翻译）
         Self.translationSemaphore.wait()
         defer { Self.translationSemaphore.signal() }
 
