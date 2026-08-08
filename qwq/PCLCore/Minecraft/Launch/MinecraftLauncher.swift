@@ -45,11 +45,13 @@ public class MinecraftLauncher {
         
         instance.process = process
         self.currentProcess = process
+        // terminationSemaphore 提到 do 外：catch 路径也需 signal，避免 launch() 永久阻塞
+        let terminationSemaphore = DispatchSemaphore(value: 0)
         do {
             let pipe = Pipe()
             process.standardOutput = pipe
             process.standardError = pipe
-            
+
             let logHandle = try FileHandle(forWritingTo: logURL)
             pipe.fileHandleForReading.readabilityHandler = { handle in
                 for line in String(data: handle.availableData, encoding: .utf8)!.split(separator: "\n") {
@@ -58,16 +60,26 @@ public class MinecraftLauncher {
                     logHandle.seekToEndOfFile()
                 }
             }
-            
+
             try process.run()
-            
+
+            // terminationHandler 主动在进程退出时通知启动器（DispatchQueue.main.async 切主线程触发 callback）。
+            // 之前只用 process.waitUntilExit() 同步阻塞——一旦 Java 异常（卡死/死锁/僵尸），
+            // waitUntilExit 不返回，UI 永远收不到 completion，「游戏已关闭」状态无法复位
+            process.terminationHandler = { proc in
+                DispatchQueue.main.async {
+                    callback(proc.terminationStatus)
+                }
+                terminationSemaphore.signal()
+            }
+
             Task { // 轮询判断窗口是否出现
                 while process.isRunning {
                     let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements, .optionOnScreenOnly)
                     guard let windowInfoList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
                         throw NSError()
                     }
-                    
+
                     for info in windowInfoList {
                         if let windowPID = info["kCGWindowOwnerPID"] as? Int32,
                            windowPID == process.processIdentifier {
@@ -78,19 +90,19 @@ public class MinecraftLauncher {
                     try await Task.sleep(for: .seconds(1))
                 }
             }
-            
-            process.waitUntilExit()
+
+            // 用 semaphore 等待 terminationHandler 触发（替代 process.waitUntilExit()，
+            // 后者在 Java 死锁时可能无限阻塞）。terminationHandler 已保证 callback 被调用一次。
+            terminationSemaphore.wait()
             log("\(instance.name) 进程已退出, 退出代码 \(process.terminationStatus)")
             if process.terminationStatus == 0 {
                 debug("检测到退出代码为 0，已删除日志")
                 try? FileManager.default.removeItem(at: self.logURL)
             }
-            DispatchQueue.main.async {
-                callback(process.terminationStatus)
-            }
             instance.process = nil
         } catch {
             err(error.localizedDescription)
+            terminationSemaphore.signal()  // 异常路径也要 signal，防止 launch() 永久阻塞
         }
     }
     
@@ -208,6 +220,17 @@ public class MinecraftLauncher {
     }
     
     private func buildGameArguments(_ options: LaunchOptions) -> [String] {
+        // 用户类型：1.20.5+ 的 'serverbound/minecraft:hello' 包按 user_type 校验身份。
+        // 离线账号必须传 "legacy"，否则 Netty 编码器会抛 EncoderException：
+        //   "Failed to encode packet 'serverbound/minecraft:hello'"
+        // 正版/Microsoft 与外置验证 (yggdrasil) 用 "msa"；未指定账号默认按离线处理
+        let userType: String = {
+            switch options.account {
+            case .offline: return "legacy"
+            case .microsoft, .yggdrasil: return "msa"
+            case nil: return "legacy"
+            }
+        }()
         let values: [String: String] = [
             "auth_player_name": options.playerName,
             "version_name": instance.version!.displayName,
@@ -216,8 +239,10 @@ public class MinecraftLauncher {
             "assets_index_name": instance.manifest.assetIndex?.id ?? "",
             "auth_uuid": options.uuid.uuidString.replacingOccurrences(of: "-", with: "").lowercased(),
             "auth_access_token": options.accessToken,
-            "user_type": "msa",
+            "user_type": userType,
             "version_type": "PCL.Mac \(SharedConstants.shared.version)",
+            // user_properties：离线账号传空 JSON；正版账号本应注入真实 profile（含皮肤/披风），
+            // 当前 stub 模式所有账号都用 OfflineAccount，先保持空 JSON 以保证进入世界/服务器成功
             "user_properties": "\"{}\""
         ]
         

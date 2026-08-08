@@ -20,6 +20,8 @@
 - 修复缓存读写并发死锁（`NSLock` → `NSRecursiveLock`）
 - 修复列表翻译缓存全量扫描触发海量磁盘 IO 导致的卡顿：此前进入页面/返回列表会对全部 7 万余条目录逐条执行磁盘检查，改为纯内存扫描；磁盘缓存命中的翻译由进入可视区域的卡片按需回读，滚动到哪显示到哪
 - 修复实时翻译无并发上限导致的请求堆积：全局翻译并发限制为最多 24 个同时进行，滚动浏览大量卡片时不再无限制创建后台网络任务
+- **修复创建世界 / 进入世界报错 `Internal Exception: io.netty.handler.codec.EncoderException: Failed to encode packet 'serverbound/minecraft:hello'`**：`buildGameArguments` 不再写死 `user_type: "msa"`——离线账号必须传 `legacy`，否则 Minecraft 1.20.5+ 的 `serverbound/minecraft:hello` 包 Netty 编码器按 user_type 校验身份失败。现在按 `options.account` 类型动态选择（offline → `legacy`，microsoft/yggdrasil → `msa`）
+- **修复游戏关闭启动器检测不到**：`MinecraftLauncher.launch` 增加 `process.terminationHandler`，进程退出时主动在主线程触发 callback；同时用 `DispatchSemaphore` 替代 `process.waitUntilExit()`——一旦 Java 进程异常（卡死/死锁/僵尸），旧实现永久阻塞、UI 永远收不到 completion；现在 terminationHandler 必然触发一次 callback。catch 路径也 signal semaphore 防止 launch() 自身永久阻塞
 
 ### 新增
 
