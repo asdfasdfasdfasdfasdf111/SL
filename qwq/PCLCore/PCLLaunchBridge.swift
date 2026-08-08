@@ -195,7 +195,9 @@ private func pclLaunchInternal(
     instance.config.javaURL = finalJavaURL
     instance.saveConfig()
 
-    if let javaMajor = MinecraftInstance.readJavaMajorVersion(at: finalJavaURL) {
+    // Java 主版本只探测一次（读 release 文件，不启动进程），后续校验/过滤复用
+    let selectedJavaMajor = MinecraftInstance.readJavaMajorVersion(at: finalJavaURL)
+    if let javaMajor = selectedJavaMajor {
         log("Java 版本校验: major=\(javaMajor), 要求>=\(minJavaVersion), 满足=\(javaMajor >= minJavaVersion)")
     }
 
@@ -210,7 +212,7 @@ private func pclLaunchInternal(
 
     // 过滤当前 Java 不支持的参数（如 Java < 23 过滤 --sun-misc-unsafe-memory-access）
     // 注意：getArguments() 返回 manifest 内部存储的对象，直接修改 jvm 即可生效
-    if let javaMajor = MinecraftInstance.readJavaMajorVersion(at: finalJavaURL), javaMajor < 23 {
+    if let javaMajor = selectedJavaMajor, javaMajor < 23 {
         let args = instance.manifest.getArguments()
         args.jvm = args.jvm.filter { arg in
             if let s = arg.string, s.contains("--sun-misc-unsafe-memory-access") {
@@ -227,28 +229,31 @@ private func pclLaunchInternal(
     let logURL = launcher.logURL
 
     // 后台监听日志文件，新行回传给 UI
-    // 用按行增量推送：全量读取后只回传新增行，避免 readDataToEndOfFile 对追加文件不可靠
+    // 增量读取：FileHandle 维护读偏移，只读新增字节（原实现每 150ms 全量 Data(contentsOf:) 重读整个文件）
+    // 无新数据时休眠 400ms；UTF-8 字符跨 chunk 截断通过「仅按 \n 边界切行 + 缓冲尾部」保证完整
     let logTask = Task.detached(priority: .utility) {
-        var sentLines: Int = 0
+        guard let handle = try? FileHandle(forReadingAtPath: logURL.path) else { return }
+        defer { try? handle.close() }
+        var pending = Data()
         while !Task.isCancelled {
-            guard let data = try? Data(contentsOf: logURL),
-                  let str = String(data: data, encoding: .utf8) else {
-                try? await Task.sleep(for: .milliseconds(150))
-                continue
-            }
-            let lines = str.split(separator: "\n", omittingEmptySubsequences: false)
-            if lines.count > sentLines {
-                for i in sentLines..<lines.count {
-                    let line = String(lines[i])
-                    if !line.isEmpty { logHandler(line) }
+            if let chunk = try? handle.read(upToCount: 64 * 1024), !chunk.isEmpty {
+                pending.append(chunk)
+                var lines: [String] = []
+                while let nl = pending.firstIndex(of: 0x0A) {
+                    let lineData = pending.prefix(upTo: nl)
+                    pending.removeSubrange(0...nl)
+                    if let s = String(data: lineData, encoding: .utf8), !s.isEmpty {
+                        lines.append(s)
+                    }
                 }
-                sentLines = lines.count
+                for line in lines { logHandler(line) }
+            } else {
+                try? await Task.sleep(for: .milliseconds(400))
             }
-            try? await Task.sleep(for: .milliseconds(150))
         }
     }
 
-    // 后台轮询检测 MC 窗口出现，触发 launchSuccess
+    // 后台轮询检测 MC 窗口出现，触发 launchSuccess（2s 间隔：CGWindowList 全量遍历较贵，降频省 CPU）
     let windowTask = Task.detached(priority: .utility) {
         var fired = false
         while !Task.isCancelled, !fired {
@@ -265,7 +270,7 @@ private func pclLaunchInternal(
                     }
                 }
             }
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: .seconds(2))
         }
     }
 

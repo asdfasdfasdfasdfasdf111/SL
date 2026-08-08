@@ -114,7 +114,6 @@ public class MinecraftLauncher {
         args.append(contentsOf: manifestJVM)
 
         // 3) 动态补齐缺失的关键参数（仅当 manifest 未提供时才追加，避免重复）
-        let normalizedArgs = manifestJVM.map { $0.replacingOccurrences(of: "${natives_directory}", with: "") }
 
         // -Xmx 内存：manifest 一般不含，始终追加
         args.append("-Xmx\(instance.config.maxMemory)m")
@@ -131,7 +130,30 @@ public class MinecraftLauncher {
             args.append(contentsOf: ["-cp", "${classpath}"])
         }
 
-        _ = normalizedArgs // 保留计算结果以便调试
+        // 4) 平台/版本适配参数补齐（均先查重，manifest 已有则不重复）
+        // macOS LWJGL3 必需：令启动线程成为 AWT 主线程（官方 1.13+ JSON 自带；第三方/自定义 JSON 丢失时补齐）
+        let hasStartOnFirstThread = args.contains { $0.contains("XstartOnFirstThread") }
+        if !hasStartOnFirstThread {
+            args.append("-XstartOnFirstThread")
+        }
+
+        // Java 8 及以下默认 GC 为 CMS/Serial，显式启用 G1 改善长卡顿（Java 9+ 默认已是 G1，无需）
+        if let javaPath = options.javaPath,
+           let javaMajor = MinecraftInstance.readJavaMajorVersion(at: javaPath),
+           javaMajor <= 8,
+           !args.contains(where: { $0.contains("UseG1GC") }) {
+            args.append("-XX:+UseG1GC")
+        }
+
+        // 诊断：OOM 时留下堆转储现场（零运行开销，仅在崩溃时写文件）
+        if !args.contains(where: { $0.contains("HeapDumpOnOutOfMemoryError") }) {
+            args.append("-XX:+HeapDumpOnOutOfMemoryError")
+        }
+
+        // 字符编码一致性：显式声明 UTF-8，避免环境差异导致的乱码
+        if !args.contains(where: { $0.contains("file.encoding") }) {
+            args.append("-Dfile.encoding=UTF-8")
+        }
 
         return Util.replaceTemplateStrings(args, with: values)
     }
