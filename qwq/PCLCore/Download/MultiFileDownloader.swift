@@ -75,85 +75,36 @@ public class MultiFileDownloader {
     
     public func start() async throws {
         guard !items.isEmpty else { return }
-        if concurrentLimit == 1 {
-            for item in items {
-                try await attemptDownload(item)
+        
+        // 构造多源分片下载任务：主源 + 官方源 fallback（PCL2 NetFile.Sources 多源失败切换）
+        let files = items.map { item in
+            var urls = [item.url]
+            if let fallback = item.fallbackURL {
+                urls.append(fallback)
             }
-            return
+            let checker: FileChecker?
+            if let sha1 = item.sha1 {
+                checker = FileChecker(hash: sha1)
+            } else {
+                checker = nil
+            }
+            return PCLNetFile(urls: urls, destination: item.destination, checker: checker, replaceMethod: replaceMethod)
         }
         
-        var tickerTask: Task<Void, Error>? = nil
-        if progress != nil || task != nil {
-            tickerTask = Task {
-                while !Task.isCancelled {
-                    try? await Task.sleep(for: .seconds(0.1))
-                    if Task.isCancelled { break }
-                    await MainActor.run {
-                        progress?(self.totalProgress / Double(self.total), self.finishedCount)
-                        task?.currentStagePercentage = self.totalProgress / Double(self.total)
-                    }
-                }
+        try await NetManager.shared.downloadAll(files, overallProgress: { p, count in
+            Task { @MainActor in
+                self.totalProgress = p
+                self.finishedCount = count
+                self.progress?(p, count)
+                self.task?.currentStagePercentage = p
             }
-        }
-        
-        defer {
-            tickerTask?.cancel()
-        }
-        
-        var nextIndex = 0
-        
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            let initial = min(concurrentLimit, total)
-            while nextIndex < initial {
-                let item = items[nextIndex]
-                group.addTask {
-                    try await self.attemptDownload(item)
-                }
-                nextIndex += 1
-            }
-            
-            while let _ = try await group.next() {
-                if nextIndex < total {
-                    let item = items[nextIndex]
-                    group.addTask {
-                        try await self.attemptDownload(item)
-                    }
-                    nextIndex += 1
-                }
-            }
-        }
+        }, onFileCompleted: {
+            self.task?.completeOneFile()
+        })
         
         await MainActor.run {
             progress?(self.totalProgress / Double(self.total), self.finishedCount)
             task?.currentStagePercentage = self.totalProgress / Double(self.total)
-        }
-    }
-    
-    private func attemptDownload(_ item: DownloadItem) async throws {
-        if FileManager.default.fileExists(atPath: item.destination.path) && replaceMethod == .throw {
-            throw MyLocalizedError(reason: "\(item.destination.lastPathComponent) 已存在。")
-        }
-        
-        var lastProgress: Double = 0
-        
-        do {
-            try await SingleFileDownloader.download(url: item.url, destination: item.destination, replaceMethod: replaceMethod, expectedSHA1: item.sha1) { progress in
-                self.totalProgress += (progress - lastProgress)
-                lastProgress = progress
-            }
-        } catch {
-            guard let fallback = item.fallbackURL else {
-                throw error
-            }
-            try await SingleFileDownloader.download(url: fallback, destination: item.destination, replaceMethod: .replace, expectedSHA1: item.sha1) { progress in
-                self.totalProgress += (progress - lastProgress)
-                lastProgress = progress
-            }
-        }
-        
-        finishedCount += 1
-        await MainActor.run {
-            task?.completeOneFile()
         }
     }
 }

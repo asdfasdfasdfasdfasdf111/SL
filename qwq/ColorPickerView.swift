@@ -63,46 +63,42 @@ struct AnimatedCategoryPicker: View {
         colorScheme == .light ? theme.accentColor.opacity(0.2) : theme.accentColor.opacity(0.3)
     }
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            ScrollViewReader { proxy in
-                HStack(spacing: 24) {
-                    ForEach(categories) { category in
-                        Button(action: {
-                            withAnimation(.spring(response: 0.52, dampingFraction: 0.58, blendDuration: 0.12)) {
-                                selectedCategory = category
-                            }
-                        }) {
-                            HStack(spacing: 6) {
-                                Image(systemName: category.systemImage).font(.body)
-                                Text(category.name).font(.title3).fontWeight(.medium)
-                            }
-                            .padding(.vertical, 8).padding(.horizontal, 12)
-                            .contentShape(Rectangle())
-                            .background(GeometryReader { geo in
-                                Color.clear
-                                    .onAppear { frames[category] = geo.frame(in: .global) }
-                                    .onChange(of: geo.frame(in: .global)) { frames[category] = $0 }
-                            })
-                        }
-                        .buttonStyle(.plain)
-                        .id(category.id)
-                        .foregroundColor(selectedCategory == category ? theme.accentColor : .secondary)
+        HStack(spacing: 24) {
+            ForEach(categories) { category in
+                Button(action: {
+                    withAnimation(.spring(response: 0.52, dampingFraction: 0.58, blendDuration: 0.12)) {
+                        selectedCategory = category
                     }
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: category.systemImage).font(.body)
+                        Text(category.name).font(.title3).fontWeight(.medium)
+                    }
+                    .padding(.vertical, 8).padding(.horizontal, 12)
+                    .contentShape(Rectangle())
+                    .background(GeometryReader { geo in
+                        Color.clear
+                            .onAppear { frames[category] = geo.frame(in: .global) }
+                            .onChange(of: geo.frame(in: .global)) { frames[category] = $0 }
+                    })
                 }
-                .padding(.horizontal, 16).padding(.vertical, 8)
-                .background(
-                    GeometryReader { geo in
-                        if let selectedFrame = frames[selectedCategory] {
-                            RoundedRectangle(cornerRadius: 20)
-                                .fill(highlightColor)
-                                .frame(width: selectedFrame.width, height: selectedFrame.height)
-                                .position(x: selectedFrame.midX - geo.frame(in: .global).minX,
-                                          y: selectedFrame.midY - geo.frame(in: .global).minY)
-                                .animation(.spring(response: 0.52, dampingFraction: 0.58, blendDuration: 0.12), value: selectedCategory)
-                        }
-                    }
-                )
+                .buttonStyle(.plain)
+                .id(category.id)
+                .foregroundColor(selectedCategory == category ? theme.accentColor : .secondary)
             }
         }
+        .padding(.horizontal, 16).padding(.vertical, 8)
+        .background(
+            GeometryReader { geo in
+                if let selectedFrame = frames[selectedCategory] {
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(highlightColor)
+                        .frame(width: selectedFrame.width, height: selectedFrame.height)
+                        .position(x: selectedFrame.midX - geo.frame(in: .global).minX,
+                                  y: selectedFrame.midY - geo.frame(in: .global).minY)
+                        .animation(.spring(response: 0.52, dampingFraction: 0.58, blendDuration: 0.12), value: selectedCategory)
+                }
+            }
+        )
     }
 }

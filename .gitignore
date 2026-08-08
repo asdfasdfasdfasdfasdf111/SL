@@ -36,3 +36,12 @@ sl-apple.html
 
 # gh 登录配置（含 token，绝不可提交）
 .ghconfig/
+# 第三方参考源码（PCL2 .NET 原版，勿提交）
+PCL2/
+
+# 爬虫数据产物（App 实际使用 qwq/ 下已跟踪的副本；根目录副本可重新生成）
+/modrinth_catalog.json
+/modrinth_catalog.json.gz
+
+# 工作数据
+.workbuddy-ai/

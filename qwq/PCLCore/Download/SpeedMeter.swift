@@ -10,20 +10,20 @@ import Combine
 
 @MainActor
 final class SpeedMeter: ObservableObject {
-    public static let shared: SpeedMeter = .init()
+    public nonisolated(unsafe) static let shared: SpeedMeter = .init()
     
     @Published public private(set) var downloadSpeed: Int64 = 0
     
     private let counter = CounterActor()
-    private var tickerTask: Task<Void, Never>?
+    private nonisolated(unsafe) var tickerTask: Task<Void, Never>?
     
-    private init() {
+    nonisolated private init() {
         guard tickerTask == nil else { return }
-        tickerTask = Task(priority: .background) {
+        tickerTask = Task { @MainActor in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 let intervalBytes = await counter.takeInterval()
-                self.downloadSpeed = intervalBytes
+                downloadSpeed = intervalBytes
             }
         }
     }

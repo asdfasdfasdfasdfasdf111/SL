@@ -76,7 +76,7 @@ public class MinecraftInstaller {
         
         let url: URL = try DownloadSourceManager.shared.getAssetIndexURL(task.minecraftVersion, manifest).unwrap("无法获取 \(task.minecraftVersion.displayName) 的 assetIndex 下载 URL。")
         let destination: URL = task.minecraftDirectory.assetsURL.appending(component: "indexes").appending(component: "\(manifest.assetIndex!.id).json")
-        try await SingleFileDownloader.download(task: task, url: url, destination: destination)
+        try await SingleFileDownloader.download(task: task, url: url, destination: destination, expectedSHA1: manifest.assetIndex?.sha1)
         do {
             let data = try Data(contentsOf: destination)
             task.assetIndex = try .parse(data)
@@ -90,15 +90,16 @@ public class MinecraftInstaller {
         task.updateStage(.clientResources)
         let objects = task.assetIndex!.objects
         
-        var urls: [URL] = []
-        var destinations: [URL] = []
+        // asset 以 hash 命名，直接用 hash 作为校验：已存在且匹配 → 引擎内跳过，损坏 → 重下
+        var items: [DownloadItem] = []
         
         for object in objects {
-            urls.append(object.appendTo(URL(string: "https://resources.download.minecraft.net")!))
-            destinations.append(object.appendTo(task.minecraftDirectory.assetsURL.appending(path: "objects")))
+            let src = object.appendTo(URL(string: "https://resources.download.minecraft.net")!)
+            let dest = object.appendTo(task.minecraftDirectory.assetsURL.appending(path: "objects"))
+            items.append(.init(src, dest, sha1: object.hash))
         }
         
-        try await MultiFileDownloader(task: task, urls: urls, destinations: destinations, concurrentLimit: 256).start()
+        try await MultiFileDownloader(task: task, items: items, concurrentLimit: 256).start()
     }
     
     // MARK: 下载依赖项
@@ -112,6 +113,11 @@ public class MinecraftInstaller {
             if let artifact = library.artifact {
                 let dest = task.minecraftDirectory.librariesURL.appending(path: artifact.path)
                 if CacheStorage.default.copy(name: library.name, to: dest) {
+                    continue
+                }
+                
+                // 缺失预分析（PCL2 McLibFix）：本地已存在且 sha1 匹配 → 不进下载列表，进度按缺失数计算
+                if FileChecker(hash: artifact.sha1).check(dest) == nil {
                     continue
                 }
                 
@@ -139,6 +145,11 @@ public class MinecraftInstaller {
         for (library, artifact) in try task.manifest.unwrap().getNeededNatives() {
             let dest = task.minecraftDirectory.librariesURL.appending(path: artifact.path)
             if CacheStorage.default.copy(name: library.name, to: dest) {
+                continue
+            }
+            
+            // 缺失预分析：已存在且 sha1 匹配 → 跳过
+            if FileChecker(hash: artifact.sha1).check(dest) == nil {
                 continue
             }
             
@@ -326,5 +337,24 @@ public class MinecraftInstaller {
             callback?()
         }
         return task
+    }
+    
+    // MARK: 确保 natives 已解压（PCL2 McLaunchNatives 语义：启动前缺失则重解压）
+    public static func ensureNatives(_ instance: MinecraftInstance) throws {
+        let nativesURL = instance.runningDirectory.appending(path: "natives")
+        // 已有可用的 dylib/jnilib 则跳过
+        if let contents = try? FileManager.default.contentsOfDirectory(atPath: nativesURL.path),
+           contents.contains(where: { $0.hasSuffix(".dylib") || $0.hasSuffix(".jnilib") }) {
+            return
+        }
+        guard let manifest = instance.manifest, !manifest.getNeededNatives().isEmpty else { return }
+        let task = MinecraftInstallTask(
+            minecraftVersion: instance.version ?? .init(displayName: "1.0"),
+            minecraftDirectory: instance.minecraftDirectory,
+            name: instance.name
+        ) { _ in }
+        task.manifest = manifest
+        try unzipNatives(task)
+        log("已重新解压 natives: \(instance.name)")
     }
 }

@@ -89,6 +89,7 @@ class LauncherSettings: ObservableObject {
         }
     }()
     @Published var availableJavaList: [JavaInfo] = []
+    @Published var isJavaScanning: Bool = true
     @Published var selectedJavaPath: String? {
         didSet { UserDefaults.standard.set(selectedJavaPath, forKey: UDK.selectedJavaPath) }
     }

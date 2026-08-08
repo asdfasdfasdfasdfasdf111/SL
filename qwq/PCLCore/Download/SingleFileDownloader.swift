@@ -17,113 +17,20 @@ public class SingleFileDownloader {
         expectedSHA1: String? = nil,
         progress: ((Double) -> Void)? = nil
     ) async throws {
-        // 若文件已存在，且指定了在存在时跳过，直接返回
-        if FileManager.default.fileExists(atPath: destination.path) && replaceMethod == .skip {
-            if let expectedSHA1,
-               let actualSHA1 = try? Util.sha1OfFile(url: destination),
-               actualSHA1.lowercased() != expectedSHA1.lowercased() {
-                try FileManager.default.removeItem(at: destination)
-            } else {
-                task?.completeOneFile()
-                progress?(1)
-                return
-            }
-        }
-        
-        // 创建请求并设置 User-Agent
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("PCL.Mac/\(SharedConstants.shared.version)", forHTTPHeaderField: "User-Agent")
-        
-        // 发送请求
-        let (byteStream, response) = try await URLSession.shared.bytes(for: request)
-        
-        // 判断响应码是否正确
-        if let http = response as? HTTPURLResponse,
-           !(200..<300).contains(http.statusCode) {
-            err("无法下载 \(destination.lastPathComponent): \(url.host() ?? "未知主机") 返回了 \(http.statusCode)")
-            throw MyLocalizedError(reason: "远程服务器返回了 \(http.statusCode)。")
-        }
-        
-        // 创建临时文件
-        let tempURL = SharedConstants.shared.temperatureURL.appendingPathComponent(UUID().uuidString)
-        FileManager.default.createFile(atPath: tempURL.path, contents: nil)
-        
-        let handle = try FileHandle(forWritingTo: tempURL)
-        defer {
-            try? handle.close()
-            // 若 moveItem 已成功则临时文件不存在，忽略错误；出错时清理残留
-            try? FileManager.default.removeItem(at: tempURL)
-        }
-        
-        let expectedLength = response.expectedContentLength
-        var received: Int64 = 0
-        
-        var buffer = Data()
-        buffer.reserveCapacity(64 * 1024)
-        
-        var lastProgressReportTime = CFAbsoluteTimeGetCurrent()
-        
-        // 未知总长度时以 0 表示“进行中”，避免向进度累加逻辑传入负数
-        progress?(expectedLength > 0 ? 0.0 : 0)
-        
-        // 从流逐字节读取并累积到缓冲区
-        for try await byte in byteStream {
-            buffer.append(byte)
-            received &+= 1
-            
-            // 若缓冲区已满，写入到文件并清空
-            if buffer.count >= 64 * 1024 {
-                try Task.checkCancellation()
-                handle.write(buffer)
-                await SpeedMeter.shared.addBytes(buffer.count)
-                buffer.removeAll(keepingCapacity: true)
-            }
-            
-            // 调用 progress 回调
-            if expectedLength > 0 {
-                let now = CFAbsoluteTimeGetCurrent()
-                if now - lastProgressReportTime >= 0.1 {
-                    let downloadProgress = Double(received) / Double(expectedLength)
-                    await MainActor.run {
-                        task?.currentStagePercentage = downloadProgress
-                        progress?(downloadProgress)
-                    }
-                    lastProgressReportTime = now
-                }
-            }
-        }
-        
-        // 如果缓冲区还有数据，全部写入到文件
-        if !buffer.isEmpty {
-            handle.write(buffer)
-            await SpeedMeter.shared.addBytes(buffer.count)
-        }
-        
-        // 移动临时文件到目标位置
-        if FileManager.default.fileExists(atPath: destination.path) {
-            if replaceMethod == .replace {
-                try FileManager.default.removeItem(at: destination)
-            } else if replaceMethod == .throw {
-                throw MyLocalizedError(reason: "\(destination.lastPathComponent) 已存在。")
-            }
-            
-        } else {
-            try? FileManager.default.createDirectory(at: destination.parent(), withIntermediateDirectories: true)
-        }
-        
-        try FileManager.default.moveItem(at: tempURL, to: destination)
-        
-        // 校验 SHA-1：若与期望值不符，删除已下载文件并抛出错误
+        // 已存在且指定跳过：若存在且哈希匹配则直接完成（新引擎 FileChecker 内部处理）
+        let checker: FileChecker?
         if let expectedSHA1 {
-            let actualSHA1 = try Util.sha1OfFile(url: destination)
-            guard actualSHA1.lowercased() == expectedSHA1.lowercased() else {
-                try? FileManager.default.removeItem(at: destination)
-                throw MyLocalizedError(reason: "\(destination.lastPathComponent) 的 SHA-1 校验失败：期望 \(expectedSHA1)，实际 \(actualSHA1)")
-            }
+            checker = FileChecker(hash: expectedSHA1)
+        } else {
+            checker = nil
         }
-        
+        let file = PCLNetFile(urls: [url], destination: destination, checker: checker, replaceMethod: replaceMethod)
+
+        try await NetManager.shared.download(file) { p in
+            // NetManager 内部已在主线程回调
+            task?.currentStagePercentage = p
+            progress?(p)
+        }
         task?.completeOneFile()
-        progress?(1.0)
     }
 }

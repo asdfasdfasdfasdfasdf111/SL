@@ -67,15 +67,13 @@ final class TranslationService {
 
         // 2. 内置翻译表快速匹配
         if let builtin = BuiltinProjectTranslation[projectId] ?? BuiltinProjectTranslation[projectId.lowercased()] {
-            cache.setObject(builtin, forKey: "tr_\(projectId)")
+            cache.setText(builtin, forKey: "tr_\(projectId)")
             return builtin
         }
 
         // 3. 检查缓存 — 只接受含中文的缓存
-        if let cached: String = cache.object(String.self, forKey: "tr_\(projectId)") {
-            if !cached.isEmpty && containsChinese(cached) {
-                return cached
-            }
+        if let cached = cache.textGet("tr_\(projectId)"), !cached.isEmpty, containsChinese(cached) {
+            return cached
         }
 
         // 4. 去重
@@ -83,9 +81,7 @@ final class TranslationService {
         if inFlight.contains(projectId) {
             lock.unlock()
             try? await Task.sleep(nanoseconds: 500_000_000)
-            if let cached: String = cache.object(String.self, forKey: "tr_\(projectId)") {
-                if !cached.isEmpty && containsChinese(cached) { return cached }
-            }
+            if let cached = cache.textGet("tr_\(projectId)"), !cached.isEmpty, containsChinese(cached) { return cached }
             return text
         } else {
             inFlight.insert(projectId)
@@ -99,28 +95,25 @@ final class TranslationService {
         Self.translationSemaphore.wait()
         defer { Self.translationSemaphore.signal() }
 
-        // 5. 并行请求 Modrinth 项目详情 + 镜像翻译，减少等待时间
-        async let modrinthResult = fetchModrinthProject(projectId: projectId, fallback: text)
-        async let mirrorResult = fetchMirrorTranslation(projectId: projectId)
-
-        let (modrinthDesc, mirrorTranslated) = await (modrinthResult, mirrorResult)
-
+        // 5. 竞速拉取 Modrinth 详情与镜像翻译：谁先给出含中文的结果就采用谁，
+        //    不再干等慢/超时的源（Modrinth API 在部分地区很慢/不稳定，镜像通常秒回）
+        let (modrinthDesc, mirrorTranslated) = await raceTranslationSources(projectId: projectId, fallback: text)
         // 5a. Modrinth 返回了中文 → 直接用
         if let result = modrinthDesc, !result.isEmpty, containsChinese(result) {
-            cache.setObject(result, forKey: "tr_\(projectId)")
+            cache.setText(result, forKey: "tr_\(projectId)")
             return result
         }
 
-        // 5b. 镜像翻译返回了中文 → 直接用
+        // 5b. 镜像返回了中文 → 直接用
         if let result = mirrorTranslated, !result.isEmpty, containsChinese(result) {
-            cache.setObject(result, forKey: "tr_\(projectId)")
+            cache.setText(result, forKey: "tr_\(projectId)")
             return result
         }
 
         // 5c. Modrinth 返回了英文原文 → 用 MyMemory 在线翻译
         if let englishText = modrinthDesc, !englishText.isEmpty, !containsChinese(englishText) {
             if let translated = await fetchMyMemoryTranslation(text: englishText) {
-                cache.setObject(translated, forKey: "tr_\(projectId)")
+                cache.setText(translated, forKey: "tr_\(projectId)")
                 return translated
             }
         }
@@ -128,12 +121,38 @@ final class TranslationService {
         // 5d. 用输入的原始 text 最后尝试 MyMemory
         if !text.isEmpty, !containsChinese(text) {
             if let translated = await fetchMyMemoryTranslation(text: text) {
-                cache.setObject(translated, forKey: "tr_\(projectId)")
+                cache.setText(translated, forKey: "tr_\(projectId)")
                 return translated
             }
         }
 
         return text
+    }
+
+    /// 竞速两个翻译源：Modrinth 详情 与 镜像翻译，返回 (Modrinth 结果, 镜像结果)。
+    /// 任一源先返回含中文的结果就立即取消另一个，避免被慢/超时的源拖垮整体翻译速度。
+    private func raceTranslationSources(projectId: String, fallback: String) async -> (String?, String?) {
+        await withTaskGroup(of: (Int, String?).self) { group in
+            var modrinth: String?
+            var mirror: String?
+            group.addTask {
+                (0, await self.fetchModrinthProject(projectId: projectId, fallback: fallback))
+            }
+            group.addTask {
+                (1, await self.fetchMirrorTranslation(projectId: projectId))
+            }
+            var done = 0
+            while let (tag, value) = await group.next(), done < 2 {
+                done += 1
+                if tag == 0 { modrinth = value } else { mirror = value }
+                // 拿到含中文的可用结果 → 取消另一个源，立即采用
+                if let value = value, !value.isEmpty, containsChinese(value) {
+                    group.cancelAll()
+                    break
+                }
+            }
+            return (modrinth, mirror)
+        }
     }
 
     private func fetchModrinthProject(projectId: String, fallback: String) async -> String? {
@@ -213,8 +232,7 @@ final class TranslationService {
         if let builtin = BuiltinProjectTranslation[projectId] ?? BuiltinProjectTranslation[projectId.lowercased()] {
             return builtin
         }
-        if let cached: String = cache.object(String.self, forKey: "tr_\(projectId)"),
-           !cached.isEmpty, containsChinese(cached) {
+        if let cached = cache.textGet("tr_\(projectId)"), !cached.isEmpty, containsChinese(cached) {
             return cached
         }
         return nil
@@ -225,10 +243,34 @@ final class TranslationService {
         if let builtin = BuiltinProjectTranslation[projectId] ?? BuiltinProjectTranslation[projectId.lowercased()] {
             return builtin
         }
-        if let cached: String = cache.memoryObject(String.self, forKey: "tr_\(projectId)"),
-           !cached.isEmpty, containsChinese(cached) {
+        if let cached = cache.memoryText("tr_\(projectId)"), !cached.isEmpty, containsChinese(cached) {
             return cached
         }
         return nil
+    }
+
+    /// 批量预取翻译缓存（切分类/列表填充时调用，替代逐条查盘）：
+    /// 内置表/内存命中直接收集；未命中的 id 交给 CacheManager 一次性枚举磁盘并批量读入内存，
+    /// 返回可直接合并进 UI 的 [projectId: 中文翻译]。
+    func prefetchTranslations(ids: [String]) -> [String: String] {
+        guard !ids.isEmpty else { return [:] }
+        var result: [String: String] = [:]
+        var diskKeys: [String] = []
+        for id in ids {
+            let key = "tr_\(id)"
+            if let builtin = BuiltinProjectTranslation[id] ?? BuiltinProjectTranslation[id.lowercased()] {
+                result[id] = builtin
+            } else if let mem = cache.memoryText(key), !mem.isEmpty, containsChinese(mem) {
+                result[id] = mem
+            } else {
+                diskKeys.append(key)
+            }
+        }
+        // 批量磁盘预取（一次性枚举 + 只读命中文件）
+        let fromDisk = cache.prefetchText(keys: diskKeys)
+        for (key, text) in fromDisk where !text.isEmpty && containsChinese(text) {
+            result[String(key.dropFirst(3))] = text
+        }
+        return result
     }
 }

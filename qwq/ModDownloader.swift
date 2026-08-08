@@ -218,6 +218,16 @@ public class ModDownloader {
         return try await downloadMod(version: latest, destination: destination)
     }
     
+    /// 不带加载器过滤的版本下载：资源包/光影等项目的版本 loaders 字段通常是 ["minecraft"] 或空，
+    /// 用 mod 加载器（如 fabric）过滤会得到空结果导致永远下载失败。
+    public func downloadLatestMod(modId: String, gameVersion: String, destination: URL) async throws -> URL {
+        let versions = try await getVersions(modId: modId, gameVersions: [gameVersion])
+        guard let latest = versions.first else {
+            throw ModError.noCompatibleVersion
+        }
+        return try await downloadMod(version: latest, destination: destination)
+    }
+    
     private struct SearchResult: Codable {
         let hits: [ModrinthMod]
     }
@@ -230,7 +240,9 @@ public class ModDownloader {
         guard !gameVersion.isEmpty else { throw ModError.noGameVersionSet }
         guard !gameRoot.isEmpty else { throw ModError.noGameRootSet }
 
-        let modsDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("mods")
+        // 游戏启动时 game_directory 指向 <gameRoot>/versions/<version>，
+        // mods 必须放在版本文件夹内才会被游戏加载
+        let modsDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("versions/\(gameVersion)/mods")
 
         return try await withThrowingTaskGroup(of: URL?.self) { group in
             for loader in ModLoader.allCases {

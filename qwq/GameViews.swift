@@ -29,7 +29,9 @@ struct DownloadCategoryView: View {
     @State private var translateTask: Task<Void, Never>?
     @State private var translatedSubtitles: [String: String] = [:]
     @State private var pendingTranslationIDs: Set<String> = []
-    @State private var lastAnchorItemID: String? = nil
+    // 滚动锚点：仅用于返回列表时恢复位置，无需触发视图重渲染，故不用 @State（快速滑动时
+    // 每次 onAppear 写 @State 都会让整个列表 body 重算，是快速滑动卡顿的元凶之一）
+    private nonisolated(unsafe) static var lastAnchorItemID: String? = nil
     @State private var searchPopInIds: Set<String> = []
     @State private var selectedModItem: DownloadedItem? = nil
     @State private var showDetail = false
@@ -40,6 +42,9 @@ struct DownloadCategoryView: View {
     @State private var hasMore = true
     @State private var isLoadingMore = false
     @State private var activeSearchQuery = ""
+    // 本地目录分页展示：全量目录（如 mod 分类可达数万条）不能一次注入 ForEach 做全量 diff，
+    // 首帧只展示前 displayLimit 条，滚动到底部自动追加（网络模式条目 ≤ 100，永不触发截断）
+    @State private var displayLimit = 120
 
     // 圆形毛玻璃下载按钮 — 全局顶层，跨页面保留
     @State private var showCircleButton = false
@@ -104,6 +109,7 @@ struct DownloadCategoryView: View {
                     debouncedSearchText = searchText
                     activeSearchQuery = ""
                     filteredResults = items
+                    displayLimit = 120
                     searchPopInIds = []
                 }
                 return
@@ -118,11 +124,14 @@ struct DownloadCategoryView: View {
                     debouncedSearchText = searchText
                     activeSearchQuery = ""
                     filteredResults = filtered
+                    displayLimit = 120
                     searchPopInIds = []
                 }
                 return
             }
             // 其余分类：优先本地全量目录过滤（标题/简介/标签，含中文标签直接匹配）
+            // 仅当后台已解析完成时读取本地目录，避免主线程同步解压 12 万条目录造成卡顿
+            if Self.localCatalogReady {
             let local = Self.localItems(for: selectedSection)
             if !local.isEmpty {
                 let filtered = local.filter { item in
@@ -135,10 +144,12 @@ struct DownloadCategoryView: View {
                     debouncedSearchText = searchText
                     activeSearchQuery = ""
                     filteredResults = filtered
+                    displayLimit = 120
                     searchPopInIds = []
                 }
                 startSequentialTranslation(for: filtered)
                 return
+            }
             }
             // 目录不可用时：中文先翻译成英文，再调用 API 搜索全库（检索标题与简介）
             var searchQuery = normalized
@@ -170,6 +181,7 @@ struct DownloadCategoryView: View {
                 currentOffset = result.items.count
                 hasMore = result.totalHits > result.items.count
                 filteredResults = result.items
+                displayLimit = 120
                 searchPopInIds = []
             }
         }
@@ -206,6 +218,7 @@ struct DownloadCategoryView: View {
                 currentOffset = offset + result.items.count
                 hasMore = result.totalHits > offset + result.items.count
                 filteredResults = merged
+                displayLimit = 120
                 isLoadingMore = false
             }
         }
@@ -289,9 +302,16 @@ struct DownloadCategoryView: View {
             translateTask?.cancel()
             searchDebounceTask?.cancel()
         }
+        .onReceive(NotificationCenter.default.publisher(for: DownloadCategoryView.localCatalogReadyNotification)) { _ in
+            // 本地目录后台解析完成后，若正停在 mod/资源包/光影/整合包页，自动刷新为全量本地目录
+            if selectedSection != .game {
+                fetchItems()
+            }
+        }
         .onChange(of: searchText) { _ in applyFilter() }
         .onChange(of: items) { newItems in
             filteredResults = newItems
+            displayLimit = 120
             if !searchText.trimmingCharacters(in: .whitespaces).isEmpty {
                 applyFilter()
             }
@@ -464,7 +484,9 @@ struct DownloadCategoryView: View {
                     columns: Array(repeating: GridItem(.flexible(), spacing: cardPadding), count: columns),
                     spacing: cardPadding
                 ) {
-                    ForEach(filteredResults) { item in
+                    // 分页切片：只对前 displayLimit 条做 diff，本地目录数万条时首帧仅 120 条，
+                    // 避免整列 ForEach 全量 diff + LazyVGrid 布局卡死主线程
+                    ForEach(filteredResults.prefix(displayLimit)) { item in
                         ContentCard(
                             title: item.name,
                             subtitle: translatedSubtitles[item.id] ?? item.subtitle,
@@ -472,15 +494,20 @@ struct DownloadCategoryView: View {
                             tags: item.tags,
                             action: { openDetail(item) }
                         )
+                        .equatable()
                         .id(item.id)
-                        .background(
-                            GeometryReader { geo in
-                                Color.clear
-                                    .onAppear {
-                                        trackVisibility(item, geo)
-                                    }
+                        .onAppear {
+                            Self.lastAnchorItemID = item.id
+                            // 本地目录分页：最后一张已展示卡片进入可视区时追加下一批（增量 120 条），
+                            // 避免把数万条目录一次性注入 ForEach 做全量 diff；滚出再滚回会再次触发
+                            if displayLimit < filteredResults.count {
+                                let lastVisibleIndex = min(displayLimit, filteredResults.count) - 1
+                                if filteredResults[lastVisibleIndex].id == item.id {
+                                    displayLimit = min(displayLimit + 120, filteredResults.count)
+                                }
                             }
-                        )
+                        }
+                        .task(id: item.id) { await requestTranslation(for: item) }
                     }
                 }
                 .padding(.horizontal, cardPadding)
@@ -488,22 +515,13 @@ struct DownloadCategoryView: View {
             }
             .coordinateSpace(name: "listScroll")
             .onAppear {
-                if let id = lastAnchorItemID {
+                if let id = Self.lastAnchorItemID {
                     DispatchQueue.main.async {
                         proxy.scrollTo(id, anchor: .top)
                     }
                 }
             }
         }
-    }
-
-    /// 卡片进入可视区域时：更新滚动恢复锚点，并按需发起翻译
-    private func trackVisibility(_ item: DownloadedItem, _ geo: GeometryProxy) {
-        let frame = geo.frame(in: .named("listScroll"))
-        if frame.minY > -60 && frame.minY < 160 {
-            lastAnchorItemID = item.id
-        }
-        requestTranslation(for: item)
     }
 
     private func openDetail(_ item: DownloadedItem) {
@@ -543,6 +561,7 @@ struct DownloadCategoryView: View {
         searchDebounceTask?.cancel()
         translateTask?.cancel()
         filteredResults = []
+        displayLimit = 120
         showDetail = false
         selectedModItem = nil
         navigateTo(computedHighlightIndex)
@@ -563,7 +582,8 @@ struct DownloadCategoryView: View {
         fetchTask?.cancel()
 
         // 本地全量目录模式：mod/resourcepack/shader/modpack 直接加载全量（不翻译）
-        if selectedSection != .game {
+        // 仅当后台已解析完成时走本地目录，主线程绝不触碰磁盘/解压 12 万条目录
+        if selectedSection != .game && Self.localCatalogReady {
             let local = Self.localItems(for: selectedSection)
             if !local.isEmpty {
                 isLoading = true
@@ -578,6 +598,7 @@ struct DownloadCategoryView: View {
                         hasMore = false
                         isLoading = false
                         filteredResults = result
+                        displayLimit = 120
                         searchPopInIds = []
                     }
                     startSequentialTranslation(for: result)
@@ -636,54 +657,80 @@ struct DownloadCategoryView: View {
         }
     }
 
-    /// 批量应用内存翻译缓存（纯内存扫描，速度快；磁盘命中的翻译由可见卡片按需回读）
+    /// 批量应用翻译缓存（纯内存扫描 + 磁盘一次性批量预取）。
+    /// 磁盘命中由 CacheManager.prefetchText 一次性枚举目录后批量读入内存：
+    /// 相比逐条 fileExists+读盘，IO 次数从 O(n) 降到 O(1 次枚举 + 命中数)，
+    /// 覆盖首屏 + 预加载窗口即可，避免对 12 万条本地目录做海量磁盘扫描
     private func startSequentialTranslation(for items: [DownloadedItem]) {
         translateTask?.cancel()
         let service = TranslationService.shared
         translateTask = Task.detached(priority: .background) {
-            var batch: [String: String] = [:]
-            for item in items {
-                if Task.isCancelled { return }
-                if let cached = service.cachedTranslationInMemory(for: item.id), !cached.isEmpty {
-                    batch[item.id] = cached
-                }
-            }
-            if !batch.isEmpty {
-                await MainActor.run {
-                    guard !Task.isCancelled else { return }
-                    for (id, text) in batch {
-                        if !text.isEmpty, Self.isViewActive {
-                            self.translatedSubtitles[id] = text
-                        }
-                    }
+            // 只预热前若干条目（覆盖首屏 + 预加载窗口），防止海量目录读盘拖慢启动
+            let warmupCount = min(items.count, 5000)
+            let ids = items.prefix(warmupCount).map { $0.id }
+            let batch = service.prefetchTranslations(ids: ids)
+            guard !batch.isEmpty, !Task.isCancelled else { return }
+            await MainActor.run {
+                guard !Task.isCancelled else { return }
+                if Self.isViewActive {
+                    // 单次 merge 写入：只触发一次 body 重算
+                    self.translatedSubtitles.merge(batch) { _, new in new }
                 }
             }
         }
     }
 
     /// 按需翻译单个卡片：缓存命中直接应用，否则排队翻译（滚动到哪翻译到哪）
-    private func requestTranslation(for item: DownloadedItem) {
+    ///
+    /// 关键修复：原先在主线程直接调用 `cachedTranslation`（会同步读盘），
+    /// 滚动时每个进入可视区的卡片都触发一次磁盘读取，造成主线程阻塞、列表卡顿（“垃圾优化”）。
+    /// 现在主线程只查内存缓存（内置表 + 内存 LRU，瞬时、零阻塞），
+    /// 磁盘读取与网络翻译全部下沉到后台任务，彻底解除滚动卡顿。
+    private func requestTranslation(for item: DownloadedItem) async {
         let id = item.id
         guard !id.isEmpty, translatedSubtitles[id] == nil, !pendingTranslationIDs.contains(id) else { return }
         let service = TranslationService.shared
-        if let cached = service.cachedTranslation(for: id), !cached.isEmpty {
-            translatedSubtitles[id] = cached
+        // 仅查内存缓存（内置表 + 内存 LRU），主线程零阻塞、瞬时返回
+        if let cached = service.cachedTranslationInMemory(for: id), !cached.isEmpty {
+            // 淡入动画：与网络翻译完成时的效果一致，避免瞬时跳变
+            withAnimation(.easeInOut(duration: 0.3)) { translatedSubtitles[id] = cached }
             return
         }
         pendingTranslationIDs.insert(id)
         let subtitle = item.subtitle
-        Task.detached(priority: .background) {
-            do {
-                let translated = try await service.translateText(text: subtitle, projectId: id)
-                await MainActor.run {
-                    self.pendingTranslationIDs.remove(id)
-                    if !translated.isEmpty, Self.isViewActive {
-                        self.translatedSubtitles[id] = translated
-                    }
+        // 磁盘缓存查询走 detached 立即执行（毫秒级、成本低，无需防抖）；
+        // 命中即应用，减少「卡片出现 → 等防抖 → 再查盘」的感知延迟
+        if let diskCached = try? await Task.detached(priority: .utility, operation: { service.cachedTranslation(for: id) }).value,
+           !diskCached.isEmpty {
+            if Task.isCancelled {
+                pendingTranslationIDs.remove(id)
+                return
+            }
+            await MainActor.run {
+                self.pendingTranslationIDs.remove(id)
+                if !diskCached.isEmpty, Self.isViewActive {
+                    withAnimation(.easeInOut(duration: 0.3)) { self.translatedSubtitles[id] = diskCached }
                 }
-            } catch {
-                await MainActor.run {
-                    self.pendingTranslationIDs.remove(id)
+            }
+            return
+        }
+        // 磁盘未命中 → 网络翻译：短暂防抖，快速滑动时这张卡的任务会被取消 → 直接返回，不产生无谓的网络请求
+        try? await Task.sleep(nanoseconds: 120_000_000)
+        if Task.isCancelled {
+            pendingTranslationIDs.remove(id)
+            return
+        }
+        Task.detached(priority: .utility) {
+            // 后台线程发起网络翻译：translateText 内含信号量阻塞等待，必须脱离主线程执行
+            let result = try? await service.translateText(text: subtitle, projectId: id)
+            let final = result ?? ""
+            await MainActor.run {
+                self.pendingTranslationIDs.remove(id)
+                if !final.isEmpty, Self.isViewActive {
+                    // 淡入动画：翻译完成时副标题文字柔和过渡，不再生硬跳变
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        self.translatedSubtitles[id] = final
+                    }
                 }
             }
         }
@@ -802,7 +849,7 @@ struct DownloadCategoryView: View {
 
     // MARK: - 本地全量目录（crawl_modrinth.py 生成：mod/resourcepack/shader/modpack 全部条目，不翻译）
 
-    struct LocalCatalogItem {
+    struct LocalCatalogItem: Codable {
         let projectID: String
         let projectType: String
         let title: String
@@ -815,6 +862,11 @@ struct DownloadCategoryView: View {
     private nonisolated(unsafe) static let localCatalogLock = NSLock()
     private nonisolated(unsafe) static var localCatalog: [LocalCatalogItem]?
     private nonisolated(unsafe) static var localCatalogItemsByType: [String: [DownloadedItem]] = [:]
+    /// 本地全量目录是否已在后台解析完成。主线程只在它为 true 时才调用 localItems，
+    /// 从而杜绝「切到 mod 页时主线程同步读盘+解压 12 万条目录 → 卡死/动画丢失/翻译失效」。
+    private nonisolated(unsafe) static var localCatalogReady = false
+    /// 本地目录解析完成通知（用于让已显示的 mod 页自动刷新为全量本地目录）
+    static let localCatalogReadyNotification = Notification.Name("localCatalogReady")
 
     /// 解压 gzip 数据（系统 libz，windowBits=31 支持 gzip 格式）
     nonisolated private static func inflateGzipData(_ input: Data) -> Data? {
@@ -847,11 +899,52 @@ struct DownloadCategoryView: View {
         }
     }
 
-    /// 从 bundle 读取 modrinth_catalog.json.gz 并解析（全量目录缓存）
+    /// 解析结果磁盘缓存路径（参考 PCL 的 Cache\download.json：二次冷启动跳过 gzip 解压，秒级出数据）
+    private static func localCatalogCacheURL() -> URL? {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("modrinth_local_catalog_v1.json")
+    }
+
+    /// 缓存是否仍有效：bundle 内的 gzip 源比磁盘缓存新则视为过期需重解
+    private static func isLocalCatalogCacheFresh() -> Bool {
+        guard let gzURL = Bundle.main.url(forResource: "modrinth_catalog", withExtension: "json.gz"),
+              let cacheURL = localCatalogCacheURL() else { return false }
+        let fm = FileManager.default
+        let gzDate = (try? fm.attributesOfItem(atPath: gzURL.path)[.modificationDate] as? Date) ?? .distantPast
+        let cacheDate = (try? fm.attributesOfItem(atPath: cacheURL.path)[.modificationDate] as? Date) ?? .distantPast
+        return cacheDate >= gzDate
+    }
+
+    private static func loadLocalCatalogFromDisk() -> [LocalCatalogItem]? {
+        guard isLocalCatalogCacheFresh(),
+              let url = localCatalogCacheURL(),
+              let data = try? Data(contentsOf: url),
+              let items = try? JSONDecoder().decode([LocalCatalogItem].self, from: data),
+              !items.isEmpty else { return nil }
+        return items
+    }
+
+    private static func saveLocalCatalogToDisk(_ items: [LocalCatalogItem]) {
+        guard let url = localCatalogCacheURL() else { return }
+        if let data = try? JSONEncoder().encode(items) {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    /// 从 bundle 读取 modrinth_catalog.json.gz 并解析（全量目录缓存）。
+    /// 优先复用解析结果的磁盘缓存，避免每次冷启动都重新解压 12 万条 gzip。
     nonisolated static func loadLocalCatalog() -> [LocalCatalogItem] {
         localCatalogLock.lock()
         defer { localCatalogLock.unlock() }
         if let localCatalog { return localCatalog }
+
+        // 1) 复用解析结果磁盘缓存（二次冷启动秒开）
+        if let cached = Self.loadLocalCatalogFromDisk() {
+            localCatalog = cached
+            return cached
+        }
+
+        // 2) 冷启动：从 bundle 的 gzip 解析
         guard let url = Bundle.main.url(forResource: "modrinth_catalog", withExtension: "json.gz"),
               let compressed = try? Data(contentsOf: url),
               let data = inflateGzipData(compressed),
@@ -874,6 +967,9 @@ struct DownloadCategoryView: View {
             )
         }
         localCatalog = catalog
+        // 3) 异步写回磁盘缓存，供下次冷启动秒开
+        let toCache = catalog
+        Task.detached(priority: .utility) { Self.saveLocalCatalogToDisk(toCache) }
         return catalog
     }
 
@@ -916,13 +1012,25 @@ struct DownloadCategoryView: View {
         return mapped
     }
 
+    /// 应用启动时预热本地全量目录（对应 PCL 的 PageLoaderInit：在用户打开下载页之前就后台解析，
+    /// 让 mod/资源包/光影/整合包页首帧即有数据，消除「空白→填充」的延迟感）
+    static func warmUpLocalCatalog() {
+        preloadLocalCatalog()
+    }
+
     /// 后台预加载四类本地目录，避免首次切页时阻塞主线程
     private static func preloadLocalCatalog() {
-        Task.detached(priority: .utility) {
+        guard !localCatalogReady else { return }
+        Task.detached(priority: .userInitiated) {
             _ = localItems(for: .mod)
             _ = localItems(for: .resourcePack)
             _ = localItems(for: .shader)
             _ = localItems(for: .modpack)
+            localCatalogReady = true
+            // 本地目录就绪后通知界面：若当前停在 mod/资源包/光影/整合包页，自动刷新为全量本地目录
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: localCatalogReadyNotification, object: nil)
+            }
         }
     }
 
@@ -1167,6 +1275,7 @@ struct ContentCard: View {
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
                     .lineLimit(2)
+                    .contentTransition(.opacity)
                 if !translatedTags.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 4) {
@@ -1201,6 +1310,17 @@ struct ContentCard: View {
         .buttonStyle(.plain)
         .scaleEffect(scale)
         .animation(.spring(response: 0.4, dampingFraction: 0.5), value: scale)
+    }
+}
+
+extension ContentCard: Equatable {
+    /// 仅比较值类型字段；忽略 action 闭包与内部 @State/主题，
+    /// 使翻译完成时只有「真正变化」的卡片被重渲染，避免整列刷新导致的滚动卡顿。
+    static func == (lhs: ContentCard, rhs: ContentCard) -> Bool {
+        lhs.title == rhs.title &&
+        lhs.subtitle == rhs.subtitle &&
+        lhs.cardWidth == rhs.cardWidth &&
+        lhs.tags == rhs.tags
     }
 }
 
@@ -1896,7 +2016,9 @@ struct ModDetailView: View {
         guard !gameVersion.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未选择游戏版本"]) }
         guard !gameRoot.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未设置游戏根目录"]) }
         
-        let modsDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("mods")
+        // 游戏启动时 game_directory 指向 <gameRoot>/versions/<version>，
+        // mods 必须放在版本文件夹内才会被游戏加载
+        let modsDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("versions/\(gameVersion)/mods")
         try FileManager.default.createDirectory(at: modsDir, withIntermediateDirectories: true)
         
         let downloader = ModDownloader()
@@ -1924,15 +2046,14 @@ struct ModDetailView: View {
         guard !gameVersion.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未选择游戏版本"]) }
         guard !gameRoot.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未设置游戏根目录"]) }
         
-        // 光影通常放在 shaderpacks 文件夹
-        let shaderDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("shaderpacks")
+        // 光影放在版本文件夹的 shaderpacks（游戏 gameDir = versions/<version>）
+        let shaderDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("versions/\(gameVersion)/shaderpacks")
         try FileManager.default.createDirectory(at: shaderDir, withIntermediateDirectories: true)
         
-        // 光影通常是 Fabric/Quilt 模组形式分发，尝试用 ModDownloader
+        // 光影项目版本的 loaders 字段通常是 ["minecraft"] 或空，不能按 fabric 模组过滤
         let downloader = ModDownloader()
         
-        // 光影加载器通常是 iris/optifine，尝试作为 fabric 模组下载
-        _ = try await downloader.downloadLatestMod(modId: item.id, gameVersion: gameVersion, loader: .fabric, destination: shaderDir)
+        _ = try await downloader.downloadLatestMod(modId: item.id, gameVersion: gameVersion, destination: shaderDir)
     }
     
     private func downloadResourcePack() async throws {
@@ -1945,11 +2066,13 @@ struct ModDetailView: View {
         guard !gameVersion.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未选择游戏版本"]) }
         guard !gameRoot.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未设置游戏根目录"]) }
         
-        let resourcePackDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("resourcepacks")
+        // 资源包放在版本文件夹的 resourcepacks（游戏 gameDir = versions/<version>）
+        let resourcePackDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("versions/\(gameVersion)/resourcepacks")
         try FileManager.default.createDirectory(at: resourcePackDir, withIntermediateDirectories: true)
         
+        // 资源包项目版本的 loaders 字段通常是 ["minecraft"] 或空，不能按 fabric 模组过滤
         let downloader = ModDownloader()
-        _ = try await downloader.downloadLatestMod(modId: item.id, gameVersion: gameVersion, loader: .fabric, destination: resourcePackDir)
+        _ = try await downloader.downloadLatestMod(modId: item.id, gameVersion: gameVersion, destination: resourcePackDir)
     }
     
     private func downloadModpack() async throws {
@@ -2548,8 +2671,11 @@ struct GameCategoryView: View {
             }
             return "Java 自定义"
         }
-        if settings.availableJavaList.isEmpty {
+        if settings.isJavaScanning {
             return "扫描中..."
+        }
+        if settings.availableJavaList.isEmpty {
+            return "自动选择 Java"
         }
         return "自动选择 Java"
     }

@@ -33,12 +33,22 @@ final class CacheManager {
         memCache.removeValue(forKey: key)
     }
 
+    /// 内存缓存按比例裁剪（如内存压力时保留最近使用的 50%），比全清更平滑
+    func trimMemory(toFraction fraction: Double) {
+        lock.lock(); defer { lock.unlock() }
+        memCache.trim(toCost: Int(Double(memCache.currentCost) * fraction))
+    }
+
     func clearMemory() {
         lock.lock(); defer { lock.unlock() }
         memCache.removeAll()
     }
 
     // MARK: - 磁盘缓存
+    // 注意：磁盘方法一律【不持 lock】。文件 IO 天然线程安全（写用 .atomic 原子替换），
+    // 若在持 lock 期间做 Data(contentsOf:) 等磁盘操作，后台批量预热（如翻译缓存扫描）
+    // 会长时间占用全局锁，导致主线程查内存缓存时排队等待 → 列表卡顿。
+    // 锁内只允许微秒级的内存操作，磁盘读写全部在锁外完成。
 
     func diskGet(_ key: String) -> Data? {
         let url = diskURL(for: key)
@@ -62,13 +72,17 @@ final class CacheManager {
     }
 
     // MARK: - 便捷：Codable 对象
+    // 读取链路：锁内查内存（µs）→ 未命中则锁外读磁盘 → 命中回写内存（锁内）。
+    // 这样后台线程做磁盘读时【不占用锁】，主线程 memoryObject/object 永远瞬时返回。
 
     func object<T: Codable>(_ type: T.Type, forKey key: String) -> T? {
-        if let data = memoryGet(key) ?? diskGet(key) {
-            if let obj = try? JSONDecoder().decode(T.self, from: data) {
-                memorySet(key, data: data)
-                return obj
-            }
+        if let data = memoryGet(key) {
+            return try? JSONDecoder().decode(T.self, from: data)
+        }
+        guard let data = diskGet(key) else { return nil }
+        if let obj = try? JSONDecoder().decode(T.self, from: data) {
+            memorySet(key, data: data)
+            return obj
         }
         return nil
     }
@@ -81,8 +95,65 @@ final class CacheManager {
 
     func setObject<T: Codable>(_ object: T, forKey key: String) {
         guard let data = try? JSONEncoder().encode(object) else { return }
+        memorySet(key, data: data)   // 锁内：内存写（µs）
+        diskSet(key, data: data)     // 锁外：磁盘写（IO 在锁外，不阻塞其他线程查内存）
+    }
+
+    // MARK: - 纯文本缓存（翻译等高频字符串场景）
+    // 相比 object/setObject 省去 JSON 引号转义与编解码；磁盘格式为 UTF-8 明文，
+    // 读取时兼容旧版 JSON 字符串格式（"..."），一次解析、自动回写为明文。
+
+    private static func decodeString(_ data: Data) -> String? {
+        if let decoded = try? JSONDecoder().decode(String.self, from: data) { return decoded }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// 读文本缓存：内存 → 磁盘（明文，兼容旧 JSON）→ 回写内存。磁盘 IO 全程在锁外。
+    func textGet(_ key: String) -> String? {
+        if let data = memoryGet(key) {
+            return Self.decodeString(data)
+        }
+        guard let data = diskGet(key), let text = Self.decodeString(data), !text.isEmpty else { return nil }
+        memorySet(key, data: Data(text.utf8))
+        return text
+    }
+
+    /// 仅查内存文本缓存（不触碰磁盘）
+    func memoryText(_ key: String) -> String? {
+        guard let data = memoryGet(key) else { return nil }
+        return Self.decodeString(data)
+    }
+
+    /// 写文本缓存：内存（锁内）+ 磁盘明文（锁外）
+    func setText(_ text: String, forKey key: String) {
+        let data = Data(text.utf8)
         memorySet(key, data: data)
         diskSet(key, data: data)
+    }
+
+    /// 批量预取磁盘文本缓存到内存（翻译预热专用）。
+    /// 先一次性枚举磁盘收集已存在的文件名（readdir 级，无文件内容 IO），
+    /// 再只对命中文件读盘，替代「对每个 key 各做一次 fileExists + 读」的随机 IO。
+    /// 返回成功读到的 [key: text]，调用方可直接合并进 UI 状态。
+    func prefetchText(keys: [String]) -> [String: String] {
+        guard !keys.isEmpty else { return [:] }
+        var existing = Set<String>()
+        if let topDirs = try? fileManager.contentsOfDirectory(atPath: diskRoot.path) {
+            for dir in topDirs {
+                let subPath = diskRoot.appendingPathComponent(dir).path
+                if let names = try? fileManager.contentsOfDirectory(atPath: subPath) {
+                    existing.formUnion(names)
+                }
+            }
+        }
+        guard !existing.isEmpty else { return [:] }
+        var result: [String: String] = [:]
+        for key in keys where existing.contains(key) {
+            guard let data = diskGet(key), let text = Self.decodeString(data), !text.isEmpty else { continue }
+            memorySet(key, data: Data(text.utf8))
+            result[key] = text
+        }
+        return result
     }
 
     func removeObject(forKey key: String) {
@@ -147,6 +218,9 @@ private final class LRUCache<Key: Hashable, Value> {
 
     init(maxCost: Int) { self.maxCost = maxCost }
 
+    /// 当前占用成本（供外部按比例裁剪）
+    var currentCost: Int { totalCost }
+
     func value(forKey key: Key) -> Value? {
         guard let node = dict[key] else { return nil }
         moveToHead(node)
@@ -166,7 +240,12 @@ private final class LRUCache<Key: Hashable, Value> {
             addToHead(node)
             totalCost += cost
         }
-        while totalCost > maxCost, let tail = tail {
+        trim(toCost: maxCost)
+    }
+
+    /// 从最久未使用的一端裁剪，直到总成本 ≤ target
+    func trim(toCost target: Int) {
+        while totalCost > target, let tail = tail {
             dict.removeValue(forKey: tail.key)
             removeNode(tail)
             totalCost -= tail.cost

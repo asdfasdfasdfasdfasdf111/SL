@@ -82,13 +82,12 @@ public class ForgeInstaller {
         // 如果字符串中不存在 { }，直接返回来节省资源
         if !string.contains("{") || !string.contains("}") { return string }
         
+        // 逐个替换所有占位符（同一参数中可能同时出现多个，如 {LIBRARY_DIR} 与 {MINECRAFT_JAR}）
+        var result = string
         for (key, value) in values {
-            if string.contains("{\(key)}") {
-                return string.replacingOccurrences(of: "{\(key)}", with: value)
-            }
+            result = result.replacingOccurrences(of: "{\(key)}", with: value)
         }
-        
-        return string
+        return result
     }
     
     // MARK: - 执行处理器任务

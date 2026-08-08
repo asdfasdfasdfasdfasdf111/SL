@@ -63,10 +63,18 @@ final class AppContext {
         // 传入缓存目录，避免 CacheManager 内部访问 AppContext.shared 造成递归锁
         cacheManager = CacheManager(cacheRoot: supportURL.appendingPathComponent("Cache"))
 
+        // 启动后台清理磁盘缓存：翻译缓存等超过 30 天未访问的文件删除（可随时重新生成，
+        // 控制 Cache 目录体积；枚举+删除全部在锁外后台执行，不碰主线程）
+        Task.detached(priority: .utility) { [cacheManager] in
+            cacheManager.cleanDiskCache(olderThan: 30)
+        }
+
         // 响应内存压力（macOS 上没有 NSApplication.didReceiveMemoryWarning，使用 DispatchSource）
         let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical])
         source.setEventHandler { [weak self] in
-            self?.cacheManager.clearMemory()
+            // 半清而非全清：保留最近使用的一半（LRU 裁剪），避免压力过后所有缓存
+            // 重新从磁盘/网络回填；真正的临界压力由系统触发多次事件逐步收紧
+            self?.cacheManager.trimMemory(toFraction: 0.5)
             self?.processPool.clearMemoryCaches()
             DownloadCategoryView.clearStaticCaches()
         }

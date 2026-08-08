@@ -104,6 +104,31 @@ private func pclLaunchInternal(
     options.account = .offline(account)
     options.skipResourceCheck = true
 
+    // MARK: 启动前补全（PCL2 DlClientFix 移植）：分析缺失/损坏的库与资源 → 仅下载缺失项
+    // 补全期间 UI 显示 downloading 进度条；完成后才进入 launching（避免相位回退）
+    // 补全失败则终止启动（与 PCL2 一致），避免缺文件启动后崩溃
+    let fixResultBox = FixResultBox()
+    let fixSemaphore = DispatchSemaphore(value: 0)
+    phaseHandler("downloading")
+    Task {
+        do {
+            try await LaunchFix.perform(instance: instance) { p in
+                progressHandler(p)
+            }
+            log("启动前补全完成：缺失的库/资源已补齐")
+        } catch {
+            fixResultBox.error = error
+            log("启动前补全失败: \(error.localizedDescription)")
+        }
+        fixSemaphore.signal()
+    }
+    fixSemaphore.wait()
+
+    if let fixError = fixResultBox.error {
+        completion(nil, .failure(MyLocalizedError(reason: "启动前补全失败：\(fixError.localizedDescription)")))
+        return
+    }
+
     phaseHandler("launching")
 
     let launcher = MinecraftLauncher(instance)!
@@ -268,4 +293,9 @@ extension MinecraftInstance {
         )
         return MinecraftInstance.create(minecraftDir, versionId)
     }
+}
+
+/// 跨线程传递启动前补全的错误结果（后台线程用信号量同步等待 Task 完成）
+private final class FixResultBox {
+    var error: Error?
 }

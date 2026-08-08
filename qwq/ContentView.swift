@@ -49,15 +49,11 @@ struct ContentView: View {
                     .padding(.horizontal, 32)
                     .padding(.top, 12)
                     .padding(.bottom, 6)
-                    // 第二行：分类导航独占一行，水平居中
-                    HStack {
-                        Spacer()
-                        AnimatedCategoryPicker(selectedCategory: $selectedCategory, categories: categories)
-                        Spacer()
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
-                    .zIndex(20)
+                    // 第二行：分类导航靠左对齐
+                    AnimatedCategoryPicker(selectedCategory: $selectedCategory, categories: categories)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                        .zIndex(20)
                 }
                 .background(BlurView(material: .contentBackground, blendingMode: .withinWindow).ignoresSafeArea(edges: .top))
                 Rectangle().fill(Color.secondary.opacity(0.3)).frame(height: 0.5).padding(.horizontal, 32)
@@ -227,7 +223,8 @@ struct ContentView: View {
         let modFileName = modURL.lastPathComponent
 
         for instance in instances {
-            let modsDir = URL(fileURLWithPath: instance.rootPath).appendingPathComponent("mods")
+            // 游戏启动时 gameDir = <rootPath>/versions/<version>，mods 在版本文件夹内
+            let modsDir = URL(fileURLWithPath: instance.rootPath).appendingPathComponent("versions/\(instance.version)/mods")
             do {
                 try FileManager.default.createDirectory(at: modsDir, withIntermediateDirectories: true)
                 let destURL = modsDir.appendingPathComponent(modFileName)

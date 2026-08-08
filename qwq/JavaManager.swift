@@ -44,6 +44,7 @@ class JavaManager {
             let list = self.scanInstalledJava(useCache: false)
             DispatchQueue.main.async {
                 LauncherSettings.shared.availableJavaList = list
+                LauncherSettings.shared.isJavaScanning = false
                 self.syncJavaVirtualMachines(from: list)
             }
         }

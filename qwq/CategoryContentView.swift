@@ -438,26 +438,6 @@ struct CategoryContentView: View {
                     }
                     .padding(.horizontal, 32)
                     .padding(.top, 32)
-                    VStack(spacing: 12) {
-                        Text("一些问题")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundColor(.primary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Text("  本启动器大部分内容使用 Deepseek V4 Pro 模型书写。本人的代码水平有限，甚至说根本不知道 Swift 的语法，所以说就这样吧。")
-                            .font(.system(size: 13))
-                            .foregroundColor(.secondary)
-                            .lineSpacing(4)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .padding(24)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 24)
-                            .fill(.regularMaterial)
-                            .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 3)
-                    )
-                    .padding(.horizontal, 32)
-                    .padding(.vertical, 20)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.clear)
