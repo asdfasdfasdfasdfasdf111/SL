@@ -61,11 +61,9 @@ public class MinecraftLauncher {
                 }
             }
 
-            try process.run()
-
-            // terminationHandler 主动在进程退出时通知启动器（DispatchQueue.main.async 切主线程触发 callback）。
-            // 之前只用 process.waitUntilExit() 同步阻塞——一旦 Java 异常（卡死/死锁/僵尸），
-            // waitUntilExit 不返回，UI 永远收不到 completion，「游戏已关闭」状态无法复位
+            // terminationHandler 在 run() 之前设置（消除竞态）：若进程启动后立刻退出
+            // （秒退/崩溃/手动关闭恰好在 run 之后），后置的 handler 可能永远不触发，
+            // 导致启动器识别不到「游戏已关闭」。前置设置保证任何退出都能回调。
             process.terminationHandler = { proc in
                 DispatchQueue.main.async {
                     callback(proc.terminationStatus)
@@ -73,6 +71,7 @@ public class MinecraftLauncher {
                 terminationSemaphore.signal()
             }
 
+            try process.run()
             Task { // 轮询判断窗口是否出现
                 while process.isRunning {
                     let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements, .optionOnScreenOnly)
@@ -91,9 +90,16 @@ public class MinecraftLauncher {
                 }
             }
 
-            // 用 semaphore 等待 terminationHandler 触发（替代 process.waitUntilExit()，
-            // 后者在 Java 死锁时可能无限阻塞）。terminationHandler 已保证 callback 被调用一次。
-            terminationSemaphore.wait()
+            // 等待进程退出（替代 process.waitUntilExit()，后者在 Java 死锁时可能无限阻塞）。
+            // 带超时轮询兜底：terminationHandler 因任何原因未触发时，检测到进程不再运行
+            // 就主动回调，确保「手动关闭/异常退出」的进程必然被识别并复位 UI。
+            while terminationSemaphore.wait(timeout: .now() + 1) == .timedOut {
+                if !process.isRunning {
+                    log("兜底检测到进程已退出（terminationHandler 未触发）")
+                    DispatchQueue.main.async { callback(process.terminationStatus) }
+                    break
+                }
+            }
             log("\(instance.name) 进程已退出, 退出代码 \(process.terminationStatus)")
             if process.terminationStatus == 0 {
                 debug("检测到退出代码为 0，已删除日志")

@@ -19,6 +19,7 @@ final class GameSession: ObservableObject, Identifiable {
 
 enum LaunchPhase: Equatable {
     case idle
+    case preparing
     case downloading
     case installing
     case launching
@@ -187,7 +188,7 @@ struct CategoryContentView: View {
             if let hint = offlineUsernameHint {
                 Text(hint)
                     .font(.caption2)
-                    .foregroundColor(.orange)
+                    .foregroundColor(.white)
                     .multilineTextAlignment(.center)
                     .transition(.opacity)
             }
@@ -273,6 +274,13 @@ struct CategoryContentView: View {
                                 insertion: .move(edge: .bottom).combined(with: .opacity),
                                 removal: .move(edge: .top).combined(with: .opacity)
                             ))
+                    }
+                    if launchPhase == .preparing {
+                        // 启动前准备（皮肤资源包应用等，此前按钮变灰却无文案反馈）
+                        Text("准备中…")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.primary)
+                            .frame(width: buttonWidth, height: 50, alignment: .center)
                     }
                     if launchPhase == .downloading {
                         Text("Java 下载中")
@@ -735,6 +743,9 @@ struct CategoryContentView: View {
 
     private func startLaunch() {
         initLaunchState()
+        // 启动前准备阶段：皮肤资源包应用等耗时操作期间按钮显示「准备中…」，
+        // 避免此前启动按钮变灰却仍显示「启动游戏」的无反馈等待
+        launchPhase = .preparing
         let gameDir = settings.selectedGameRoot.isEmpty ? nil : settings.selectedGameRoot
         let version = settings.selectedMinecraftVersion
         // PCL2 风格离线用户名校验（非空 / 无英文引号 / ≤16 字符）：
