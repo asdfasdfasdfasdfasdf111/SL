@@ -789,6 +789,7 @@ struct DownloadCategoryView: View {
         searchTranslationCacheLock.lock()
         searchTranslationCache.removeAll()
         searchTranslationCacheLock.unlock()
+        LoaderSupportChecker.clearMemoryCache()
     }
 
     // MARK: - 版本清单合并（官方 + 未列出，并发拉取）

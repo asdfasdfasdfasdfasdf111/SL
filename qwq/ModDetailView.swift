@@ -318,83 +318,23 @@ struct ModDetailView: View {
         }
     }
 
-    // 加载器支持检测：内存缓存，避免同一版本反复联网请求（PCL 速度来源之一）。
-    // 键 = 游戏版本（如 "26.2"），值 = 该版本支持的加载器显示名列表（已按 loaderOrder 排序）。
-    private static var loaderSupportCache: [String: [String]] = [:]
-
-    private static let loaderOrder = ["Fabric", "Forge", "NeoForged", "Quilt"]
-
-    // MARK: - 加载器支持磁盘缓存（本地缓存、立刻使用）
-    // 对比版本清单（fetchMergedVersionManifest 有 5 分钟内存 TTL），加载器支持检测此前只有
-    // 内存缓存且显式 reloadIgnoringLocalCacheData，重启启动器后必须联网重测（4 加载器 × 3 重试）→ 慢几秒。
-    // 加载器支持情况变化极慢，落盘 + 7 天 TTL；联网失败时回退旧缓存（即使已过期）。
-    private static let loaderSupportCacheFile: URL = {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("SL启动器")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("LoaderSupportCache.json")
-    }()
-    private static let loaderSupportDiskTTL: TimeInterval = 7 * 24 * 3600
-    private static var loaderSupportDiskCache: [String: [String]]?
-
-    private static func readLoaderSupportDiskCache() -> [String: [String]]? {
-        if let cached = loaderSupportDiskCache { return cached }
-        guard let data = try? Data(contentsOf: loaderSupportCacheFile),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let entries = json["versions"] as? [String: [String]] else { return nil }
-        loaderSupportDiskCache = entries
-        return entries
-    }
-
-    private static func writeLoaderSupportDiskCache(_ entries: [String: [String]]) {
-        let payload: [String: Any] = ["savedAt": Date().timeIntervalSince1970, "versions": entries]
-        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
-        try? data.write(to: loaderSupportCacheFile, options: .atomic)
-    }
+    // MARK: - 加载器支持检测（已下沉到 PCLCore 后端：LoaderSupportChecker）
+    // UI 只消费结果，不直接联网、不直接读写缓存文件；内存/磁盘缓存、联网并发检测
+    // 与失败回退均在核心层完成（三级策略：内存 → 磁盘 7 天 TTL → 联网，失败回退旧缓存）。
 
     private func fetchLoaderSupport(for version: String) {
         guard !version.isEmpty else { return }
-        // 1. 内存缓存：直接使用，不联网，秒级返回
-        if let cached = Self.loaderSupportCache[version] {
+        // 1. 同步查缓存命中：直接展示，不闪烁 loading（核心层 cachedLoaders）
+        if let cached = LoaderSupportChecker.cachedLoaders(for: version) {
             applyLoaders(cached)
             return
         }
-        // 2. 磁盘缓存（7 天 TTL 内）：重启后同样秒开
-        if let disk = Self.readLoaderSupportDiskCache(),
-           let cached = disk[version],
-           Date().timeIntervalSince1970 - (Self.loaderSupportDiskSavedAt ?? 0) < Self.loaderSupportDiskTTL {
-            Self.loaderSupportCache[version] = cached
-            applyLoaders(cached)
-            return
-        }
-        // 3. 未命中缓存：联网并发检测
+        // 2. 未命中：核心层异步联网检测（含磁盘写入与失败回退）
         isLoadingLoaders = true
         Task {
-            let supported = await detectLoaders(for: version)
-            if !supported.isEmpty {
-                Self.loaderSupportCache[version] = supported
-                // 合并写入磁盘缓存，同版本下次（含重启后）直接命中
-                var disk = Self.readLoaderSupportDiskCache() ?? [:]
-                disk[version] = supported
-                Self.writeLoaderSupportDiskCache(disk)
-                await MainActor.run { applyLoaders(supported) }
-            } else {
-                // 联网全部失败：回退磁盘旧缓存（即使已过期），保证「立刻可用」而非空白等待
-                if let disk = Self.readLoaderSupportDiskCache(), let cached = disk[version] {
-                    Self.loaderSupportCache[version] = cached
-                    await MainActor.run { applyLoaders(cached) }
-                } else {
-                    await MainActor.run { applyLoaders([]) }
-                }
-            }
+            let supported = await LoaderSupportChecker.supportedLoaders(for: version)
+            await MainActor.run { applyLoaders(supported) }
         }
-    }
-
-    /// 磁盘缓存文件里保存的时间戳（供 TTL 判断）
-    private static var loaderSupportDiskSavedAt: Double? {
-        guard let data = try? Data(contentsOf: loaderSupportCacheFile),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return json["savedAt"] as? Double
     }
 
     /// 应用加载器列表到 UI（主线程调用）
@@ -404,90 +344,6 @@ struct ModDetailView: View {
         if !loaders.contains(selectedLoader), let first = loaders.first {
             selectedLoader = first
         }
-    }
-
-    /// 并发检测 4 种加载器支持情况（网络兜底路径）
-    private func detectLoaders(for version: String) async -> [String] {
-        let candidates: [(key: String, display: String)] = [
-            ("fabric", "Fabric"),
-            ("forge", "Forge"),
-            ("neoforge", "NeoForged"),
-            ("quilt", "Quilt")
-        ]
-        var supported: [String] = []
-        await withTaskGroup(of: (String, Bool).self) { group in
-            for candidate in candidates {
-                group.addTask {
-                    let ok = await self.checkLoaderSupport(key: candidate.key, version: version)
-                    return (candidate.display, ok)
-                }
-            }
-            for await (display, ok) in group where ok {
-                supported.append(display)
-            }
-        }
-        supported.sort {
-            (Self.loaderOrder.firstIndex(of: $0) ?? 99) < (Self.loaderOrder.firstIndex(of: $1) ?? 99)
-        }
-        return supported
-    }
-
-    private func checkLoaderSupport(key: String, version: String) async -> Bool {
-        let encoded = version.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? version
-        var urls: [URL] = []
-        switch key {
-        case "fabric":
-            urls = [URL(string: "https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader/\(encoded)")].compactMap { $0 }
-        case "forge":
-            urls = [URL(string: "https://bmclapi2.bangbang93.com/forge/minecraft/\(encoded)")].compactMap { $0 }
-        case "neoforge":
-            urls = [URL(string: "https://bmclapi2.bangbang93.com/neoforge/list/\(encoded)")].compactMap { $0 }
-        case "quilt":
-            // bmclapi 的 quilt-meta 端点通常未实现（返回 404），优先官方 Quilt Meta API；
-            // 官方失败时再尝试 bmclapi，避免单点故障导致误判「不支持」。
-            urls = [
-                URL(string: "https://meta.quiltmc.org/v3/versions/loader/\(encoded)"),
-                URL(string: "https://bmclapi2.bangbang93.com/quilt-meta/v3/versions/loader/\(encoded)")
-            ].compactMap { $0 }
-        default:
-            urls = []
-        }
-        guard !urls.isEmpty else { return false }
-        // 加载器 API（bmclapi / quilt meta）在高峰期不稳定，可能偶发超时或 5xx。
-        // 参考 PCL.Mac：不设置过短的超时，并对「可用端点列表」逐个尝试；
-        // 每个端点最多重试 2 次，只要任意一次返回非空数组即视为支持。
-        for url in urls {
-            for attempt in 0..<3 {
-                var req = URLRequest(url: url)
-                req.httpMethod = "GET"
-                req.setValue("Swim111Launcher/1.0 (Minecraft Launcher)", forHTTPHeaderField: "User-Agent")
-                // 独立于 apiSession 的较长超时（30s 请求 / 45s 资源），容忍慢速响应
-                let cfg = URLSessionConfiguration.ephemeral
-                cfg.timeoutIntervalForRequest = 30
-                cfg.timeoutIntervalForResource = 45
-                cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
-                let session = URLSession(configuration: cfg)
-                do {
-                    let (data, resp) = try await session.data(for: req)
-                    if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                        if attempt < 2 { try? await Task.sleep(nanoseconds: 600_000_000) }
-                        continue
-                    }
-                    // Fabric/Quilt meta 返回「loader 数组」；Forge 返回版本数组；NeoForge list 返回数组
-                    guard let array = try JSONSerialization.jsonObject(with: data) as? [Any] else {
-                        if attempt < 2 { try? await Task.sleep(nanoseconds: 600_000_000) }
-                        continue
-                    }
-                    return !array.isEmpty
-                } catch {
-                    if attempt < 2 {
-                        try? await Task.sleep(nanoseconds: 600_000_000)
-                        continue
-                    }
-                }
-            }
-        }
-        return false
     }
 
     /// 读取本地游戏根目录 versions 文件夹，返回本地实际安装的有效版本列表。
