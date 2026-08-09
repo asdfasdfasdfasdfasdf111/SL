@@ -632,6 +632,10 @@ struct ModDetailView: View {
     private func startDownload() {
         guard !selectedVersion.isEmpty else { return }
         isDownloading = true
+
+        // 点击即提示「下载开始」（此前仅下载完成后才提示「下载完成」）
+        settings.javaPopupMessage = "下载开始"
+        settings.showJavaPopup = true
         
         // 下载按钮弹动画（放大 → 缩小回弹，不消失）
         withAnimation(.interpolatingSpring(stiffness: 220, damping: 14)) {

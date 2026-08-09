@@ -198,8 +198,8 @@ struct CategoryContentView: View {
             return "用户名不能超过 16 个字符"
         }
         if !name.isEmpty, name.range(of: "^[0-9A-Za-z_]*$", options: .regularExpression) == nil {
-            // PCL2 HintChinese 原版语义：1.18+ 服务端会拒绝非 [0-9A-Za-z_] 用户名（Invalid characters in username）
-            return "玩家名包含英文、数字、下划线以外的内容，可能无法进入 Minecraft 1.18+ 的世界"
+            // PCL2 HintChinese 语义：1.18+ 服务端拒绝非 [0-9A-Za-z_] 用户名（Invalid characters in username）
+            return "仅限英文、数字、下划线，否则 1.18+ 无法进入"
         }
         return nil
     }
@@ -533,13 +533,12 @@ struct CategoryContentView: View {
                         let gameDirPath = settings.selectedGameRoot.isEmpty ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "") : settings.selectedGameRoot
                         if !version.isEmpty && !gameDirPath.isEmpty {
                             let gameDir = URL(fileURLWithPath: gameDirPath)
-                            // 如果 authlib-injector 不可用，回退到 JAR 修改
-                            if !skinManager.isAuthlibInjectorAvailable() {
-                                do {
-                                    try skinManager.applySkinToJar(skinURL: url, toVersion: version, gameDir: gameDir, settings: self.settings)
-                                } catch {
-                                    print("⚠️ JAR 皮肤替换失败: \(error.localizedDescription)")
-                                }
+                            // 离线皮肤统一走 JAR 替换（幂等）：authlib-injector 的 file:// prefetch
+                            // 离线场景不可靠，且 PCL2 离线也不注入；替换 JAR 内默认贴图是纯原版唯一可靠方案
+                            do {
+                                try skinManager.applySkinToJar(skinURL: url, toVersion: version, gameDir: gameDir, settings: self.settings)
+                            } catch {
+                                print("⚠️ JAR 皮肤替换失败: \(error.localizedDescription)")
                             }
                         }
                     } else {
@@ -749,7 +748,7 @@ struct CategoryContentView: View {
             resetLaunchState()
             let alert = NSAlert()
             alert.messageText = "用户名可能无法进入游戏"
-            alert.informativeText = "「\(finalUsername)」包含英文、数字、下划线以外的字符。\n\nMinecraft 1.18+ 的服务端会拒绝此类用户名，并提示「连接中断」（Invalid characters in username）。\n\n仅当目标是 1.18 之前的版本时才可正常进入。仍要继续启动吗？"
+            alert.informativeText = "「\(finalUsername)」含非法字符，1.18+ 服务端会拒绝（连接中断），仅 1.18 前可用。仍要启动？"
             alert.alertStyle = .warning
             alert.addButton(withTitle: "仍要启动")
             alert.addButton(withTitle: "取消")
@@ -757,16 +756,10 @@ struct CategoryContentView: View {
                 return
             }
         }
-        let skinURL: URL? = {
-            if let url = settings.avatarImageURL, url.lastPathComponent != "stf.png" {
-                return url
-            }
-            return nil
-        }()
-        
         var boundLauncher: MinecraftLauncher?
 
-        pclLaunch(
+        let startGame = {
+            pclLaunch(
             version: version,
             username: finalUsername,
             gameDir: gameDir,
@@ -890,6 +883,30 @@ struct CategoryContentView: View {
                 }
             }
         )
+        }
+        
+        // 离线皮肤：确保版本 JAR 已替换（幂等，hash 判断防重复；JAR 替换是离线模式唯一可靠的方案，
+        // authlib-injector 的 file:// prefetch 离线不可靠，PCL2 离线也不注入）。后台执行避免阻塞主线程。
+        let gameDirPath = settings.selectedGameRoot.isEmpty ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "") : settings.selectedGameRoot
+        if let skin = settings.skinImageURL, !gameDirPath.isEmpty, !version.isEmpty {
+            DispatchQueue.global(qos: .utility).async {
+                do {
+                    try MinecraftSkinManager.shared.applySkinToJar(
+                        skinURL: skin,
+                        toVersion: version,
+                        gameDir: URL(fileURLWithPath: gameDirPath),
+                        settings: self.settings
+                    )
+                } catch {
+                    print("皮肤应用失败: \(error.localizedDescription)")
+                }
+                DispatchQueue.main.async {
+                    startGame()
+                }
+            }
+        } else {
+            startGame()
+        }
     }
     
     private func startDarkBarAnimation() {
