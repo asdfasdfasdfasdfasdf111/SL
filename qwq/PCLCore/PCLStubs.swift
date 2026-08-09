@@ -96,21 +96,76 @@ public class OfflineAccount: Account {
     public var name: String
     public init(_ name: String, _ uuid: UUID? = nil) {
         self.id = .init()
+        // 与 PCL2 一致：用户名按调用方传入值保存（调用方已 trim），不做二次处理
         self.name = name
-        // 离线玩家 UUID 生成
         if let uuid = uuid {
             self.uuid = uuid
         } else {
-            var bytes = Array("OfflinePlayer:\(name)".utf8)
-            while bytes.count < 16 { bytes.append(0) }
-            bytes[6] = (bytes[6] & 0x0F) | 0x30
-            bytes[8] = (bytes[8] & 0x3F) | 0x80
-            self.uuid = UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
+            // 完整移植 PCL2 离线 UUID 算法（Modules/Minecraft/ModLaunch.vb McLoginLegacyUuid）：
+            //   不采用官方 "OfflinePlayer:"+名字 的 MD5，而是 PCL2 自有的
+            //   [名字长度(hex,16位)] + [GetHash(名字)(hex,16位)] 拼接后强制 version=3 / variant=9，
+            //   保证任何用户名都产出合法 RFC 4122 UUID。
+            let hex = OfflineAccount.pclLegacyUuidHex(for: name)
+            self.uuid = UUID(uuidString: OfflineAccount.formatUuid(hex)) ?? UUID()
         }
     }
-    public func putAccessToken(options: LaunchOptions) {
-        options.accessToken = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+
+    /// PCL2 离线 UUID（32 位 hex）。移植自 ModLaunch.vb McLoginLegacyUuid + ModBase.vb GetHash
+    public static func pclLegacyUuidHex(for name: String) -> String {
+        // GetHash：djb2 变体（用 XOR 而非加法），ULong(64bit) 运算，最后 XOR 固定掩码
+        // VB: GetHash = 5381; For i: GetHash = (GetHash << 5) Xor GetHash Xor AscW(Str(i)); Return GetHash Xor &HA98F501BC684032FUL
+        var hash: UInt64 = 5381
+        for unit in name.utf16 {          // VB AscW(Char) = UTF-16 code unit
+            hash = (hash << 5) ^ hash ^ UInt64(unit)
+        }
+        hash ^= 0xA98F_501B_C684_032F
+        // VB Name.Length 按 UTF-16 code unit 计数，与 name.utf16.count 一致
+        let lenHex = String(name.utf16.count, radix: 16).uppercased()
+        let hashHex = String(hash, radix: 16).uppercased()
+        // StrFill(Str, "0", 16)：不足 16 位左侧补零
+        let full = OfflineAccount.leftPad(lenHex, to: 16) + OfflineAccount.leftPad(hashHex, to: 16)
+        // 索引 12 强制 version=3，索引 16 强制 variant=9（10xx → 1001）
+        // VB: FullUuid.Substring(0,12) & "3" & Substring(13,3) & "9" & Substring(17,15)
+        return String(full.prefix(12)) + "3" + String(full.dropFirst(13).prefix(3)) + "9" + String(full.dropFirst(17).prefix(15))
     }
+
+    public static func leftPad(_ s: String, to length: Int) -> String {
+        if s.count >= length { return String(s.prefix(length)) }
+        return String(repeating: "0", count: length - s.count) + s
+    }
+
+    /// 32 位 hex → 标准 8-4-4-4-12 UUID 字符串
+    public static func formatUuid(_ hex: String) -> String {
+        let parts = [
+            hex.prefix(8),
+            hex.dropFirst(8).prefix(4),
+            hex.dropFirst(12).prefix(4),
+            hex.dropFirst(16).prefix(4),
+            hex.dropFirst(20).prefix(12)
+        ]
+        return parts.map(String.init).joined(separator: "-")
+    }
+
+    public func putAccessToken(options: LaunchOptions) {
+        // PCL2 行为（ModLaunch.vb McLoginLegacyStart）：离线账号 AccessToken = UUID 本身
+        // （与 ClientToken 相同），不是随机串
+        options.accessToken = uuid.uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+    }
+}
+
+// MARK: - 离线用户名校验（移植 PCL2 PageLoginLegacy.IsVaild + 1.20.5+ hello 包 16 字符上限）
+/// 校验离线用户名，返回错误信息；返回 "" 表示合法。
+/// 规则：
+///  - 非空（trim 后）
+///  - 不含英文引号 `"`
+///  - 不超过 16 个 UTF-16 code unit（1.20.5+ ServerboundHelloPacket 编码时
+///    writeUtf(name, 16) 会抛 "String too big (was N characters, max 16)"）
+public func validateOfflineUsername(_ raw: String) -> String {
+    let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    if name.isEmpty { return "玩家名不能为空！" }
+    if name.contains("\"") { return "玩家名不能包含英文引号！" }
+    if name.utf16.count > 16 { return "玩家名不能超过 16 个字符！" }
+    return ""
 }
 
 public enum AnyAccount: Account, Identifiable, Equatable {

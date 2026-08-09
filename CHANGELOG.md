@@ -20,8 +20,10 @@
 - 修复缓存读写并发死锁（`NSLock` → `NSRecursiveLock`）
 - 修复列表翻译缓存全量扫描触发海量磁盘 IO 导致的卡顿：此前进入页面/返回列表会对全部 7 万余条目录逐条执行磁盘检查，改为纯内存扫描；磁盘缓存命中的翻译由进入可视区域的卡片按需回读，滚动到哪显示到哪
 - 修复实时翻译无并发上限导致的请求堆积：全局翻译并发限制为最多 24 个同时进行，滚动浏览大量卡片时不再无限制创建后台网络任务
-- **修复创建世界 / 进入世界报错 `Internal Exception: io.netty.handler.codec.EncoderException: Failed to encode packet 'serverbound/minecraft:hello'`**：`buildGameArguments` 不再写死 `user_type: "msa"`——离线账号必须传 `legacy`，否则 Minecraft 1.20.5+ 的 `serverbound/minecraft:hello` 包 Netty 编码器按 user_type 校验身份失败。现在按 `options.account` 类型动态选择（offline → `legacy`，microsoft/yggdrasil → `msa`）
+- **修复创建世界 / 进入世界报错 `Internal Exception: io.netty.handler.codec.EncoderException: Failed to encode packet 'serverbound/minecraft:hello'`**：根因是离线用户名超过 16 字符——历史脏数据把输入框占位提示「SL启动器（最好使用英文及下划线）」存成了真实用户名（17 字符 > MC `hello` 包 `writeUtf(name,16)` 上限，编码直接抛 `String too big (was 17 characters, max 16)`）。本次完整移植 PCL2 离线登录逻辑：① 启动前 PCL2 风格校验用户名（非空 / 无英文引号 / ≤16 字符，对应 PCL2 `PageLoginLegacy.IsVaild`）；② 离线 UUID 改用 PCL2 `McLoginLegacyUuid` 算法（名字长度 + djb2-xor 哈希拼接，强制 version=3 / variant=9，替代此前「未哈希的 OfflinePlayer 原始字节」错误算法）；③ 离线 accessToken = UUID 本身（PCL2 `McLoginLegacyStart` 行为）；④ `user_type` 恢复 PCL2 行为统一传 `msa`（PCL2 issue #1221，废弃此前改传 `legacy` 的错误尝试）；⑤ 启动时自动清理已写入 UserDefaults 的占位符脏数据
 - **修复游戏关闭启动器检测不到**：`MinecraftLauncher.launch` 增加 `process.terminationHandler`，进程退出时主动在主线程触发 callback；同时用 `DispatchSemaphore` 替代 `process.waitUntilExit()`——一旦 Java 进程异常（卡死/死锁/僵尸），旧实现永久阻塞、UI 永远收不到 completion；现在 terminationHandler 必然触发一次 callback。catch 路径也 signal semaphore 防止 launch() 自身永久阻塞
+- 修复启动参数 `user_properties` 多转义引号的问题：此前传 `"\"{}\""` 让 Java 收到字面量 `"{}"`，改为与 PCL2 一致的 `{}`（Process.arguments 不经 shell，参数原样传递）；同时按 PCL2 行为补充 `auth_session` 启动参数（值与 accessToken 一致）
+- 启动链路防御性用户名校验：`PCLLaunchBridge` 对用户名 trim 后为空自动兜底为 `Player`，非法（含英文引号 / 超 16 字符）直接失败并返回明确错误；`MinecraftInstance.launch` 前置校验，非法用户名不再拖到进服时才抛 `EncoderException`
 
 ### 新增
 
@@ -29,6 +31,7 @@
 - 本地 Modrinth 全量目录更新至 122,477 条目（模组 71,706 / 资源包 31,918 / 光影 781 / 整合包 18,072），覆盖更完整
 - JVM 启动参数动态补齐：按平台与 Java 主版本自动注入缺失参数（macOS 补 `-XstartOnFirstThread`、Java 8 及以下补 `-XX:+UseG1GC`、补 `-XX:+HeapDumpOnOutOfMemoryError` 与 `-Dfile.encoding=UTF-8`），全部先查重再追加，与版本清单自带参数不冲突
 - 借鉴 GitHub 开源项目 Swift-Craft-Launcher（AGPL-3.0，仅参考思路）进一步深化 JVM 参数优化：`-Xms` 堆初始大小动态补齐（默认 maxMemory 的一半、下限 256m，消除堆扩张停顿）；Java 9+ 且未显式指定 GC 时注入 G1 停顿调优（`-XX:+ParallelRefProcEnabled` / `-XX:MaxGCPauseMillis=200`）；补 `-XX:+OmitStackTraceInFastThrow` 与 `-XX:+OptimizeStringConcat` 零风险运行时优化，全部查重后追加
+- 离线用户名输入实时提示（PCL2 HintChinese 语义）：输入框下方动态显示校验提示——超过 16 字符提示「用户名不能超过 16 个字符」，包含英文数字下划线以外字符时提示 1.18+ 服务端可能拒绝；启动时对含非法字符的用户名弹窗警告「可能无法进入游戏」，支持「仍要启动」以兼容 1.18 之前的版本
 
 ### 变更
 

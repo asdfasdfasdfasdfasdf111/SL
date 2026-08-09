@@ -271,6 +271,13 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
     
     public func launch(_ launchOptions: LaunchOptions) async {
         if let account = launchOptions.account {
+            // 防御性校验（PCL2 风格）：非法用户名直接终止启动，
+            // 否则 1.20.5+ 会因 hello 包 writeUtf(name,16) 抛 EncoderException 而进服失败
+            let nameError = validateOfflineUsername(account.name)
+            guard nameError.isEmpty else {
+                log("离线登录参数无效：\(nameError)")
+                return
+            }
             launchOptions.playerName = account.name
             launchOptions.uuid = account.uuid
             log("正在登录")

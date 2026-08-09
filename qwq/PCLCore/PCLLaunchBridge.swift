@@ -86,6 +86,18 @@ private func pclLaunchInternal(
 ) {
     let resolvedGameDir = gameDir ?? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "")
 
+    // 离线用户名 PCL2 风格校验（空 → "Player" 兜底；含引号 / 超过 16 字符 → 直接失败）。
+    // 1.20.5+ 的 ServerboundHelloPacket 编码时 writeUtf(name, 16) 强校验：
+    //   超过 16 字符抛 EncoderException "String too big (was N characters, max 16)"，
+    // 表现为进服务器/开局域网时报 Failed to encode packet 'serverbound/minecraft:hello'
+    var safeUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
+    if safeUsername.isEmpty { safeUsername = "Player" }
+    let nameError = validateOfflineUsername(safeUsername)
+    guard nameError.isEmpty else {
+        completion(nil, .failure(MyLocalizedError(reason: "离线登录参数无效：\(nameError)")))
+        return
+    }
+
     let minecraftDir = MinecraftDirectory(
         rootURL: URL(fileURLWithPath: resolvedGameDir),
         name: "默认文件夹"
@@ -96,10 +108,10 @@ private func pclLaunchInternal(
         return
     }
 
-    // 设置离线账号
-    let account = OfflineAccount(username)
+    // 设置离线账号（PCL2 移植：UUID 走 McLoginLegacyUuid，accessToken = UUID）
+    let account = OfflineAccount(safeUsername)
     let options = LaunchOptions()
-    options.playerName = username
+    options.playerName = safeUsername
     options.uuid = account.uuid
     options.account = .offline(account)
     options.skipResourceCheck = true

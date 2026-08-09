@@ -98,6 +98,13 @@ class LauncherSettings: ObservableObject {
         self.selectedMinecraftVersion = UserDefaults.standard.string(forKey: UDK.selectedMinecraftVersion) ?? ""
         self.selectedGameRoot = UserDefaults.standard.string(forKey: UDK.selectedGameRoot) ?? ""
         self.offlineUsername = UserDefaults.standard.string(forKey: UDK.offlineUsername) ?? "Player"
+        // 清理历史遗留脏数据：曾把输入框占位提示「SL启动器（最好使用英文及下划线）」存成真实用户名，
+        // 该串 17 个字符 > MC 16 字符上限，1.20.5+ 进服时 hello 包编码直接抛
+        // "String too big (was 17 characters, max 16)"（Failed to encode packet 'serverbound/minecraft:hello'）
+        if self.offlineUsername == "SL启动器（最好使用英文及下划线）" {
+            self.offlineUsername = "Player"
+            UserDefaults.standard.set(self.offlineUsername, forKey: UDK.offlineUsername)
+        }
         self.cachedJavaPath = UserDefaults.standard.string(forKey: UDK.cachedJavaPath)
         self.appliedSkinHash = UserDefaults.standard.string(forKey: UDK.appliedSkinHash)
         self.selectedJavaPath = UserDefaults.standard.string(forKey: UDK.selectedJavaPath)

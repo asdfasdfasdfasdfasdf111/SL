@@ -154,30 +154,54 @@ struct CategoryContentView: View {
     }
 
     private var usernameField: some View {
-        TextField("离线模式用户名", text: $settings.offlineUsername)
-            .textFieldStyle(.plain)
-            .multilineTextAlignment(.center)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 20)
-                    .fill(.ultraThinMaterial)
-                    .overlay(RoundedRectangle(cornerRadius: 20).stroke(isUsernameFocused ? theme.accentColor : Color.clear, lineWidth: 1.5))
-            )
-            .foregroundColor(.primary)
-            .font(.system(size: 14, weight: .medium))
-            .scaleEffect(usernameFieldScale)
-            .animation(.punchySpring, value: usernameFieldScale)
-            .focused($isUsernameFocused)
-            .onChange(of: isUsernameFocused) { focused in
-                if focused {
-                    withAnimation(.punchySpring) { usernameFieldScale = 1.1 }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        withAnimation(.punchySpring) { usernameFieldScale = 1.0 }
+        VStack(spacing: 6) {
+            TextField("离线模式用户名", text: $settings.offlineUsername)
+                .textFieldStyle(.plain)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(.ultraThinMaterial)
+                        .overlay(RoundedRectangle(cornerRadius: 20).stroke(isUsernameFocused ? theme.accentColor : Color.clear, lineWidth: 1.5))
+                )
+                .foregroundColor(.primary)
+                .font(.system(size: 14, weight: .medium))
+                .frame(maxWidth: 190)
+                .scaleEffect(usernameFieldScale)
+                .animation(.punchySpring, value: usernameFieldScale)
+                .focused($isUsernameFocused)
+                .onChange(of: isUsernameFocused) { focused in
+                    if focused {
+                        withAnimation(.punchySpring) { usernameFieldScale = 1.1 }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            withAnimation(.punchySpring) { usernameFieldScale = 1.0 }
+                        }
                     }
                 }
+            // PCL2 风格提示（非阻塞）：超过 16 字符 / 包含非英文数字下划线时显示
+            if let hint = offlineUsernameHint {
+                Text(hint)
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+                    .multilineTextAlignment(.center)
+                    .transition(.opacity)
             }
-            .padding(.horizontal, 20)
+        }
+        .padding(.horizontal, 20)
+    }
+
+    /// 离线用户名提示（PCL2 PageLoginLegacy 的 HintChinese 移植）
+    private var offlineUsernameHint: String? {
+        let name = settings.offlineUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.utf16.count > 16 {
+            return "用户名不能超过 16 个字符"
+        }
+        if !name.isEmpty, name.range(of: "^[0-9A-Za-z_]*$", options: .regularExpression) == nil {
+            // PCL2 HintChinese 原版语义：1.18+ 服务端会拒绝非 [0-9A-Za-z_] 用户名（Invalid characters in username）
+            return "玩家名包含英文、数字、下划线以外的内容，可能无法进入 Minecraft 1.18+ 的世界"
+        }
+        return nil
     }
 
     private var skinButton: some View {
@@ -707,8 +731,32 @@ struct CategoryContentView: View {
         initLaunchState()
         let gameDir = settings.selectedGameRoot.isEmpty ? nil : settings.selectedGameRoot
         let version = settings.selectedMinecraftVersion
+        // PCL2 风格离线用户名校验（非空 / 无英文引号 / ≤16 字符）：
+        // 否则 1.20.5+ 会因 hello 包 writeUtf(name,16) 报 "String too big" 而进服失败
         let username = settings.offlineUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nameError = validateOfflineUsername(username)
+        guard nameError.isEmpty else {
+            resetLaunchState()
+            settings.launchErrorMessage = nameError
+            settings.showLaunchAlert = true
+            return
+        }
         let finalUsername = username.isEmpty ? "Player" : username
+        // PCL2 HintChinese 语义：Minecraft 1.18+ 服务端只接受 [0-9A-Za-z_] 用户名，
+        // 中文等字符会在服务端抛 "Invalid characters in username" 并断开连接（表现为「连接中断」）。
+        // 启动前给明确警告，避免用户误以为启动器异常；保留「仍要启动」以兼容 1.18 之前的版本。
+        if finalUsername.range(of: "^[0-9A-Za-z_]*$", options: .regularExpression) == nil {
+            resetLaunchState()
+            let alert = NSAlert()
+            alert.messageText = "用户名可能无法进入游戏"
+            alert.informativeText = "「\(finalUsername)」包含英文、数字、下划线以外的字符。\n\nMinecraft 1.18+ 的服务端会拒绝此类用户名，并提示「连接中断」（Invalid characters in username）。\n\n仅当目标是 1.18 之前的版本时才可正常进入。仍要继续启动吗？"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "仍要启动")
+            alert.addButton(withTitle: "取消")
+            if alert.runModal() == .alertSecondButtonReturn {
+                return
+            }
+        }
         let skinURL: URL? = {
             if let url = settings.avatarImageURL, url.lastPathComponent != "stf.png" {
                 return url

@@ -220,17 +220,12 @@ public class MinecraftLauncher {
     }
     
     private func buildGameArguments(_ options: LaunchOptions) -> [String] {
-        // 用户类型：1.20.5+ 的 'serverbound/minecraft:hello' 包按 user_type 校验身份。
-        // 离线账号必须传 "legacy"，否则 Netty 编码器会抛 EncoderException：
-        //   "Failed to encode packet 'serverbound/minecraft:hello'"
-        // 正版/Microsoft 与外置验证 (yggdrasil) 用 "msa"；未指定账号默认按离线处理
-        let userType: String = {
-            switch options.account {
-            case .offline: return "legacy"
-            case .microsoft, .yggdrasil: return "msa"
-            case nil: return "legacy"
-            }
-        }()
+        // 用户类型：PCL2 强制所有账号（含离线）传 "msa"（ModLaunch.vb 第 1546 行，issue #1221）。
+        // 离线账号若按旧逻辑传 "legacy"，部分 1.20.5+ 服务端/插件按非正版身份处理导致进服异常；
+        // 与 PCL2 保持一致即对所有账号统一 "msa"。
+        // （注意：离线模式 16 字符用户名校验由 hello 包编码端做，见 buildGameArguments 下方
+        //   "auth_player_name" —— 超过 16 字符会抛 EncoderException "String too big"）
+        let userType = "msa"
         let values: [String: String] = [
             "auth_player_name": options.playerName,
             "version_name": instance.version!.displayName,
@@ -239,11 +234,12 @@ public class MinecraftLauncher {
             "assets_index_name": instance.manifest.assetIndex?.id ?? "",
             "auth_uuid": options.uuid.uuidString.replacingOccurrences(of: "-", with: "").lowercased(),
             "auth_access_token": options.accessToken,
+            "auth_session": options.accessToken,
             "user_type": userType,
             "version_type": "PCL.Mac \(SharedConstants.shared.version)",
-            // user_properties：离线账号传空 JSON；正版账号本应注入真实 profile（含皮肤/披风），
-            // 当前 stub 模式所有账号都用 OfflineAccount，先保持空 JSON 以保证进入世界/服务器成功
-            "user_properties": "\"{}\""
+            // user_properties：与 PCL2 一致传 {} （不带引号——Process.arguments 不走 shell，
+            // 模板值会原样成为单个参数，带引号反而让 Java 收到字面 "{}"）
+            "user_properties": "{}"
         ]
         
         var args: [String] = []
