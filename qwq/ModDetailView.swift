@@ -195,12 +195,13 @@ struct ModDetailView: View {
                     // - 游戏版本页（loaderSelector）：必须选中用户点击的版本（item.name），
                     //   否则会出现「标题是 1.7.2、加载器却显示当前实例版本 26.2 的 4 张卡片」的错乱
                     //   （根因：26.2 缓存命中 Fabric/Forge/NeoForged/Quilt，而 1.7.2 只有 Forge）
+                    // - item.name 不在列表（manifest 未就绪时列表只有本地版本）：不急着回退，
+                    //   避免误选当前实例版本 26.2（sortVersionsForDisplay 会把它提到列表首位）
+                    //   命中缓存显示 4 张卡，等 fetchManifestVersions 完成回调按 item.name 重新决议
                     // - 其他页面：优先当前实例版本，其次第一个可用版本
                     if pageType == .loaderSelector {
                         if sortedVersions.contains(item.name) {
                             selectedVersion = item.name
-                        } else if let first = sortedVersions.first {
-                            selectedVersion = first
                         }
                     } else {
                         if let defaultInstanceVersion = getDefaultInstanceVersion(),
@@ -323,8 +324,23 @@ struct ModDetailView: View {
             await MainActor.run {
                 manifestVersions = filtered
                 sortedVersions = availableVersions
-                if let first = sortedVersions.first {
-                    selectedVersion = first
+                // 修复（d43cb4d 后 1.10 仍显示 4 卡的根因）：此回调此前无条件把
+                // selectedVersion 改成 sortedVersions.first，而 sortVersionsForDisplay
+                // 会把当前实例版本（26.2）提到列表首位——直接把 onAppear 按 item.name
+                // 设的值冲掉，触发 onChange → fetchLoaderSupport("26.2") → 缓存命中 4 张卡。
+                // 现改为：先保留现有选择（含用户手动选择），其次用户点击的 item.name，最后才回退。
+                if pageType == .loaderSelector {
+                    if !selectedVersion.isEmpty, sortedVersions.contains(selectedVersion) {
+                        // 保留现有选择（onAppear 已按 item.name 设置，或用户手动选择）
+                    } else if sortedVersions.contains(item.name) {
+                        selectedVersion = item.name
+                    } else if let first = sortedVersions.first {
+                        selectedVersion = first
+                    }
+                } else if selectedVersion.isEmpty || !sortedVersions.contains(selectedVersion) {
+                    if let first = sortedVersions.first {
+                        selectedVersion = first
+                    }
                 }
             }
         }
