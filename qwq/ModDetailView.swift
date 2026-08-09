@@ -190,13 +190,25 @@ struct ModDetailView: View {
                         scanLocalVersions()
                     }
                     sortedVersions = availableVersions
-                    
-                    // 默认选中：优先当前实例版本，其次第一个可用版本
-                    if let defaultInstanceVersion = getDefaultInstanceVersion(),
-                       sortedVersions.contains(defaultInstanceVersion) {
-                        selectedVersion = defaultInstanceVersion
-                    } else if let first = sortedVersions.first {
-                        selectedVersion = first
+
+                    // 默认选中：
+                    // - 游戏版本页（loaderSelector）：必须选中用户点击的版本（item.name），
+                    //   否则会出现「标题是 1.7.2、加载器却显示当前实例版本 26.2 的 4 张卡片」的错乱
+                    //   （根因：26.2 缓存命中 Fabric/Forge/NeoForged/Quilt，而 1.7.2 只有 Forge）
+                    // - 其他页面：优先当前实例版本，其次第一个可用版本
+                    if pageType == .loaderSelector {
+                        if sortedVersions.contains(item.name) {
+                            selectedVersion = item.name
+                        } else if let first = sortedVersions.first {
+                            selectedVersion = first
+                        }
+                    } else {
+                        if let defaultInstanceVersion = getDefaultInstanceVersion(),
+                           sortedVersions.contains(defaultInstanceVersion) {
+                            selectedVersion = defaultInstanceVersion
+                        } else if let first = sortedVersions.first {
+                            selectedVersion = first
+                        }
                     }
                 }
                 // 游戏版本页：异步获取 Mojang 版本清单
