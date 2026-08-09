@@ -50,6 +50,8 @@ struct DownloadCategoryView: View {
     @State private var showCircleButton = false
     @State private var circleScale: CGFloat = 0.01
     @State private var circleOpacity: Double = 0
+    // 下载详情页（点击圆形按钮后进入，对标 PCL.Mac InstallingView）
+    @ObservedObject private var downloadDetail = DownloadDetailManager.shared
 
     private let sidebarOffsets: [CGFloat] = {
         let hs: [CGFloat] = [36, 28, 28, 28, 36, 36, 36, 36]
@@ -337,6 +339,25 @@ struct DownloadCategoryView: View {
                 .opacity(circleOpacity)
                 .padding(.trailing, 12)
                 .padding(.bottom, 12)
+                // 点击圆形按钮 → 进入下载详情页（对标 PCL.Mac InstallingView）
+                .onTapGesture {
+                    if !downloadDetail.isPresented {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            downloadDetail.isPresented = true
+                        }
+                    }
+                }
+            }
+        }
+        // 下载详情页（毛玻璃：左侧信息面板 + 右侧任务卡片，覆盖整个内容区）
+        .overlay {
+            if downloadDetail.isPresented {
+                DownloadDetailView()
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .scale(scale: 0.96)),
+                        removal: .opacity
+                    ))
+                    .zIndex(10)
             }
         }
     }

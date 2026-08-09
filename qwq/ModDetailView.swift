@@ -606,27 +606,62 @@ struct ModDetailView: View {
             }
         }
         
-        // 真正的下载逻辑
+        // 真正的下载逻辑：解析目标文件 → 创建下载任务 → 打开详情页 → 启动任务
+        // （详情页对标 PCL.Mac InstallingView：左侧信息面板 + 右侧任务卡片，毛玻璃风格）
         Task.detached(priority: .userInitiated) {
             do {
-                switch pageType {
-                case .mod:
-                    try await downloadMod()
-                case .shader:
-                    try await downloadShader()
-                case .resourcePack:
-                    try await downloadResourcePack()
-                case .modpack:
-                    try await downloadModpack()
-                case .loaderSelector:
-                    // 游戏版本页不需要下载
-                    break
+                let resolved = try await self.resolveDownloadFile()
+                // destination 必须是完整文件路径（目录 + 文件名），供 SingleFileDownloader 落盘
+                let destFile = resolved.destination.appendingPathComponent(resolved.filename)
+                let task = ModFileDownloadTask(
+                    url: resolved.url,
+                    destination: destFile,
+                    title: resolved.title
+                )
+                task.onComplete { [self] in
+                    Task { @MainActor in
+                        if self.pageType == .modpack, task.failureReason == nil {
+                            // 整合包：zip 下载完成后还需解压安装（含 Minecraft/加载器/模组下载）
+                            self.settings.javaPopupMessage = "正在安装整合包…"
+                            self.settings.showJavaPopup = true
+                            Task.detached(priority: .userInitiated) {
+                                do {
+                                    try await ModpackInstaller().install(
+                                        packURL: destFile,
+                                        to: URL(fileURLWithPath: LauncherSettings.shared.selectedGameRoot)
+                                    )
+                                    await MainActor.run {
+                                        self.isDownloading = false
+                                        DownloadDetailManager.shared.dismiss()
+                                        self.settings.javaPopupMessage = "下载完成"
+                                        self.settings.showJavaPopup = true
+                                    }
+                                } catch {
+                                    await MainActor.run {
+                                        self.isDownloading = false
+                                        DownloadDetailManager.shared.dismiss()
+                                        self.settings.launchErrorMessage = "整合包安装失败: \(error.localizedDescription)"
+                                        self.settings.showLaunchAlert = true
+                                    }
+                                }
+                            }
+                        } else {
+                            self.isDownloading = false
+                            DownloadDetailManager.shared.dismiss()
+                            if let reason = task.failureReason {
+                                self.settings.launchErrorMessage = "下载失败: \(reason)"
+                                self.settings.showLaunchAlert = true
+                            } else {
+                                self.settings.javaPopupMessage = "下载完成"
+                                self.settings.showJavaPopup = true
+                            }
+                        }
+                    }
                 }
                 await MainActor.run {
-                    isDownloading = false
-                    settings.javaPopupMessage = "下载完成"
-                    settings.showJavaPopup = true
+                    DownloadDetailManager.shared.start(task)
                 }
+                task.start()
             } catch {
                 await MainActor.run {
                     isDownloading = false
@@ -636,93 +671,66 @@ struct ModDetailView: View {
             }
         }
     }
-    
-    private func downloadMod() async throws {
-        guard !item.id.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "模组 ID 为空"]) }
-        
+
+    /// 解析本次下载的目标文件信息（URL/文件名/目标目录/标题），供下载详情页任务使用。
+    /// 返回后由 ModFileDownloadTask 负责带进度下载（SingleFileDownloader → NetManager）。
+    private func resolveDownloadFile() async throws -> (url: URL, filename: String, destination: URL, title: String) {
         let settings = LauncherSettings.shared
         let gameVersion = selectedVersion
         let gameRoot = settings.selectedGameRoot
-        
+
         guard !gameVersion.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未选择游戏版本"]) }
         guard !gameRoot.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未设置游戏根目录"]) }
-        
-        // 游戏启动时 game_directory 指向 <gameRoot>/versions/<version>，
-        // mods 必须放在版本文件夹内才会被游戏加载
-        let modsDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("versions/\(gameVersion)/mods")
-        try FileManager.default.createDirectory(at: modsDir, withIntermediateDirectories: true)
-        
-        let downloader = ModDownloader()
-        
-        // 使用选中的加载器
-        let loader: ModLoader
-        switch selectedLoader.lowercased() {
-        case "fabric": loader = .fabric
-        case "forge": loader = .forge
-        case "neoforge", "neoforged": loader = .neoforge
-        case "quilt": loader = .quilt
-        default: loader = .fabric
+
+        switch pageType {
+        case .mod:
+            guard !item.id.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "模组 ID 为空"]) }
+            // 游戏启动时 game_directory 指向 <gameRoot>/versions/<version>，
+            // mods 必须放在版本文件夹内才会被游戏加载
+            let modsDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("versions/\(gameVersion)/mods")
+            try FileManager.default.createDirectory(at: modsDir, withIntermediateDirectories: true)
+            let loader: ModLoader
+            switch selectedLoader.lowercased() {
+            case "fabric": loader = .fabric
+            case "forge": loader = .forge
+            case "neoforge", "neoforged": loader = .neoforge
+            case "quilt": loader = .quilt
+            default: loader = .fabric
+            }
+            let (url, filename) = try await ModDownloader().resolveLatestFile(modId: item.id, gameVersion: gameVersion, loader: loader)
+            return (url, filename, modsDir, item.name)
+
+        case .shader:
+            guard !item.id.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "光影 ID 为空"]) }
+            // 光影放在版本文件夹的 shaderpacks（游戏 gameDir = versions/<version>）
+            let shaderDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("versions/\(gameVersion)/shaderpacks")
+            try FileManager.default.createDirectory(at: shaderDir, withIntermediateDirectories: true)
+            // 光影项目版本的 loaders 字段通常是 ["minecraft"] 或空，不能按 fabric 模组过滤
+            let (url, filename) = try await ModDownloader().resolveLatestFile(modId: item.id, gameVersion: gameVersion)
+            return (url, filename, shaderDir, item.name)
+
+        case .resourcePack:
+            guard !item.id.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "资源包 ID 为空"]) }
+            // 资源包放在版本文件夹的 resourcepacks（游戏 gameDir = versions/<version>）
+            let resourcePackDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("versions/\(gameVersion)/resourcepacks")
+            try FileManager.default.createDirectory(at: resourcePackDir, withIntermediateDirectories: true)
+            // 资源包项目版本的 loaders 字段通常是 ["minecraft"] 或空，不能按 fabric 模组过滤
+            let (url, filename) = try await ModDownloader().resolveLatestFile(modId: item.id, gameVersion: gameVersion)
+            return (url, filename, resourcePackDir, item.name)
+
+        case .modpack:
+            guard !item.id.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "整合包 ID 为空"]) }
+            guard !selectedModpackVersionId.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未选择整合包版本"]) }
+            // 整合包下载到版本目录
+            let versionDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("versions/\(selectedModpackVersionId)")
+            try FileManager.default.createDirectory(at: versionDir, withIntermediateDirectories: true)
+            let (url, filename) = try await ModpackDownloader().resolveFile(packId: item.id, versionId: selectedModpackVersionId)
+            return (url, filename, versionDir, item.name)
+
+        case .loaderSelector:
+            // 游戏版本页不需要下载
+            throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "游戏版本页无需下载"])
         }
-        
-        _ = try await downloader.downloadLatestMod(modId: item.id, gameVersion: gameVersion, loader: loader, destination: modsDir)
-    }
-    
-    private func downloadShader() async throws {
-        guard !item.id.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "光影 ID 为空"]) }
-        
-        let settings = LauncherSettings.shared
-        let gameVersion = selectedVersion
-        let gameRoot = settings.selectedGameRoot
-        
-        guard !gameVersion.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未选择游戏版本"]) }
-        guard !gameRoot.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未设置游戏根目录"]) }
-        
-        // 光影放在版本文件夹的 shaderpacks（游戏 gameDir = versions/<version>）
-        let shaderDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("versions/\(gameVersion)/shaderpacks")
-        try FileManager.default.createDirectory(at: shaderDir, withIntermediateDirectories: true)
-        
-        // 光影项目版本的 loaders 字段通常是 ["minecraft"] 或空，不能按 fabric 模组过滤
-        let downloader = ModDownloader()
-        
-        _ = try await downloader.downloadLatestMod(modId: item.id, gameVersion: gameVersion, destination: shaderDir)
-    }
-    
-    private func downloadResourcePack() async throws {
-        guard !item.id.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "资源包 ID 为空"]) }
-        
-        let settings = LauncherSettings.shared
-        let gameVersion = selectedVersion
-        let gameRoot = settings.selectedGameRoot
-        
-        guard !gameVersion.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未选择游戏版本"]) }
-        guard !gameRoot.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未设置游戏根目录"]) }
-        
-        // 资源包放在版本文件夹的 resourcepacks（游戏 gameDir = versions/<version>）
-        let resourcePackDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("versions/\(gameVersion)/resourcepacks")
-        try FileManager.default.createDirectory(at: resourcePackDir, withIntermediateDirectories: true)
-        
-        // 资源包项目版本的 loaders 字段通常是 ["minecraft"] 或空，不能按 fabric 模组过滤
-        let downloader = ModDownloader()
-        _ = try await downloader.downloadLatestMod(modId: item.id, gameVersion: gameVersion, destination: resourcePackDir)
-    }
-    
-    private func downloadModpack() async throws {
-        guard !item.id.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "整合包 ID 为空"]) }
-        
-        let settings = LauncherSettings.shared
-        let gameRoot = settings.selectedGameRoot
-        
-        guard !gameRoot.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未设置游戏根目录"]) }
-        
-        // 整合包下载到版本目录
-        let versionDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("versions/\(selectedModpackVersionId)")
-        try FileManager.default.createDirectory(at: versionDir, withIntermediateDirectories: true)
-        
-        let downloader = ModpackDownloader()
-        let packURL = try await downloader.downloadLatest(packId: item.id, to: versionDir)
-        
-        // 安装整合包
-        try await ModpackInstaller().install(packURL: packURL, to: URL(fileURLWithPath: gameRoot))
     }
 
     @ViewBuilder

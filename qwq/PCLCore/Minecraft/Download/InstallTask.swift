@@ -347,6 +347,7 @@ public enum InstallStage: Int {
     case installNeoforge = 1002
     
     case customFile = 2000
+    case modDownload = 2001
     
     case resources = 3000
     
@@ -366,6 +367,7 @@ public enum InstallStage: Int {
         case .clientLibraries: "下载依赖项文件"
         case .natives: "下载本地库文件"
         case .customFile: "下载自定义文件"
+        case .modDownload: "下载文件"
         case .resources: "下载资源"
         case .end: "结束"
         case .javaDownload: "下载 Java"

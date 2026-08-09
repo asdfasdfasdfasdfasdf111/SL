@@ -144,6 +144,18 @@ public class ModpackDownloader {
         return destFile
     }
     
+    /// 解析指定整合包版本的主文件下载地址与文件名（供下载详情页任务使用，不在本方法内下载）。
+    /// - Parameter versionId: 用户选中的版本 id（ModpackVersion.id）；找不到时回退到最新版本
+    public func resolveFile(packId: String, versionId: String) async throws -> (url: URL, filename: String) {
+        let versions = try await versions(packId: packId)
+        guard let target = versions.first(where: { $0.id == versionId }) ?? versions.first,
+              let file = target.files.first,
+              let url = URL(string: file.url) else {
+            throw ModpackError.noFile
+        }
+        return (url, file.filename)
+    }
+
     public func downloadFirst(query: String, to destination: URL) async throws -> URL {
         let packs = try await search(query: query, limit: 1)
         guard let pack = packs.first else { throw ModpackError.notFound }

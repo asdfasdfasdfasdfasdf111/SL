@@ -227,6 +227,24 @@ public class ModDownloader {
         }
         return try await downloadMod(version: latest, destination: destination)
     }
+
+    /// 解析最新版本的主文件下载地址与文件名（供下载详情页任务使用，不在本方法内下载）。
+    /// - Parameters:
+    ///   - loader: 传 nil 表示不做加载器过滤（资源包/光影等 loaders 字段为 ["minecraft"] 或空的项目）
+    public func resolveLatestFile(modId: String, gameVersion: String, loader: ModLoader? = nil) async throws -> (url: URL, filename: String) {
+        let versions: [ModrinthVersion]
+        if let loader {
+            versions = try await getVersions(modId: modId, loaders: [loader], gameVersions: [gameVersion])
+        } else {
+            versions = try await getVersions(modId: modId, gameVersions: [gameVersion])
+        }
+        guard let latest = versions.first,
+              let primary = latest.files.first(where: { $0.primary }) ?? latest.files.first,
+              let url = URL(string: primary.url) else {
+            throw ModError.noCompatibleVersion
+        }
+        return (url, primary.filename)
+    }
     
     private struct SearchResult: Codable {
         let hits: [ModrinthMod]
