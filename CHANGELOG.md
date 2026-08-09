@@ -24,6 +24,9 @@
 - **修复游戏关闭启动器检测不到**：`MinecraftLauncher.launch` 增加 `process.terminationHandler`，进程退出时主动在主线程触发 callback；同时用 `DispatchSemaphore` 替代 `process.waitUntilExit()`——一旦 Java 进程异常（卡死/死锁/僵尸），旧实现永久阻塞、UI 永远收不到 completion；现在 terminationHandler 必然触发一次 callback。catch 路径也 signal semaphore 防止 launch() 自身永久阻塞
 - 修复启动参数 `user_properties` 多转义引号的问题：此前传 `"\"{}\""` 让 Java 收到字面量 `"{}"`，改为与 PCL2 一致的 `{}`（Process.arguments 不经 shell，参数原样传递）；同时按 PCL2 行为补充 `auth_session` 启动参数（值与 accessToken 一致）
 - 启动链路防御性用户名校验：`PCLLaunchBridge` 对用户名 trim 后为空自动兜底为 `Player`，非法（含英文引号 / 超 16 字符）直接失败并返回明确错误；`MinecraftInstance.launch` 前置校验，非法用户名不再拖到进服时才抛 `EncoderException`
+- **修复离线自定义皮肤无效（26.2 实测）**：1.19.3+ 的默认皮肤实际加载路径为 `assets/minecraft/textures/entity/player/{slim|wide}/{9 个默认皮肤}.png`，此前向版本 JAR 顶层写入 `entity/steve.png` 等的替换方式游戏根本不读取。已按 PCL2（`ModLaunch.vb` 离线皮肤资源包逻辑）移植新方案：生成皮肤资源包 `resourcepacks/SL 皮肤.zip`（`pack.mcmeta` + wide/slim 双模型 × 9 个默认皮肤 + 旧版顶层 `entity/{steve,alex}.png`，全版本生效），并注入 `options.txt` 的 `resourcePacks`（追加 `"file/SL 皮肤.zip"`，列表末尾最高优先级）；选择皮肤时与每次启动前均幂等应用（按皮肤 SHA-1 判重，换皮肤自动重建资源包）
+- 修复点击空白处 / 按钮后用户名输入框高亮边框不消失：macOS 点击非焦点区域不会自动让输入框失焦，新增背景透明点击层（点击空白即失焦），并让「选择皮肤」「启动游戏」按钮主动释放焦点
+- 修复模组 / 加载器详情页每次进入都强制联网检测加载器支持导致 10+ 秒等待：加载器支持检测改为三级策略——内存缓存 → 磁盘缓存（`SL启动器/LoaderSupportCache.json`，7 天 TTL，原子写入）→ 联网检测（失败自动回退旧磁盘缓存），装过加载器后再次进入详情页秒开
 
 ### 新增
 
@@ -35,7 +38,9 @@
 
 ### 变更
 
-- 离线皮肤应用统一改走 JAR 内默认贴图替换（幂等）：不再优先使用 authlib-injector——其 `file://` prefetch 在离线场景不可靠，且 PCL2 离线模式同样不注入；替换在启动前后台异步执行（hash 判断防重复），完成后再拉起游戏进程，避免阻塞主线程
+- 离线皮肤应用统一改走「皮肤资源包」方案（PCL2 移植，见修复条目）：不再修改版本 JAR——JAR 顶层贴图对 1.19.3+ 无效；资源包方案全版本生效，且不破坏 JAR 完整性
+- 下载按钮点击即时提示「下载开始」（此前仅下载完成才提示「下载完成」）
+- 用户名输入框横向宽度 190 → 150，更紧凑
 
 - 应用图标内容整体缩小至 0.85 倍（像素尺寸不变，内容居中），视觉上更紧凑
 - 空闲时静默后台：网速计速器改为惰性启动（有流量才跑，空闲 3 秒自停，不再常驻每秒唤醒）；游戏日志改为增量读取（不再全量重读文件）；窗口检测轮询由 1 秒降频至 2 秒——应用空闲时几乎不再产生 CPU 与内存占用

@@ -67,6 +67,10 @@ struct CategoryContentView: View {
 
     private func launchContent(cardWidth: CGFloat, buttonWidth: CGFloat, avatarSize: CGFloat, logCardHeight: CGFloat) -> some View {
         ZStack {
+            // 透明点击层（最底层）：点击任意空白处让用户名输入框失焦（macOS 点击非焦点区不自动失焦）
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { isUsernameFocused = false }
             HStack(alignment: .top, spacing: 20) {
                 leftCard(cardWidth: cardWidth, avatarSize: avatarSize, buttonWidth: buttonWidth)
                     .zIndex(1)
@@ -167,7 +171,7 @@ struct CategoryContentView: View {
                 )
                 .foregroundColor(.primary)
                 .font(.system(size: 14, weight: .medium))
-                .frame(maxWidth: 190)
+                .frame(maxWidth: 150)
                 .scaleEffect(usernameFieldScale)
                 .animation(.punchySpring, value: usernameFieldScale)
                 .focused($isUsernameFocused)
@@ -206,6 +210,7 @@ struct CategoryContentView: View {
 
     private var skinButton: some View {
         Button(action: {
+            isUsernameFocused = false
             withAnimation(.punchySpring) { skinButtonScale = 1.2 }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 withAnimation(.punchySpring) { skinButtonScale = 1.0 }
@@ -229,6 +234,7 @@ struct CategoryContentView: View {
 
     private func launchButton(buttonWidth: CGFloat) -> some View {
         Button(action: {
+            isUsernameFocused = false
             withAnimation(.punchySpring) { buttonScale = 1.15 }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 withAnimation(.punchySpring) { buttonScale = 1.0 }
@@ -527,18 +533,19 @@ struct CategoryContentView: View {
                         }
                         // 保存皮肤到持久化目录（供 authlib-injector 使用）
                         let offlineUUID = self.settings.fixedOfflineUUID.components(separatedBy: "-").joined().lowercased()
-                        try skinManager.saveSkin(url, forUUID: offlineUUID)
+                        _ = try skinManager.saveSkin(url, forUUID: offlineUUID)
 
                         let version = self.settings.selectedMinecraftVersion
                         let gameDirPath = settings.selectedGameRoot.isEmpty ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "") : settings.selectedGameRoot
                         if !version.isEmpty && !gameDirPath.isEmpty {
                             let gameDir = URL(fileURLWithPath: gameDirPath)
-                            // 离线皮肤统一走 JAR 替换（幂等）：authlib-injector 的 file:// prefetch
-                            // 离线场景不可靠，且 PCL2 离线也不注入；替换 JAR 内默认贴图是纯原版唯一可靠方案
+                            // 离线皮肤统一走资源包方案（PCL2 移植）：生成 resourcepacks/SL 皮肤.zip
+                            // 并注入 options.txt。1.19.3+ 的默认皮肤在 entity/player/{slim,wide}/ 下，
+                            // 旧版 JAR 顶层替换对 1.13+ 无效（26.2 实测不加载）。
                             do {
-                                try skinManager.applySkinToJar(skinURL: url, toVersion: version, gameDir: gameDir, settings: self.settings)
+                                try skinManager.applySkinAsResourcePack(skinURL: url, toVersion: version, gameDir: gameDir, settings: self.settings)
                             } catch {
-                                print("⚠️ JAR 皮肤替换失败: \(error.localizedDescription)")
+                                print("⚠️ 皮肤资源包生成失败: \(error.localizedDescription)")
                             }
                         }
                     } else {
@@ -885,20 +892,21 @@ struct CategoryContentView: View {
         )
         }
         
-        // 离线皮肤：确保版本 JAR 已替换（幂等，hash 判断防重复；JAR 替换是离线模式唯一可靠的方案，
-        // authlib-injector 的 file:// prefetch 离线不可靠，PCL2 离线也不注入）。后台执行避免阻塞主线程。
+        // 离线皮肤：确保资源包已生成并注入（PCL2 移植，幂等 hash 判断）。
+        // 后台执行避免阻塞主线程。JAR 替换对 1.13+ 无效（默认皮肤在 entity/player/{slim,wide}/ 下），
+        // 资源包方案全版本生效（1.19.3+ 与旧版路径都写入）。
         let gameDirPath = settings.selectedGameRoot.isEmpty ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "") : settings.selectedGameRoot
         if let skin = settings.skinImageURL, !gameDirPath.isEmpty, !version.isEmpty {
             DispatchQueue.global(qos: .utility).async {
                 do {
-                    try MinecraftSkinManager.shared.applySkinToJar(
+                    try MinecraftSkinManager.shared.applySkinAsResourcePack(
                         skinURL: skin,
                         toVersion: version,
                         gameDir: URL(fileURLWithPath: gameDirPath),
                         settings: self.settings
                     )
                 } catch {
-                    print("皮肤应用失败: \(error.localizedDescription)")
+                    print("皮肤资源包应用失败: \(error.localizedDescription)")
                 }
                 DispatchQueue.main.async {
                     startGame()

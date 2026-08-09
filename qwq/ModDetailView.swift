@@ -324,51 +324,112 @@ struct ModDetailView: View {
 
     private static let loaderOrder = ["Fabric", "Forge", "NeoForged", "Quilt"]
 
+    // MARK: - 加载器支持磁盘缓存（本地缓存、立刻使用）
+    // 对比版本清单（fetchMergedVersionManifest 有 5 分钟内存 TTL），加载器支持检测此前只有
+    // 内存缓存且显式 reloadIgnoringLocalCacheData，重启启动器后必须联网重测（4 加载器 × 3 重试）→ 慢几秒。
+    // 加载器支持情况变化极慢，落盘 + 7 天 TTL；联网失败时回退旧缓存（即使已过期）。
+    private static let loaderSupportCacheFile: URL = {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let dir = appSupport.appendingPathComponent("SL启动器")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("LoaderSupportCache.json")
+    }()
+    private static let loaderSupportDiskTTL: TimeInterval = 7 * 24 * 3600
+    private static var loaderSupportDiskCache: [String: [String]]?
+
+    private static func readLoaderSupportDiskCache() -> [String: [String]]? {
+        if let cached = loaderSupportDiskCache { return cached }
+        guard let data = try? Data(contentsOf: loaderSupportCacheFile),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let entries = json["versions"] as? [String: [String]] else { return nil }
+        loaderSupportDiskCache = entries
+        return entries
+    }
+
+    private static func writeLoaderSupportDiskCache(_ entries: [String: [String]]) {
+        let payload: [String: Any] = ["savedAt": Date().timeIntervalSince1970, "versions": entries]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        try? data.write(to: loaderSupportCacheFile, options: .atomic)
+    }
+
     private func fetchLoaderSupport(for version: String) {
         guard !version.isEmpty else { return }
-        // 命中本地缓存：直接使用，不联网，秒级返回
+        // 1. 内存缓存：直接使用，不联网，秒级返回
         if let cached = Self.loaderSupportCache[version] {
-            availableLoaders = cached
-            isLoadingLoaders = false
-            if !cached.contains(selectedLoader), let first = cached.first {
-                selectedLoader = first
-            }
+            applyLoaders(cached)
             return
         }
-        // 未命中缓存：联网并发检测
+        // 2. 磁盘缓存（7 天 TTL 内）：重启后同样秒开
+        if let disk = Self.readLoaderSupportDiskCache(),
+           let cached = disk[version],
+           Date().timeIntervalSince1970 - (Self.loaderSupportDiskSavedAt ?? 0) < Self.loaderSupportDiskTTL {
+            Self.loaderSupportCache[version] = cached
+            applyLoaders(cached)
+            return
+        }
+        // 3. 未命中缓存：联网并发检测
         isLoadingLoaders = true
         Task {
-            let candidates: [(key: String, display: String)] = [
-                ("fabric", "Fabric"),
-                ("forge", "Forge"),
-                ("neoforge", "NeoForged"),
-                ("quilt", "Quilt")
-            ]
-            var supported: [String] = []
-            await withTaskGroup(of: (String, Bool).self) { group in
-                for candidate in candidates {
-                    group.addTask {
-                        let ok = await self.checkLoaderSupport(key: candidate.key, version: version)
-                        return (candidate.display, ok)
-                    }
-                }
-                for await (display, ok) in group where ok {
-                    supported.append(display)
-                }
-            }
-            supported.sort {
-                (Self.loaderOrder.firstIndex(of: $0) ?? 99) < (Self.loaderOrder.firstIndex(of: $1) ?? 99)
-            }
-            // 写入内存缓存，同版本下次直接命中
-            Self.loaderSupportCache[version] = supported
-            await MainActor.run {
-                availableLoaders = supported
-                isLoadingLoaders = false
-                if !supported.contains(selectedLoader), let first = supported.first {
-                    selectedLoader = first
+            let supported = await detectLoaders(for: version)
+            if !supported.isEmpty {
+                Self.loaderSupportCache[version] = supported
+                // 合并写入磁盘缓存，同版本下次（含重启后）直接命中
+                var disk = Self.readLoaderSupportDiskCache() ?? [:]
+                disk[version] = supported
+                Self.writeLoaderSupportDiskCache(disk)
+                await MainActor.run { applyLoaders(supported) }
+            } else {
+                // 联网全部失败：回退磁盘旧缓存（即使已过期），保证「立刻可用」而非空白等待
+                if let disk = Self.readLoaderSupportDiskCache(), let cached = disk[version] {
+                    Self.loaderSupportCache[version] = cached
+                    await MainActor.run { applyLoaders(cached) }
+                } else {
+                    await MainActor.run { applyLoaders([]) }
                 }
             }
         }
+    }
+
+    /// 磁盘缓存文件里保存的时间戳（供 TTL 判断）
+    private static var loaderSupportDiskSavedAt: Double? {
+        guard let data = try? Data(contentsOf: loaderSupportCacheFile),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return json["savedAt"] as? Double
+    }
+
+    /// 应用加载器列表到 UI（主线程调用）
+    private func applyLoaders(_ loaders: [String]) {
+        availableLoaders = loaders
+        isLoadingLoaders = false
+        if !loaders.contains(selectedLoader), let first = loaders.first {
+            selectedLoader = first
+        }
+    }
+
+    /// 并发检测 4 种加载器支持情况（网络兜底路径）
+    private func detectLoaders(for version: String) async -> [String] {
+        let candidates: [(key: String, display: String)] = [
+            ("fabric", "Fabric"),
+            ("forge", "Forge"),
+            ("neoforge", "NeoForged"),
+            ("quilt", "Quilt")
+        ]
+        var supported: [String] = []
+        await withTaskGroup(of: (String, Bool).self) { group in
+            for candidate in candidates {
+                group.addTask {
+                    let ok = await self.checkLoaderSupport(key: candidate.key, version: version)
+                    return (candidate.display, ok)
+                }
+            }
+            for await (display, ok) in group where ok {
+                supported.append(display)
+            }
+        }
+        supported.sort {
+            (Self.loaderOrder.firstIndex(of: $0) ?? 99) < (Self.loaderOrder.firstIndex(of: $1) ?? 99)
+        }
+        return supported
     }
 
     private func checkLoaderSupport(key: String, version: String) async -> Bool {
