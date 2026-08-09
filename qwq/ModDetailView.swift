@@ -179,12 +179,6 @@ struct ModDetailView: View {
                 }
             }
             .clipped()
-            // 启动器毛玻璃风格：详情页内容区整体包成圆角矩形毛玻璃卡片（矩形+毛玻璃+圆角，参照 PCL.Mac DownloadPage）
-            .background(
-                RoundedRectangle(cornerRadius: 20)
-                    .fill(.regularMaterial)
-                    .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
-            )
             .onAppear {
                 withAnimation(.interpolatingSpring(mass: 1.0, stiffness: 240, damping: 14, initialVelocity: 8)) {
                     entryScale = 1.0

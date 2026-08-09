@@ -1212,14 +1212,6 @@ struct DownloadCategoryView: View {
                 .animation(.spring(response: 0.5, dampingFraction: 0.7), value: sectionHighlightY),
             alignment: .topLeading
         )
-        // 启动器毛玻璃风格：左侧栏整体包成圆角矩形毛玻璃卡片（四周留 8pt 间隙）
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(.regularMaterial)
-                .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
-        )
-        .padding(.horizontal, 8)
-        .padding(.vertical, 8)
     }
 
     private func sidebarSectionHeader(_ section: GameSidebarSection, expanded: Bool) -> some View {
