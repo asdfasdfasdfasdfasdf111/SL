@@ -85,19 +85,20 @@ public enum LoaderSupportChecker {
     public static func supportedLoaders(for version: String) async -> [String] {
         if let cached = cachedLoaders(for: version) { return cached }
 
-        // 联网并发检测
-        let detected = await detectLoaders(for: version)
+        // 联网并发检测：区分「明确不支持」与「网络失败（结果未知）」
+        let (detected, hasUnknown) = await detectLoaders(for: version)
         if !detected.isEmpty {
-            cacheLock.lock()
-            memoryCache[version] = detected
-            cacheLock.unlock()
-            var disk = readDiskCache() ?? [:]
-            disk[version] = detected
-            writeDiskCache(disk)
+            // 检测到加载器：写入内存 + 磁盘缓存
+            writeCache(version: version, loaders: detected)
             return detected
         }
-
-        // 4. 联网全部失败：回退磁盘旧缓存（即使已过期）
+        if !hasUnknown {
+            // 全部加载器均「明确不支持」（404 / 空数组）：空结果也值得缓存，
+            // 否则 0 个加载器支持的版本每次进入详情页都重新联网白等数秒
+            writeCache(version: version, loaders: [])
+            return []
+        }
+        // 网络失败导致结果未知：不写缓存（避免覆盖旧缓存），回退磁盘旧缓存（即使已过期）
         if let disk = readDiskCache(), let cached = disk[version] {
             cacheLock.lock()
             memoryCache[version] = cached
@@ -105,6 +106,15 @@ public enum LoaderSupportChecker {
             return cached
         }
         return []
+    }
+
+    private static func writeCache(version: String, loaders: [String]) {
+        cacheLock.lock()
+        memoryCache[version] = loaders
+        cacheLock.unlock()
+        var disk = readDiskCache() ?? [:]
+        disk[version] = loaders
+        writeDiskCache(disk)
     }
 
     /// 仅清空内存缓存（内存警告时调用；磁盘缓存保留，下次仍秒开）
@@ -123,8 +133,17 @@ public enum LoaderSupportChecker {
 
     // MARK: - 网络检测
 
-    /// 并发检测 4 种加载器支持情况
-    private static func detectLoaders(for version: String) async -> [String] {
+    /// 单个加载器检测结论：supported（明确支持）/ notSupported（明确不支持）/ failed（结果未知，网络或 5xx 故障）
+    private enum LoaderCheckResult {
+        case supported
+        case notSupported
+        case failed
+    }
+
+    /// 并发检测 4 种加载器支持情况。
+    /// 返回 (支持的加载器显示名列表, 是否存在「结果未知」项)——区分明确不支持与网络失败，
+    /// 供调用方决定能否把空结果写入缓存（网络失败时不得写缓存，须回退旧缓存）。
+    private static func detectLoaders(for version: String) async -> ([String], Bool) {
         let candidates: [(key: String, display: String)] = [
             ("fabric", "Fabric"),
             ("forge", "Forge"),
@@ -132,27 +151,32 @@ public enum LoaderSupportChecker {
             ("quilt", "Quilt")
         ]
         var supported: [String] = []
-        await withTaskGroup(of: (String, Bool).self) { group in
+        var hasUnknown = false
+        await withTaskGroup(of: (String, LoaderCheckResult).self) { group in
             for candidate in candidates {
                 group.addTask {
-                    let ok = await checkLoaderSupport(key: candidate.key, version: version)
-                    return (candidate.display, ok)
+                    let result = await checkLoaderSupport(key: candidate.key, version: version)
+                    return (candidate.display, result)
                 }
             }
-            for await (display, ok) in group where ok {
-                supported.append(display)
+            for await (display, result) in group {
+                switch result {
+                case .supported: supported.append(display)
+                case .failed: hasUnknown = true
+                case .notSupported: break
+                }
             }
         }
         supported.sort {
             (loaderOrder.firstIndex(of: $0) ?? 99) < (loaderOrder.firstIndex(of: $1) ?? 99)
         }
-        return supported
+        return (supported, hasUnknown)
     }
 
-    /// 检查单个加载器对某版本是否可用：多端点逐个尝试，每端点最多重试 2 次，
-    /// 只要任意一次返回非空数组即视为支持。加载器 API（bmclapi / quilt meta）
-    /// 高峰期不稳定，参考 PCL.Mac 不设过短超时。
-    private static func checkLoaderSupport(key: String, version: String) async -> Bool {
+    /// 检查单个加载器对某版本是否可用：多端点逐个尝试，每端点最多重试 2 次。
+    /// 结论语义：404/410/空数组 = 明确不支持（notSupported）；网络错误或 5xx 重试耗尽 = failed（结果未知）。
+    /// 加载器 API（bmclapi / quilt meta）高峰期不稳定，参考 PCL.Mac 不设过短超时。
+    private static func checkLoaderSupport(key: String, version: String) async -> LoaderCheckResult {
         let encoded = version.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? version
         var urls: [URL] = []
         switch key {
@@ -172,8 +196,9 @@ public enum LoaderSupportChecker {
         default:
             urls = []
         }
-        guard !urls.isEmpty else { return false }
+        guard !urls.isEmpty else { return .notSupported }
 
+        var anyFailed = false
         for url in urls {
             for attempt in 0..<3 {
                 var req = URLRequest(url: url)
@@ -188,6 +213,10 @@ public enum LoaderSupportChecker {
                 do {
                     let (data, resp) = try await session.data(for: req)
                     if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                        // 4xx = 明确结论（404/410 = 该版本无此加载器），直接判不支持，不再重试；
+                        // 仅 5xx 视为瞬时故障，重试下一次。
+                        if (400...499).contains(http.statusCode) { return .notSupported }
+                        anyFailed = true
                         if attempt < 2 { try? await Task.sleep(nanoseconds: 600_000_000) }
                         continue
                     }
@@ -196,8 +225,9 @@ public enum LoaderSupportChecker {
                         if attempt < 2 { try? await Task.sleep(nanoseconds: 600_000_000) }
                         continue
                     }
-                    return !array.isEmpty
+                    return array.isEmpty ? .notSupported : .supported
                 } catch {
+                    anyFailed = true
                     if attempt < 2 {
                         try? await Task.sleep(nanoseconds: 600_000_000)
                         continue
@@ -205,6 +235,6 @@ public enum LoaderSupportChecker {
                 }
             }
         }
-        return false
+        return anyFailed ? .failed : .notSupported
     }
 }
