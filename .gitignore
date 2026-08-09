@@ -47,3 +47,6 @@ PCL2/
 
 # 工作数据
 .workbuddy-ai/
+
+# 自动化任务元数据（勿提交）
+.workbuddy/
