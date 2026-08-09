@@ -249,23 +249,18 @@ struct ModDetailView: View {
         .padding(.bottom, 20)
         .padding(.trailing, 20)
         .overlay(alignment: .bottomTrailing) {
-            // 下载按钮：胶囊形（PCL.Mac 圆形下载按钮样式）+ 启动器强调色，圆按钮出现后动画左移
+            // 下载按钮：初始在右下角，圆按钮出现后动画左移
             if !selectedVersion.isEmpty {
                 Button(action: { startDownload() }) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "arrow.down.to.line")
-                            .font(.system(size: 16, weight: .semibold))
-                        Text("开始下载")
-                            .font(.system(size: 16, weight: .bold))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 12)
-                    .background(
-                        Capsule()
-                            .fill(theme.accentColor)
-                            .shadow(color: theme.accentColor.opacity(0.35), radius: 10, y: 4)
-                    )
+                    Text("下载")
+                        .font(.system(size: 24, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(width: 120)
+                        .padding(.vertical, 16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 24)
+                                .fill(theme.accentColor)
+                        )
                 }
                 .buttonStyle(.plain)
                 .scaleEffect(bounceScale)
