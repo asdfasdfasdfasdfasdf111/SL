@@ -243,7 +243,7 @@ struct ModDetailView: View {
 
     private func fetchManifestVersions() {
         Task {
-            let versions = await DownloadCategoryView.fetchMergedVersionManifest()
+            let versions = await GameVersionManifest.fetchMerged()
             guard !versions.isEmpty else { return }
             let filtered: [String]
             switch gameSubCategory {

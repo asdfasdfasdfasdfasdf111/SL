@@ -129,8 +129,8 @@ struct DownloadCategoryView: View {
             }
             // 其余分类：优先本地全量目录过滤（标题/简介/标签，含中文标签直接匹配）
             // 仅当后台已解析完成时读取本地目录，避免主线程同步解压 12 万条目录造成卡顿
-            if Self.localCatalogReady {
-            let local = Self.localItems(for: selectedSection)
+            if LocalModCatalog.isReady {
+            let local = LocalModCatalog.items(for: selectedSection)
             if !local.isEmpty {
                 let filtered = local.filter { item in
                     item.name.localizedCaseInsensitiveContains(normalized) ||
@@ -283,9 +283,9 @@ struct DownloadCategoryView: View {
             Self.loadCacheFromDisk()
             let idx = computedHighlightIndex
             sectionHighlightY = sidebarOffsets[idx]
-            Self.preloadLocalCatalog()
+            LocalModCatalog.warmUp()
             fetchItems()
-            Self.preTranslateAllCategories()
+            LocalModCatalog.preTranslateAll()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
                     subItemOpacity[.release] = 1
@@ -300,7 +300,7 @@ struct DownloadCategoryView: View {
             translateTask?.cancel()
             searchDebounceTask?.cancel()
         }
-        .onReceive(NotificationCenter.default.publisher(for: DownloadCategoryView.localCatalogReadyNotification)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: LocalModCatalog.readyNotification)) { _ in
             // 本地目录后台解析完成后，若正停在 mod/资源包/光影/整合包页，自动刷新为全量本地目录
             if selectedSection != .game {
                 fetchItems()
@@ -558,14 +558,14 @@ struct DownloadCategoryView: View {
 
         // 本地全量目录模式：mod/resourcepack/shader/modpack 直接加载全量（不翻译）
         // 仅当后台已解析完成时走本地目录，主线程绝不触碰磁盘/解压 12 万条目录
-        if selectedSection != .game && Self.localCatalogReady {
-            let local = Self.localItems(for: selectedSection)
+        if selectedSection != .game && LocalModCatalog.isReady {
+            let local = LocalModCatalog.items(for: selectedSection)
             if !local.isEmpty {
                 isLoading = true
                 items = []
                 filteredResults = []
                 fetchTask = Task {
-                    let result = Self.localItems(for: selectedSection)
+                    let result = LocalModCatalog.items(for: selectedSection)
                     if Task.isCancelled { return }
                     await MainActor.run {
                         items = result
@@ -755,8 +755,7 @@ struct DownloadCategoryView: View {
     static func clearStaticCaches() {
         versionManifestCache = nil
         lastSubCategory = nil
-        mergedManifestCache = nil
-        mergedManifestFetchDate = nil
+        GameVersionManifest.clearCache()
         cachedModItems = nil
         cachedResourcePackItems = nil
         cachedShaderItems = nil
@@ -765,56 +764,6 @@ struct DownloadCategoryView: View {
         searchTranslationCache.removeAll()
         searchTranslationCacheLock.unlock()
         LoaderSupportChecker.clearMemoryCache()
-    }
-
-    // MARK: - 版本清单合并（官方 + 未列出，并发拉取）
-
-    private static let officialManifestURL = URL(string: "https://piston-meta.mojang.com/mc/game/version_manifest.json")!
-    private static let unlistedManifestURL = URL(string: "https://alist.8mi.tech/d/mirror/unlisted-versions-of-minecraft/Auto/version_manifest.json")!
-    private static let unlistedManifestRoot = "https://zkitefly.github.io/unlisted-versions-of-minecraft"
-    private static let unlistedManifestMirrorRoot = "https://alist.8mi.tech/d/mirror/unlisted-versions-of-minecraft/Auto"
-
-    private static var mergedManifestCache: [[String: Any]]?
-    private static var mergedManifestFetchDate: Date?
-
-    /// 并发拉取官方 + 未列出版本清单并合并（按 releaseTime 降序；未列出版本 URL 重写到 alist 镜像）
-    /// 注意：internal 可见性（被拆分出去的 ModDetailView 调用）
-    static func fetchMergedVersionManifest() async -> [[String: Any]] {
-        if let cached = mergedManifestCache,
-           let date = mergedManifestFetchDate,
-           Date().timeIntervalSince(date) < 300 {
-            return cached
-        }
-        async let official = fetchManifestList(url: officialManifestURL)
-        async let unlisted = fetchManifestList(url: unlistedManifestURL)
-        var (merged, unlistedVersions) = await (official, unlisted)
-        for i in unlistedVersions.indices {
-            if let url = unlistedVersions[i]["url"] as? String {
-                unlistedVersions[i]["url"] = url.replacingOccurrences(of: unlistedManifestRoot, with: unlistedManifestMirrorRoot)
-            }
-            merged.append(unlistedVersions[i])
-        }
-        // 按 id 去重（保留官方条目），再按 releaseTime 降序
-        var seen = Set<String>()
-        merged.removeAll { entry in
-            let id = entry["id"] as? String ?? ""
-            if id.isEmpty || seen.contains(id) { return true }
-            seen.insert(id)
-            return false
-        }
-        merged.sort { ($0["releaseTime"] as? String ?? "") > ($1["releaseTime"] as? String ?? "") }
-        // 只在拉取成功（非空）时更新缓存；全部失败时保留旧缓存，避免空结果被缓存 5 分钟
-        guard !merged.isEmpty else { return mergedManifestCache ?? merged }
-        mergedManifestCache = merged
-        mergedManifestFetchDate = Date()
-        return merged
-    }
-
-    private static func fetchManifestList(url: URL) async -> [[String: Any]] {
-        guard let (data, _) = try? await AppContext.shared.apiSession.data(from: url),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let versions = json["versions"] as? [[String: Any]] else { return [] }
-        return versions
     }
 
     private enum CacheKey: String {
@@ -842,249 +791,11 @@ struct DownloadCategoryView: View {
         AppContext.shared.cacheManager.setObject(items, forKey: key.rawValue)
     }
 
-    // MARK: - 本地全量目录（crawl_modrinth.py 生成：mod/resourcepack/shader/modpack 全部条目，不翻译）
-
-    struct LocalCatalogItem: Codable {
-        let projectID: String
-        let projectType: String
-        let title: String
-        let description: String
-        let categories: [String]
-        let iconURL: String?
-        let downloads: Int
-    }
-
-    private nonisolated(unsafe) static let localCatalogLock = NSLock()
-    private nonisolated(unsafe) static var localCatalog: [LocalCatalogItem]?
-    private nonisolated(unsafe) static var localCatalogItemsByType: [String: [DownloadedItem]] = [:]
-    /// 本地全量目录是否已在后台解析完成。主线程只在它为 true 时才调用 localItems，
-    /// 从而杜绝「切到 mod 页时主线程同步读盘+解压 12 万条目录 → 卡死/动画丢失/翻译失效」。
-    private nonisolated(unsafe) static var localCatalogReady = false
-    /// 本地目录解析完成通知（用于让已显示的 mod 页自动刷新为全量本地目录）
-    static let localCatalogReadyNotification = Notification.Name("localCatalogReady")
-
-    /// 解压 gzip 数据（系统 libz，windowBits=31 支持 gzip 格式）
-    nonisolated private static func inflateGzipData(_ input: Data) -> Data? {
-        return input.withUnsafeBytes { (srcRaw: UnsafeRawBufferPointer) -> Data? in
-            let src = srcRaw.bindMemory(to: UInt8.self)
-            var stream = z_stream()
-            stream.next_in = UnsafeMutablePointer<UInt8>(mutating: src.baseAddress!)
-            stream.avail_in = uInt(input.count)
-            guard inflateInit2_(&stream, 16 + 15, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size)) == Z_OK else { return nil }
-            defer { inflateEnd(&stream) }
-            var output = Data()
-            let buffer = [UInt8](repeating: 0, count: 1 << 16)
-            var lastStatus: Int32 = Z_OK
-            while true {
-                var localBuffer = buffer
-                let produced = localBuffer.withUnsafeMutableBytes { (dstRaw: UnsafeMutableRawBufferPointer) -> Int in
-                    stream.next_out = dstRaw.bindMemory(to: UInt8.self).baseAddress!
-                    stream.avail_out = uInt(buffer.count)
-                    lastStatus = inflate(&stream, Z_NO_FLUSH)
-                    if lastStatus == Z_OK || lastStatus == Z_STREAM_END {
-                        return buffer.count - Int(stream.avail_out)
-                    }
-                    return -1
-                }
-                if produced < 0 { return nil }
-                if produced > 0 { output.append(localBuffer, count: produced) }
-                if lastStatus == Z_STREAM_END { return output }
-                if stream.avail_in == 0 && lastStatus == Z_OK { return nil }
-            }
-        }
-    }
-
-    /// 解析结果磁盘缓存路径（参考 PCL 的 Cache\download.json：二次冷启动跳过 gzip 解压，秒级出数据）
-    private static func localCatalogCacheURL() -> URL? {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("modrinth_local_catalog_v1.json")
-    }
-
-    /// 缓存是否仍有效：bundle 内的 gzip 源比磁盘缓存新则视为过期需重解
-    private static func isLocalCatalogCacheFresh() -> Bool {
-        guard let gzURL = Bundle.main.url(forResource: "modrinth_catalog", withExtension: "json.gz"),
-              let cacheURL = localCatalogCacheURL() else { return false }
-        let fm = FileManager.default
-        let gzDate = (try? fm.attributesOfItem(atPath: gzURL.path)[.modificationDate] as? Date) ?? .distantPast
-        let cacheDate = (try? fm.attributesOfItem(atPath: cacheURL.path)[.modificationDate] as? Date) ?? .distantPast
-        return cacheDate >= gzDate
-    }
-
-    private static func loadLocalCatalogFromDisk() -> [LocalCatalogItem]? {
-        guard isLocalCatalogCacheFresh(),
-              let url = localCatalogCacheURL(),
-              let data = try? Data(contentsOf: url),
-              let items = try? JSONDecoder().decode([LocalCatalogItem].self, from: data),
-              !items.isEmpty else { return nil }
-        return items
-    }
-
-    private static func saveLocalCatalogToDisk(_ items: [LocalCatalogItem]) {
-        guard let url = localCatalogCacheURL() else { return }
-        if let data = try? JSONEncoder().encode(items) {
-            try? data.write(to: url, options: .atomic)
-        }
-    }
-
-    /// 从 bundle 读取 modrinth_catalog.json.gz 并解析（全量目录缓存）。
-    /// 优先复用解析结果的磁盘缓存，避免每次冷启动都重新解压 12 万条 gzip。
-    nonisolated static func loadLocalCatalog() -> [LocalCatalogItem] {
-        localCatalogLock.lock()
-        defer { localCatalogLock.unlock() }
-        if let localCatalog { return localCatalog }
-
-        // 1) 复用解析结果磁盘缓存（二次冷启动秒开）
-        if let cached = Self.loadLocalCatalogFromDisk() {
-            localCatalog = cached
-            return cached
-        }
-
-        // 2) 冷启动：从 bundle 的 gzip 解析
-        guard let url = Bundle.main.url(forResource: "modrinth_catalog", withExtension: "json.gz"),
-              let compressed = try? Data(contentsOf: url),
-              let data = inflateGzipData(compressed),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let entries = json["items"] as? [[String: Any]] else {
-            return []
-        }
-        let catalog = entries.compactMap { entry -> LocalCatalogItem? in
-            guard let projectID = entry["i"] as? String,
-                  let projectType = entry["t"] as? String,
-                  let title = entry["n"] as? String else { return nil }
-            return LocalCatalogItem(
-                projectID: projectID,
-                projectType: projectType,
-                title: title,
-                description: entry["d"] as? String ?? "",
-                categories: entry["c"] as? [String] ?? [],
-                iconURL: entry["u"] as? String,
-                downloads: entry["x"] as? Int ?? 0
-            )
-        }
-        localCatalog = catalog
-        // 3) 异步写回磁盘缓存，供下次冷启动秒开
-        let toCache = catalog
-        Task.detached(priority: .utility) { Self.saveLocalCatalogToDisk(toCache) }
-        return catalog
-    }
-
-    /// 按分类返回本地全量条目（首次按类型映射缓存，线程安全）
-    nonisolated static func localItems(for section: GameSidebarSection) -> [DownloadedItem] {
-        let type: String
-        switch section {
-        case .mod: type = "mod"
-        case .resourcePack: type = "resourcepack"
-        case .shader: type = "shader"
-        case .modpack: type = "modpack"
-        default: return []
-        }
-        localCatalogLock.lock()
-        if let cached = localCatalogItemsByType[type] {
-            localCatalogLock.unlock()
-            return cached
-        }
-        localCatalogLock.unlock()
-        let catalog = loadLocalCatalog()
-        guard !catalog.isEmpty else { return [] }
-        let mapped = catalog
-            .filter { $0.projectType == type }
-            .map {
-                DownloadedItem(
-                    id: $0.projectID,
-                    name: $0.title,
-                    subtitle: $0.description,
-                    iconURL: $0.iconURL,
-                    tags: $0.categories
-                )
-            }
-        localCatalogLock.lock()
-        if let existing = localCatalogItemsByType[type] {
-            localCatalogLock.unlock()
-            return existing
-        }
-        localCatalogItemsByType[type] = mapped
-        localCatalogLock.unlock()
-        return mapped
-    }
-
-    /// 应用启动时预热本地全量目录（对应 PCL 的 PageLoaderInit：在用户打开下载页之前就后台解析，
-    /// 让 mod/资源包/光影/整合包页首帧即有数据，消除「空白→填充」的延迟感）
-    static func warmUpLocalCatalog() {
-        preloadLocalCatalog()
-    }
-
-    /// 后台预加载四类本地目录，避免首次切页时阻塞主线程
-    private static func preloadLocalCatalog() {
-        guard !localCatalogReady else { return }
-        Task.detached(priority: .userInitiated) {
-            _ = localItems(for: .mod)
-            _ = localItems(for: .resourcePack)
-            _ = localItems(for: .shader)
-            _ = localItems(for: .modpack)
-            localCatalogReady = true
-            // 本地目录就绪后通知界面：若当前停在 mod/资源包/光影/整合包页，自动刷新为全量本地目录
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(name: localCatalogReadyNotification, object: nil)
-            }
-        }
-    }
-
-    private static func preTranslateAllCategories() {
-        Task.detached(priority: .background) {
-            let categories: [(String, String)] = [
-                ("mod", "模组"), ("resourcepack", "资源包"),
-                ("shader", "光影"), ("modpack", "整合包")
-            ]
-            let service = TranslationService.shared
-            for (type, _) in categories {
-                if Task.isCancelled { return }
-                let facets = "[[\"project_type:\(type)\"]]"
-                let encoded = facets.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-                guard let url = URL(string: "https://api.modrinth.com/v2/search?query=&limit=10&facets=\(encoded)") else { continue }
-                var req = URLRequest(url: url)
-                req.setValue("qwq-Launcher/1.0 (qwq@example.com)", forHTTPHeaderField: "User-Agent")
-                guard let (data, _) = try? await AppContext.shared.apiSession.data(for: req),
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let hits = json["hits"] as? [[String: Any]] else { continue }
-                for hit in hits.prefix(3) {
-                    if Task.isCancelled { return }
-                    let projectId = hit["project_id"] as? String ?? hit["slug"] as? String ?? ""
-                    guard !projectId.isEmpty, service.cachedTranslation(for: projectId) == nil else { continue }
-                    _ = try? await service.translateText(text: "", projectId: projectId)
-                }
-            }
-        }
-    }
-
-    // 愚人节版本列表（参考 PCL.Mac VersionManifest.swift）
-    private static let aprilFoolVersions: [String] = [
-        "15w14a", "1.rv-pre1", "3d shareware v1.34", "20w14infinite",
-        "22w13oneblockatatime", "23w13a_or_b", "24w14potato", "25w14craftmine"
-    ]
-
-    // 判断是否为愚人节版本（参考 PCL.Mac isAprilFoolVersion）
-    private static func isAprilFoolVersion(id: String, type: String) -> Bool {
-        let normalized = id.replacingOccurrences(of: "point", with: ".")
-        if aprilFoolVersions.contains(normalized.lowercased()) { return true }
-        guard type == "snapshot" else { return false }
-        // 新版 Mojang 命名（2026 起）：快照为「主版本号-snapshot-N」如 26.3-snapshot-7，
-        // 正式版为「主版本号」如 26.2，这些是正式内容，绝不能判为愚人节。
-        let snapshotPattern = #"^[0-9][0-9]?(\.[0-9]+)?-snapshot-[0-9]+$"#
-        if normalized.range(of: snapshotPattern, options: .regularExpression) != nil { return false }
-        // 旧版标准快照格式（如 23w33a、24w14a）：正式快照，非愚人节
-        let oldSnapshotPattern = #"^[0-9]{2}w[0-9]{2}[a-z]$"#
-        if normalized.range(of: oldSnapshotPattern, options: .regularExpression) != nil { return false }
-        // 至少有一个字母（筛掉 1.x 与 1.x.x），且不是 -pre/-rc
-        if normalized.rangeOfCharacter(from: .letters) == nil { return false }
-        if normalized.contains("-pre") || normalized.contains("-rc") { return false }
-        return true
-    }
-
     private func fetchMinecraftVersions(subCategory: GameSubCategory?) async -> [DownloadedItem] {
         if subCategory == Self.lastSubCategory, let cached = Self.versionManifestCache {
             return cached
         }
-        let versions = await Self.fetchMergedVersionManifest()
+        let versions = await GameVersionManifest.fetchMerged()
         guard !versions.isEmpty else { return Self.versionManifestCache ?? [] }
         let filtered: [[String: Any]]
         switch subCategory {
@@ -1096,14 +807,14 @@ struct DownloadCategoryView: View {
             filtered = versions.filter { v in
                 let t = v["type"] as? String ?? ""
                 let id = v["id"] as? String ?? ""
-                return (t == "snapshot" || t == "pending") && !Self.isAprilFoolVersion(id: id, type: t)
+                return (t == "snapshot" || t == "pending") && !GameVersionHelper.isAprilFoolVersion(id: id, type: t)
             }
         case .ancient:
             // 远古版：alpha/beta + 愚人节版本（参考 PCL.Mac）
             filtered = versions.filter {
                 let t = $0["type"] as? String ?? ""
                 let id = $0["id"] as? String ?? ""
-                return t == "old_alpha" || t == "old_beta" || Self.isAprilFoolVersion(id: id, type: t)
+                return t == "old_alpha" || t == "old_beta" || GameVersionHelper.isAprilFoolVersion(id: id, type: t)
             }
         case .none:
             filtered = []

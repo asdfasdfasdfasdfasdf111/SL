@@ -74,6 +74,7 @@
 - **互斥整页替换（对标 PCL.Mac `router.getLastView()` 语义，用户强烈要求）**：详情页与主内容从「ZStack 叠加」改为 if/else 互斥——动画完成后上一个页面真正卸载，彻底解决「几个页面叠在一起、动画完不卸载」的问题；全局弹窗/提示/圆按钮提升到页面切换层之外，不随页面卸载
 - **代码极致模块化（第二批）**：`GameViews.swift` 再拆出 `GameCategoryView.swift`（「我的世界」分类页：版本选择卡 + Java 选择卡，原 1243–1493 行），文件由 1493 行降至 1242 行；按「顶层视图一个文件」的粒度逐块拆分，每拆一步编译验证一次（BUILD SUCCEEDED）
 - **代码极致模块化（第三批）**：`ModDetailView.swift` 由 1188 行拆至 979 行，拆出 4 个职责单一文件——`DetailPageType.swift`（详情页类型枚举，ModDetailView/GameViews 共用）、`GameVersionHelper.swift`（版本比较/显示排序/愚人节版本判断共享工具，消除 ModDetailView 与 GameViews 中的重复私有实现）、`GameDirectoryScanner.swift`（本地已装版本/版本内加载器探测/光影文件夹检测扫描器）、`DownloadFileResolver.swift`（下载目标文件解析，静态方法保持闭包零 self 捕获的 UAF 防护语义不变）
+- **代码极致模块化（第四批）**：`GameViews.swift` 由 1242 行拆至 953 行，拆出 `GameVersionManifest.swift`（官方+未列出版本清单并发拉取合并，5 分钟内存缓存，ModDetailView 同步改用）与 `LocalModCatalog.swift`（本地 12 万条 Modrinth 全量目录：gzip 解析 + 磁盘缓存二次秒开 + 后台预热 + 翻译预取，`warmUp`/`items`/`isReady` 供 qwqApp 与视图调用）；GameViews 内的愚人节版本判断重复实现改用共享的 `GameVersionHelper.isAprilFoolVersion`
 
 ## [1.0.0] - 2026-08-07
 

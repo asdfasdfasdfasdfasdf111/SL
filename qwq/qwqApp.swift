@@ -8,7 +8,7 @@ struct qwqApp: App {
         // 崩溃自捕获：崩溃后把线程堆栈写到 ~/Library/Logs/qwq_crash.log（LLDB 拦截时系统不落 .ips）
         CrashReporter.install()
         // 启动即后台预热本地 Modrinth 全量目录，让下载/mod 页首帧即有数据（参考 PCL 的加载器秒出）
-        DownloadCategoryView.warmUpLocalCatalog()
+        LocalModCatalog.warmUp()
     }
 
     var body: some Scene {
