@@ -627,32 +627,11 @@ struct DownloadCategoryView: View {
         }
         let versions = await GameVersionManifest.fetchMerged()
         guard !versions.isEmpty else { return ModrinthCategoryCache.cachedGameVersions ?? [] }
-        let filtered: [[String: Any]]
-        switch subCategory {
-        case .release:
-            // 正式版：所有 type == "release" 的版本（不截断，包含 1.7.x、1.8、1.12.2 等老版本）
-            filtered = versions.filter { ($0["type"] as? String) == "release" }
-        case .snapshot:
-            // 快照：标准快照 + 未列出的 pending（combat/实验快照），排除愚人节版本（它们归到远古版）
-            filtered = versions.filter { v in
-                let t = v["type"] as? String ?? ""
-                let id = v["id"] as? String ?? ""
-                return (t == "snapshot" || t == "pending") && !GameVersionHelper.isAprilFoolVersion(id: id, type: t)
-            }
-        case .ancient:
-            // 远古版：alpha/beta + 愚人节版本（参考 PCL.Mac）
-            filtered = versions.filter {
-                let t = $0["type"] as? String ?? ""
-                let id = $0["id"] as? String ?? ""
-                return t == "old_alpha" || t == "old_beta" || GameVersionHelper.isAprilFoolVersion(id: id, type: t)
-            }
-        case .none:
-            filtered = []
-        }
-        let result = filtered.map { v in
+        // 分类过滤逻辑在 GameVersionFilter（release/snapshot/远古，与详情页共享同一规则）
+        let result = GameVersionFilter.filteredIDs(versions, subCategory: subCategory).map { id in
             DownloadedItem(
-                id: v["id"] as? String ?? UUID().uuidString,
-                name: v["id"] as? String ?? "未知",
+                id: id,
+                name: id,
                 subtitle: displayTitle,
                 iconURL: nil,
                 tags: []

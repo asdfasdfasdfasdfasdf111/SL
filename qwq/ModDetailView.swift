@@ -242,26 +242,8 @@ struct ModDetailView: View {
         Task {
             let versions = await GameVersionManifest.fetchMerged()
             guard !versions.isEmpty else { return }
-            let filtered: [String]
-            switch gameSubCategory {
-            case .release:
-                filtered = versions.filter { ($0["type"] as? String) == "release" }
-                    .compactMap { $0["id"] as? String }
-            case .snapshot:
-                filtered = versions.filter { v in
-                    let t = v["type"] as? String ?? ""
-                    let id = v["id"] as? String ?? ""
-                    return (t == "snapshot" || t == "pending") && !GameVersionHelper.isAprilFoolVersion(id: id, type: t)
-                }.compactMap { $0["id"] as? String }
-            case .ancient:
-                filtered = versions.filter {
-                    let t = $0["type"] as? String ?? ""
-                    let id = $0["id"] as? String ?? ""
-                    return t == "old_alpha" || t == "old_beta" || GameVersionHelper.isAprilFoolVersion(id: id, type: t)
-                }.compactMap { $0["id"] as? String }
-            case .none:
-                filtered = []
-            }
+            // 分类过滤逻辑在 GameVersionFilter（release/snapshot/远古，与分类列表共享同一规则）
+            let filtered = GameVersionFilter.filteredIDs(versions, subCategory: gameSubCategory)
             await MainActor.run {
                 manifestVersions = filtered
                 sortedVersions = availableVersions
