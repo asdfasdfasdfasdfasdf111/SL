@@ -6,6 +6,7 @@
 
 ### 变更
 
+- **代码极致模块化（第八批）：ModDetailView.swift 由 979 行拆至 829 行**——拆出 `qwq/GameVersionDownloadStarter.swift`（游戏版本一键下载安装编排：MinecraftInstaller.createTask + 可选 Fabric/Forge/NeoForge 加载器任务串联，实例名 = 版本号+加载器名，纯编排不持有视图）与 `qwq/ModFileDownloadStarter.swift`（mod/shader/resourcePack/modpack 单文件下载编排：DownloadFileResolver 解析 → ModFileDownloadTask → 详情页启动；整合包下载完成后自动接 ModpackInstaller 安装）。两个启动器都是显式传参（值类型 + settings/manager 引用类型），闭包零 self 捕获，UAF 防护语义不变；ModDetailView 的 `startDownload` 只保留 UI 部分（弹提示/回弹动画/圆按钮弹入）后转发
 - **代码极致模块化（第七批）：MinecraftSkinManager.swift 由 392 行拆至 172 行**——拆出 `qwq/SkinAvatarCropper.swift`（`SkinAvatarCropper` 枚举：皮肤合法性校验 `validateSkin` / 正面头像裁剪 `cropAvatar`（64 高度叠加 layer1+layer2、32 高度直接取头图层、最近邻缩放）/ `HeadDirection` 取景方向，纯图像逻辑无副作用）与 `qwq/SkinResourcePackApplier.swift`（`SkinResourcePackApplier` 枚举：PCL2 离线皮肤资源包方案 `apply`/`remove`，含 `pack.mcmeta` 生成、wide/slim 双模型 × 9 默认皮肤写入、`/usr/bin/zip` 打包、`options.txt` resourcePacks 注入与摘除）。管理器只保留皮肤持久化（`saveSkin`/`getSkinData`）、authlib-injector 下载与 JVM 参数、JAR 修改旧版回退（1.13+ 无效）。CategoryContentView 中 `validateSkin`/`cropAvatar` 改走 `SkinAvatarCropper`，`applySkinAsResourcePack` 改走 `SkinResourcePackApplier`
 
 ### 新增
