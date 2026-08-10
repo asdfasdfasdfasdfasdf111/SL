@@ -6,6 +6,7 @@
 
 ### 变更
 
+- **代码极致模块化（第十六批）：ModDetailView.swift 由 756 行拆至 656 行**——拆出 `qwq/VersionSelectionSection.swift`（详情页「版本/加载器选择」区块独立视图组件：整合包版本 4 分组网格 / 游戏版本页加载器选择卡 / 普通版本卡片横向列表三态渲染，选择状态 `selectedVersion`/`selectedLoader`/`selectedModpackVersionId` 三个 @Binding 外置，加载器名解析走 LoaderNameResolver，纯展示无网络/缓存副作用）与 `qwq/ShaderLoaderFilter.swift`（纯逻辑：光影页加载器白名单过滤（仅 Iris/OptiFine），项目未声明时回退默认列表，含小写去重）。ModDetailView `detailPageContent` 中约 94 行内联选择区块与 16 行 shader 过滤内联逻辑替换为两行调用；`getLoaderForVersion` 私有方法删除（唯一调用点随区块下沉组件内）
 - **代码极致模块化（第十五批）：JavaManager.swift 由 399 行拆至 195 行**——拆出 `qwq/JavaDiscovery.swift`（Java 可执行文件发现枚举：7 类来源全量扫描——java_home -V / java_home 默认 / JVM 目录枚举 / Homebrew(opt+Cellar) / SDKMAN / 常见路径 / which java，内置符号链接归一化去重与可执行性过滤，命令执行用 ProcessPool）。`JavaManager.scanInstalledJava` 的 245 行 7 段扫描压缩为「发现 → 逐条 `parseJavaVersion`」，锁/磁盘缓存/DataManager 同步副作用保留在管理器；私有 `runProcess` 随之删除（唯一调用点在已下沉的扫描段）
 - **代码极致模块化（第十四批）：GameViews.swift 由 828 行拆至 755 行**——拆出 `qwq/GameSidebarView.swift`（分类侧边栏独立视图组件：section 高亮/游戏子分类展开/子项弹入动画，状态全部外部传入（`selectedSection`/`selectedSubCategory`/`subItemOpacity`/`sectionHighlightY` 四个 @Binding + 选择回调），纯展示无逻辑）。`DownloadCategoryView` 删除 `gameSidebar`/`sidebarSectionHeader`/`sidebarSubItem` 三个方法，mainHStack 改挂 `GameSidebarView`
 - **代码极致模块化（第十三批）：CategoryContentView.swift 由 711 行拆至 703 行**——拆出 `qwq/OfflineUsernameValidator.swift`（离线用户名合法性提示，PCL2 语义：>16 字符 / 非 `[0-9A-Za-z_]`，与 PCLCore 启动前硬校验 `validateOfflineUsername` 互补，输入框内联提示用）。视图 `offlineUsernameHint` 改为一行转发

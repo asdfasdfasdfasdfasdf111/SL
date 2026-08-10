@@ -2,7 +2,8 @@
 //  ModDetailView.swift
 //  模块化拆分：从 GameViews.swift 拆出（原文件 2776 行，拆分后职责单一、可读性提升）
 //  纯 UI 详情页 + 下载编排：DetailPageType（qwq/DetailPageType.swift）、版本工具（qwq/VersionUtils.swift）、
-//  目录扫描（qwq/GameDirectoryScanner.swift）、下载解析（qwq/DownloadFileResolver.swift）均已拆至独立文件。
+//  目录扫描（qwq/GameDirectoryScanner.swift）、下载解析（qwq/DownloadFileResolver.swift）、
+//  版本选择区块（qwq/VersionSelectionSection.swift）、光影加载器过滤（qwq/ShaderLoaderFilter.swift）均已拆至独立文件。
 //
 
 import SwiftUI
@@ -529,99 +530,19 @@ struct ModDetailView: View {
             }
 
             VStack(alignment: .leading, spacing: 14) {
-                Text(pageTypeForIndex.titleText)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.primary)
-
-                if pageTypeForIndex == .modpack {
-                    if isLoadingModpackVersions {
-                        HStack {
-                            Spacer()
-                            ProgressView().scaleEffect(0.8)
-                            Spacer()
-                        }
-                        .padding(.vertical, 20)
-                    } else {
-                        let uniqueVersions = uniqueGameVersions()
-                        ScrollView(.horizontal, showsIndicators: true) {
-                            VStack(spacing: 12) {
-                                let chunkSize = 4
-                                let rows = stride(from: 0, to: uniqueVersions.count, by: chunkSize).map {
-                                    Array(uniqueVersions[$0..<min($0 + chunkSize, uniqueVersions.count)])
-                                }
-                                ForEach(rows.indices, id: \.self) { rowIdx in
-                                    HStack(spacing: 12) {
-                                        ForEach(rows[rowIdx], id: \.gameVersion) { item in
-                                            VersionLoaderCard(
-                                                version: item.gameVersion,
-                                                isSelected: selectedModpackVersionId == item.version.id,
-                                                loader: assetName(for: item.version.loaders.first ?? "fabric")
-                                            ) {
-                                                withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
-                                                    selectedModpackVersionId = item.version.id
-                                                    selectedVersion = item.gameVersion
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 10)
-                        }
-                        .scrollBounceIfAvailable()
-                    }
-                } else if pageTypeForIndex == .loaderSelector {
-                    if isLoadingLoaders {
-                        HStack {
-                            Spacer()
-                            ProgressView().scaleEffect(0.8)
-                            Spacer()
-                        }
-                        .padding(.vertical, 20)
-                    } else if availableLoaders.isEmpty {
-                        Text("该版本暂无可用的加载器")
-                            .font(.system(size: 13))
-                            .foregroundColor(.secondary)
-                            .padding(.vertical, 16)
-                    } else {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 12) {
-                                ForEach(availableLoaders, id: \.self) { loader in
-                                    LoaderSelectorCard(
-                                        loader: loader,
-                                        isSelected: selectedLoader == loader
-                                    ) {
-                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
-                                            // 再点已选中的卡片 = 取消选中（不装加载器，下载纯原版）
-                                            selectedLoader = (selectedLoader == loader) ? "" : loader
-                                        }
-                                    }
-                                }
-                            }
-                            .padding(.vertical, 10)
-                        }
-                    }
-                } else {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 12) {
-                            ForEach(sortedVersions, id: \.self) { version in
-                                VersionLoaderCard(
-                                    version: version,
-                                    isSelected: selectedVersion == version,
-                                    loader: assetName(for: projectLoaders.first ?? getLoaderForVersion(version))
-                                ) {
-                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
-                                        selectedVersion = version
-                                    }
-                                }
-                            }
-                        }
-                        // 水平方向预留放大动画空间（scaleEffect 1.08 放大时最左/最右卡片不被裁剪）
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 10)
-                    }
-                }
+                VersionSelectionSection(
+                    pageType: pageTypeForIndex,
+                    sortedVersions: sortedVersions,
+                    availableLoaders: availableLoaders,
+                    uniqueVersions: uniqueGameVersions(),
+                    projectLoaders: projectLoaders,
+                    localVersionLoaders: localVersionLoaders,
+                    isLoadingModpackVersions: isLoadingModpackVersions,
+                    isLoadingLoaders: isLoadingLoaders,
+                    selectedVersion: $selectedVersion,
+                    selectedLoader: $selectedLoader,
+                    selectedModpackVersionId: $selectedModpackVersionId
+                )
 
                 if pageTypeForIndex == .shader, !hasShaderFolder, shaderFolderChecked, isBasePage {
                     shaderPrerequisiteSection
@@ -629,20 +550,7 @@ struct ModDetailView: View {
 
                 if pageTypeForIndex != .loaderSelector && pageTypeForIndex != .modpack {
                     // 光影页面：加载器只显示 Iris/OptiFine 等光影加载器，过滤模组加载器
-                    let shaderOnly: Set<String> = ["iris", "optifine"]
-                    // 获取模组支持的加载器
-                    let rawLoaders: [String] = {
-                        if !projectLoaders.isEmpty { return Array(Set(projectLoaders.map { $0.lowercased() })) }
-                        return []
-                    }()
-                    let filteredLoaders: [String] = {
-                        if pageTypeForIndex == .shader {
-                            let fromProject = rawLoaders.filter { shaderOnly.contains($0.lowercased()) }
-                            return fromProject.isEmpty ? ["iris", "optifine"] : fromProject
-                        } else {
-                            return rawLoaders
-                        }
-                    }()
+                    let filteredLoaders = ShaderLoaderFilter.filtered(projectLoaders: projectLoaders, pageType: pageTypeForIndex)
                     if !versionRangeText.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(pageTypeForIndex.supportedVersionTitle)
@@ -710,14 +618,6 @@ struct ModDetailView: View {
                 }
             }
         }
-    }
-
-    private func getLoaderForVersion(_ version: String) -> String {
-        LoaderNameResolver.name(
-            forVersion: version,
-            localLoaders: localVersionLoaders,
-            fallback: selectedLoader
-        )
     }
 
     /// 详情页翻译结果上限：页签条目有限但防极端场景无限增长；超限整体淘汰（重新浏览时再翻译）
