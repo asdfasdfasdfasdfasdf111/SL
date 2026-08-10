@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 变更
+
+- **代码极致模块化（第七批）：MinecraftSkinManager.swift 由 392 行拆至 172 行**——拆出 `qwq/SkinAvatarCropper.swift`（`SkinAvatarCropper` 枚举：皮肤合法性校验 `validateSkin` / 正面头像裁剪 `cropAvatar`（64 高度叠加 layer1+layer2、32 高度直接取头图层、最近邻缩放）/ `HeadDirection` 取景方向，纯图像逻辑无副作用）与 `qwq/SkinResourcePackApplier.swift`（`SkinResourcePackApplier` 枚举：PCL2 离线皮肤资源包方案 `apply`/`remove`，含 `pack.mcmeta` 生成、wide/slim 双模型 × 9 默认皮肤写入、`/usr/bin/zip` 打包、`options.txt` resourcePacks 注入与摘除）。管理器只保留皮肤持久化（`saveSkin`/`getSkinData`）、authlib-injector 下载与 JVM 参数、JAR 修改旧版回退（1.13+ 无效）。CategoryContentView 中 `validateSkin`/`cropAvatar` 改走 `SkinAvatarCropper`，`applySkinAsResourcePack` 改走 `SkinResourcePackApplier`
+
 ### 新增
 
 - **下载详情页重构为独立页面（对标 PCL.Mac AppRouter 整页替换）**：彻底移除「详情页叠加在内容图层之上」的旧实现。详情页状态提升到全局 `DownloadDetailManager`（`isPresented`），由 `ContentView` 顶层 if/else **互斥整页替换**渲染——同一时刻视图树只有一页（详情页或主内容，二者互斥；动画完成后旧页面真正从视图树卸载，绝不叠加），打开时从右侧整页滑入（`move(edge: .trailing) + opacity` 非线性过渡，`interpolatingSpring` 触发），关闭时整页滑出，主内容向左滑出/滑入形成 push/pop 观感。圆形下载按钮同样提升到 ContentView 顶层全局 overlay（对标 PCL.Mac `installTaskButtonOverlay`），置于页面切换层之外、不随页面卸载，任何页面可见可点，点击 toggle 进/出详情页。游戏版本页、mod/光影/资源包/整合包下载全部走 `DownloadDetailManager.start(_:)` 进入详情页，完成/失败后 `dismiss()` 自动回原页

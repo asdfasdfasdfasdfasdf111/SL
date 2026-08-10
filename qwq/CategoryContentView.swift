@@ -496,8 +496,7 @@ struct CategoryContentView: View {
         openPanel.begin { response in
             if response == .OK, let url = openPanel.url {
                 do {
-                    let skinManager = MinecraftSkinManager.shared
-                    try skinManager.validateSkin(at: url)
+                    try SkinAvatarCropper.validateSkin(at: url)
 
                     // 保存皮肤原图到本地
                     let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -507,7 +506,7 @@ struct CategoryContentView: View {
                     let skinData = try Data(contentsOf: url)
                     try skinData.write(to: skinDestURL)
 
-                    let avatarImage = try skinManager.cropAvatar(from: url)
+                    let avatarImage = try SkinAvatarCropper.cropAvatar(from: url)
                     let avatarDir = appSupport.appendingPathComponent("SL启动器/Avatars")
                     try FileManager.default.createDirectory(at: avatarDir, withIntermediateDirectories: true)
                     let avatarDestURL = avatarDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("png")
@@ -519,7 +518,7 @@ struct CategoryContentView: View {
                         }
                         // 保存皮肤到持久化目录（供 authlib-injector 使用）
                         let offlineUUID = self.settings.fixedOfflineUUID.components(separatedBy: "-").joined().lowercased()
-                        _ = try skinManager.saveSkin(url, forUUID: offlineUUID)
+                        _ = try MinecraftSkinManager.shared.saveSkin(url, forUUID: offlineUUID)
 
                         let version = self.settings.selectedMinecraftVersion
                         let gameDirPath = settings.selectedGameRoot.isEmpty ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "") : settings.selectedGameRoot
@@ -529,7 +528,7 @@ struct CategoryContentView: View {
                             // 并注入 options.txt。1.19.3+ 的默认皮肤在 entity/player/{slim,wide}/ 下，
                             // 旧版 JAR 顶层替换对 1.13+ 无效（26.2 实测不加载）。
                             do {
-                                try skinManager.applySkinAsResourcePack(skinURL: url, toVersion: version, gameDir: gameDir, settings: self.settings)
+                                try SkinResourcePackApplier.apply(skinURL: url, toVersion: version, gameDir: gameDir, settings: self.settings)
                             } catch {
                                 print("⚠️ 皮肤资源包生成失败: \(error.localizedDescription)")
                             }
@@ -567,7 +566,7 @@ struct CategoryContentView: View {
             let tempDir = FileManager.default.temporaryDirectory
             let tempSkinURL = tempDir.appendingPathComponent("\(offlineUUID).png")
             try? cachedSkinData.write(to: tempSkinURL)
-            if let avatar = try? MinecraftSkinManager.shared.cropAvatar(from: tempSkinURL) {
+            if let avatar = try? SkinAvatarCropper.cropAvatar(from: tempSkinURL) {
                 let avatarDir = appSupport.appendingPathComponent("SL启动器/Avatars")
                 try? FileManager.default.createDirectory(at: avatarDir, withIntermediateDirectories: true)
                 let destURL = avatarDir.appendingPathComponent("cached_\(offlineUUID).png")
@@ -616,7 +615,7 @@ struct CategoryContentView: View {
         guard !settings.selectedMinecraftVersion.isEmpty else {
             if let builtinURL = Bundle.main.url(forResource: "stf", withExtension: "png") {
                 do {
-                    let croppedAvatar = try MinecraftSkinManager.shared.cropAvatar(from: builtinURL)
+                    let croppedAvatar = try SkinAvatarCropper.cropAvatar(from: builtinURL)
                     let avatarDir = appSupport.appendingPathComponent("SL启动器/Avatars")
                     try FileManager.default.createDirectory(at: avatarDir, withIntermediateDirectories: true)
                     let destURL = avatarDir.appendingPathComponent("default_avatar.png")
@@ -637,7 +636,7 @@ struct CategoryContentView: View {
         do {
             let gameDirURL = URL(fileURLWithPath: settings.selectedGameRoot.isEmpty ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "") : settings.selectedGameRoot)
             if let skinURL = SkinExtractor.extractFromGameJar(version: settings.selectedMinecraftVersion, gameDir: gameDirURL) {
-                let avatarImage = try MinecraftSkinManager.shared.cropAvatar(from: skinURL)
+                let avatarImage = try SkinAvatarCropper.cropAvatar(from: skinURL)
                 let avatarDir = appSupport.appendingPathComponent("SL启动器/Avatars")
                 try FileManager.default.createDirectory(at: avatarDir, withIntermediateDirectories: true)
                 let destURL = avatarDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("png")
@@ -859,7 +858,7 @@ struct CategoryContentView: View {
         if let skin = settings.skinImageURL, !gameDirPath.isEmpty, !version.isEmpty {
             DispatchQueue.global(qos: .utility).async {
                 do {
-                    try MinecraftSkinManager.shared.applySkinAsResourcePack(
+                    try SkinResourcePackApplier.apply(
                         skinURL: skin,
                         toVersion: version,
                         gameDir: URL(fileURLWithPath: gameDirPath),
