@@ -142,49 +142,8 @@ struct ModDetailView: View {
                     entryOpacity = 1.0
                     pageWidth = width
                 }
-                if sortedVersions.isEmpty {
-                if (pageType == .mod || pageType == .shader || pageType == .resourcePack), !hasScannedLocalVersions {
-                    hasScannedLocalVersions = true
-                    localVersionLoaders = GameDirectoryScanner.scanLocalLoaderMap(gameRoot: settings.selectedGameRoot)
-                }
-                    sortedVersions = availableVersions
-
-                    // 默认选中：
-                    // - 游戏版本页（loaderSelector）：必须选中用户点击的版本（item.name），
-                    //   否则会出现「标题是 1.7.2、加载器却显示当前实例版本 26.2 的 4 张卡片」的错乱
-                    //   （根因：26.2 缓存命中 Fabric/Forge/NeoForged/Quilt，而 1.7.2 只有 Forge）
-                    // - item.name 不在列表（manifest 未就绪时列表只有本地版本）：不急着回退，
-                    //   避免误选当前实例版本 26.2（sortVersionsForDisplay 会把它提到列表首位）
-                    //   命中缓存显示 4 张卡，等 fetchManifestVersions 完成回调按 item.name 重新决议
-                    // - 其他页面：优先当前实例版本，其次第一个可用版本
-                    if pageType == .loaderSelector {
-                        if sortedVersions.contains(item.name) {
-                            selectedVersion = item.name
-                        }
-                    } else {
-                        if let defaultInstanceVersion = getDefaultInstanceVersion(),
-                           sortedVersions.contains(defaultInstanceVersion) {
-                            selectedVersion = defaultInstanceVersion
-                        } else if let first = sortedVersions.first {
-                            selectedVersion = first
-                        }
-                    }
-                }
-                // 游戏版本页：异步获取 Mojang 版本清单
-                if pageType == .loaderSelector && manifestVersions.isEmpty {
-                    fetchManifestVersions()
-                }
-                if pageType == .shader, !shaderFolderChecked {
-                    shaderFolderChecked = true
-                    hasShaderFolder = GameDirectoryScanner.hasShaderFolder(gameRoot: settings.selectedGameRoot, versions: baseVersions)
-                }
-                if pageType == .modpack, modpackVersions.isEmpty {
-                    fetchModpackVersions()
-                }
-                if !item.id.isEmpty {
-                    translateDetailDescription()
-                    fetchProjectDetails()
-                }
+                applyDefaultVersionSelection()
+                triggerPageLoads()
             }
             .onChange(of: geometry.size.width) { pageWidth = $0 }
             .onChange(of: selectedVersion) { newValue in
@@ -228,6 +187,57 @@ struct ModDetailView: View {
             backNavTask?.cancel()
         }
         // 下载中状态跟随详情页开关：详情页打开/关闭时驱动下载按钮布局变化（圆按钮出现时左移）
+    }
+
+    /// 详情页首次加载：本地加载器扫描 + 版本列表就绪 + 默认选中版本决策
+    private func applyDefaultVersionSelection() {
+        if sortedVersions.isEmpty {
+            if (pageType == .mod || pageType == .shader || pageType == .resourcePack), !hasScannedLocalVersions {
+                hasScannedLocalVersions = true
+                localVersionLoaders = GameDirectoryScanner.scanLocalLoaderMap(gameRoot: settings.selectedGameRoot)
+            }
+            sortedVersions = availableVersions
+
+            // 默认选中：
+            // - 游戏版本页（loaderSelector）：必须选中用户点击的版本（item.name），
+            //   否则会出现「标题是 1.7.2、加载器却显示当前实例版本 26.2 的 4 张卡片」的错乱
+            //   （根因：26.2 缓存命中 Fabric/Forge/NeoForged/Quilt，而 1.7.2 只有 Forge）
+            // - item.name 不在列表（manifest 未就绪时列表只有本地版本）：不急着回退，
+            //   避免误选当前实例版本 26.2（sortVersionsForDisplay 会把它提到列表首位）
+            //   命中缓存显示 4 张卡，等 fetchManifestVersions 完成回调按 item.name 重新决议
+            // - 其他页面：优先当前实例版本，其次第一个可用版本
+            if pageType == .loaderSelector {
+                if sortedVersions.contains(item.name) {
+                    selectedVersion = item.name
+                }
+            } else {
+                if let defaultInstanceVersion = getDefaultInstanceVersion(),
+                   sortedVersions.contains(defaultInstanceVersion) {
+                    selectedVersion = defaultInstanceVersion
+                } else if let first = sortedVersions.first {
+                    selectedVersion = first
+                }
+            }
+        }
+    }
+
+    /// 详情页条件数据加载（游戏版本清单 / 光影目录检测 / 整合包版本 / 项目详情与翻译）
+    private func triggerPageLoads() {
+        // 游戏版本页：异步获取 Mojang 版本清单
+        if pageType == .loaderSelector && manifestVersions.isEmpty {
+            fetchManifestVersions()
+        }
+        if pageType == .shader, !shaderFolderChecked {
+            shaderFolderChecked = true
+            hasShaderFolder = GameDirectoryScanner.hasShaderFolder(gameRoot: settings.selectedGameRoot, versions: baseVersions)
+        }
+        if pageType == .modpack, modpackVersions.isEmpty {
+            fetchModpackVersions()
+        }
+        if !item.id.isEmpty {
+            translateDetailDescription()
+            fetchProjectDetails()
+        }
     }
 
     private var allPages: [DownloadedItem] {
