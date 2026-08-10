@@ -6,6 +6,7 @@
 
 ### 变更
 
+- **代码极致模块化（第二十批）：GameViews.swift 由 720 行拆至 680 行**——拆出 `qwq/CategoryResultsGrid.swift`（结果卡片网格独立组件：LazyVGrid 分页切片（前 displayLimit 条）/滚动锚点恢复/触底追加 120 条/卡片按需翻译，数据与回调全部外部传入，`displayLimit` @Binding 外置，滚动锚点静态成员随组件迁移）。原 `resultsGrid` 方法与 `lastAnchorItemID` 静态成员删除，`contentBody` 改挂 `CategoryResultsGrid`
 - **代码极致模块化（第十九批）：CategoryContentView.swift 由 637 行拆至 594 行**——拆出 `qwq/CloseSessionButton.swift`（右下角电源按钮独立组件：圆环辉光 + 弹入动画（放大→回弹→复位），可见性由 `isLaunching`/`hasRunningSessions` 传入，点击行为（NSAlert 关闭确认/终止进程/取消启动复位）外置为 `onTap` 回调——回调内容提取为视图私有方法 `handleCloseSessionTap`；弹入动画改可取消 Task（`onDisappear` cancel）防 UAF）。原 `closeButtonOverlay` 计算属性与其 `closeButtonScale`/`closeButtonGlow` @State 删除
 - **代码极致模块化（第十八批）：CategoryContentView.swift 由 703 行拆至 637 行**——拆出 `qwq/LaunchButton.swift`（启动游戏按钮独立视图组件：阶段进度条（Java 下载/安装浅色条、启动中深色条）+ 状态文案切换（启动游戏/准备中/Java 下载中/Java 安装中/启动中）+ 点击弹跳动画；启动编排逻辑（版本校验/错误弹窗/startLaunch）通过 `onTap` 回调外置，点击动画改用可取消 Task（`onDisappear` cancel），组件销毁后不再写 State storage，UAF 防护语义不变）。原 `launchButton` 方法与其 `buttonScale` @State 删除，`leftCard` 改挂 `LaunchButton`
 - **代码极致模块化（第十七批）：GameViews.swift 由 755 行拆至 720 行、ModDetailView.swift 由 656 行拆至 634 行**——拆出 `qwq/CategorySearchBar.swift`（分类页「标题 + 搜索框」纯视图组件：放大镜图标/清空按钮/毛玻璃底，搜索文本 @Binding 外置，原 `searchBarRow` 删除）与 `qwq/ShaderPrerequisiteSection.swift`（光影详情页「必要光影加载器」固定提示卡组件：Sodium/Iris 两张前置模组卡，点击回调外部注入，原 `shaderPrerequisiteSection` 计算属性删除）

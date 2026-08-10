@@ -29,9 +29,7 @@ struct DownloadCategoryView: View {
     @State private var translateTask: Task<Void, Never>?
     @State private var translatedSubtitles: [String: String] = [:]
     @State private var pendingTranslationIDs: Set<String> = []
-    // 滚动锚点：仅用于返回列表时恢复位置，无需触发视图重渲染，故不用 @State（快速滑动时
-    // 每次 onAppear 写 @State 都会让整个列表 body 重算，是快速滑动卡顿的元凶之一）
-    private nonisolated(unsafe) static var lastAnchorItemID: String? = nil
+    // 滚动锚点已随 resultsGrid 迁移到 CategoryResultsGrid（仅用于返回列表时恢复位置）
     @State private var searchPopInIds: Set<String> = []
     @State private var selectedModItem: DownloadedItem? = nil
     @State private var showDetail = false
@@ -383,54 +381,16 @@ struct DownloadCategoryView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
             Spacer()
         } else {
-            resultsGrid(cardPadding: cardPadding, columns: columns, cardWidth: cardWidth)
-        }
-    }
-
-    private func resultsGrid(cardPadding: CGFloat, columns: Int, cardWidth: CGFloat) -> some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVGrid(
-                    columns: Array(repeating: GridItem(.flexible(), spacing: cardPadding), count: columns),
-                    spacing: cardPadding
-                ) {
-                    // 分页切片：只对前 displayLimit 条做 diff，本地目录数万条时首帧仅 120 条，
-                    // 避免整列 ForEach 全量 diff + LazyVGrid 布局卡死主线程
-                    ForEach(filteredResults.prefix(displayLimit)) { item in
-                        ContentCard(
-                            title: item.name,
-                            subtitle: translatedSubtitles[item.id] ?? item.subtitle,
-                            cardWidth: cardWidth,
-                            tags: item.tags,
-                            action: { openDetail(item) }
-                        )
-                        .equatable()
-                        .id(item.id)
-                        .onAppear {
-                            Self.lastAnchorItemID = item.id
-                            // 本地目录分页：最后一张已展示卡片进入可视区时追加下一批（增量 120 条），
-                            // 避免把数万条目录一次性注入 ForEach 做全量 diff；滚出再滚回会再次触发
-                            if displayLimit < filteredResults.count {
-                                let lastVisibleIndex = min(displayLimit, filteredResults.count) - 1
-                                if filteredResults[lastVisibleIndex].id == item.id {
-                                    displayLimit = min(displayLimit + 120, filteredResults.count)
-                                }
-                            }
-                        }
-                        .task(id: item.id) { await requestTranslation(for: item) }
-                    }
-                }
-                .padding(.horizontal, cardPadding)
-                .padding(.bottom, cardPadding)
-            }
-            .coordinateSpace(name: "listScroll")
-            .onAppear {
-                if let id = Self.lastAnchorItemID {
-                    DispatchQueue.main.async {
-                        proxy.scrollTo(id, anchor: .top)
-                    }
-                }
-            }
+            CategoryResultsGrid(
+                results: filteredResults,
+                translatedSubtitles: translatedSubtitles,
+                cardWidth: cardWidth,
+                cardPadding: cardPadding,
+                columns: columns,
+                displayLimit: $displayLimit,
+                onOpen: { openDetail($0) },
+                onRequestTranslation: { await requestTranslation(for: $0) }
+            )
         }
     }
 
