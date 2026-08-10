@@ -50,7 +50,9 @@ struct ModDetailView: View {
     @State private var hasScannedLocalVersions = false
 
 
-    @State private var translatedSubtitles: [String: String] = [:]
+    // 页签副标题翻译状态与调度走共享 CardTranslationModel（与列表页同一套
+    // 「内存→磁盘→网络」按需翻译流程；视图销毁后 model 不再写回，UAF 防护）
+    @StateObject private var translationModel = CardTranslationModel()
     @State private var projectGameVersions: [String] = []
     @State private var projectLoaders: [String] = []
     @State private var isLoadingProject = false
@@ -142,6 +144,7 @@ struct ModDetailView: View {
                     entryOpacity = 1.0
                     pageWidth = width
                 }
+                translationModel.activate()
                 applyDefaultVersionSelection()
                 triggerPageLoads()
             }
@@ -182,9 +185,11 @@ struct ModDetailView: View {
             }
         }
         .onDisappear {
-            // 视图销毁：取消延迟动画任务，防止其继续写已释放的 @State storage（UAF）
+            // 视图销毁：取消延迟动画任务，防止其继续写已释放的 @State storage（UAF）；
+            // 翻译 model 同步 deactivate，异步翻译回调不再写回
             bounceTask?.cancel()
             backNavTask?.cancel()
+            translationModel.deactivate()
         }
         // 下载中状态跟随详情页开关：详情页打开/关闭时驱动下载按钮布局变化（圆按钮出现时左移）
     }
@@ -474,7 +479,7 @@ struct ModDetailView: View {
             VStack(alignment: .leading, spacing: 0) {
             DetailPageHeader(
                 title: pageItem.name,
-                subtitle: translatedSubtitles[pageItem.id] ?? pageItem.subtitle,
+                subtitle: translationModel.subtitle(for: pageItem),
                 tags: pageItem.tags,
                 onBack: { goBack() }
             )
@@ -528,31 +533,15 @@ struct ModDetailView: View {
         }
     }
 
-    /// 翻译写回统一走 CardTranslationStore（与列表页共享同一套「写回 + 上限裁剪」规则；
-    /// 详情页无 pending 集合，活跃集传空——超限裁剪结果为空字典，与原整体清空语义等价）
-    private func setTranslated(_ id: String, _ value: String) {
-        CardTranslationStore.set(&translatedSubtitles, id: id, value: value, active: [])
-    }
-
+    /// 页签副标题按需翻译：逐条走共享 CardTranslationModel（内存→磁盘→网络，去重防抖）。
+    /// 相比原简化实现，磁盘缓存命中的简介现在也能秒出（原实现只查内存 + 直接联网）
     private func translateDetailDescription() {
         let pages = allPages
         let service = TranslationService.shared
         for pageItem in pages {
-            let id = pageItem.id
-            guard !id.isEmpty else { continue }
-            if let cached = service.cachedTranslation(for: id), !cached.isEmpty {
-                setTranslated(id, cached)
-                continue
-            }
+            guard !pageItem.id.isEmpty else { continue }
             Task.detached(priority: .background) {
-                do {
-                    let translated = try await service.translateText(text: pageItem.subtitle, projectId: id)
-                    await MainActor.run {
-                        self.setTranslated(id, translated)
-                    }
-                } catch {
-                    _ = error
-                }
+                await translationModel.requestTranslation(for: pageItem, service: service)
             }
         }
     }

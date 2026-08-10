@@ -26,9 +26,9 @@ struct DownloadCategoryView: View {
     @State private var contentOpacity: Double = 1
     @State private var contentOffset: CGFloat = 0
     @State private var fetchTask: Task<Void, Never>?
-    @State private var translateTask: Task<Void, Never>?
-    @State private var translatedSubtitles: [String: String] = [:]
-    @State private var pendingTranslationIDs: Set<String> = []
+    // 卡片副标题翻译状态与调度已下沉到 CardTranslationModel（与详情页共享同一套
+    // 「内存→磁盘→网络」按需翻译流程；视图销毁后 model 不再写回，UAF 防护）
+    @StateObject private var translationModel = CardTranslationModel()
     // 滚动锚点已随 resultsGrid 迁移到 CategoryResultsGrid（仅用于返回列表时恢复位置）
     @State private var searchPopInIds: Set<String> = []
     @State private var selectedModItem: DownloadedItem? = nil
@@ -135,7 +135,7 @@ struct DownloadCategoryView: View {
                     displayLimit = 120
                     searchPopInIds = []
                 }
-                startSequentialTranslation(for: filtered)
+                translationModel.prefetch(filtered, service: TranslationService.shared)
                 return
             }
             }
@@ -219,6 +219,7 @@ struct DownloadCategoryView: View {
         }
         .onAppear {
             Self.isViewActive = true
+            translationModel.activate()
             ModrinthCategoryCache.loadFromDisk()
             let idx = computedHighlightIndex
             sectionHighlightY = sidebarOffsets[idx]
@@ -235,8 +236,8 @@ struct DownloadCategoryView: View {
         }
         .onDisappear {
             Self.isViewActive = false
+            translationModel.deactivate()
             fetchTask?.cancel()
-            translateTask?.cancel()
             searchDebounceTask?.cancel()
         }
         .onReceive(NotificationCenter.default.publisher(for: LocalModCatalog.readyNotification)) { _ in
@@ -362,13 +363,13 @@ struct DownloadCategoryView: View {
         } else {
             CategoryResultsGrid(
                 results: filteredResults,
-                translatedSubtitles: translatedSubtitles,
+                translatedSubtitles: translationModel.translated,
                 cardWidth: cardWidth,
                 cardPadding: cardPadding,
                 columns: columns,
                 displayLimit: $displayLimit,
                 onOpen: { openDetail($0) },
-                onRequestTranslation: { await requestTranslation(for: $0) }
+                onRequestTranslation: { await translationModel.requestTranslation(for: $0, service: TranslationService.shared) }
             )
         }
     }
@@ -377,7 +378,7 @@ struct DownloadCategoryView: View {
         let display = DownloadedItem(
             id: item.id,
             name: item.name,
-            subtitle: translatedSubtitles[item.id] ?? item.subtitle,
+            subtitle: translationModel.subtitle(for: item),
             iconURL: item.iconURL,
             tags: item.tags
         )
@@ -393,7 +394,7 @@ struct DownloadCategoryView: View {
             selectedModItem = nil
         }
         // 详情页翻译过的条目立即回写列表卡片（缓存已在磁盘）
-        startSequentialTranslation(for: filteredResults)
+        translationModel.prefetch(filteredResults, service: TranslationService.shared)
     }
 
     private func navigateTo(_ idx: Int) {
@@ -408,7 +409,6 @@ struct DownloadCategoryView: View {
         searchText = ""
         debouncedSearchText = ""
         searchDebounceTask?.cancel()
-        translateTask?.cancel()
         filteredResults = []
         displayLimit = 120
         showDetail = false
@@ -450,7 +450,7 @@ struct DownloadCategoryView: View {
                         displayLimit = 120
                         searchPopInIds = []
                     }
-                    startSequentialTranslation(for: result)
+                    translationModel.prefetch(result, service: TranslationService.shared)
                 }
                 return
             }
@@ -462,7 +462,7 @@ struct DownloadCategoryView: View {
             hasMore = true
             isLoading = false
             if selectedSection != .game {
-                startSequentialTranslation(for: cached)
+                translationModel.prefetch(cached, service: TranslationService.shared)
             }
             return
         }
@@ -497,90 +497,7 @@ struct DownloadCategoryView: View {
                 isLoading = false
             }
             if targetSection != .game {
-                startSequentialTranslation(for: result)
-            }
-        }
-    }
-
-    /// 批量应用翻译缓存（纯内存扫描 + 磁盘一次性批量预取）。
-    /// 磁盘命中由 CacheManager.prefetchText 一次性枚举目录后批量读入内存：
-    /// 相比逐条 fileExists+读盘，IO 次数从 O(n) 降到 O(1 次枚举 + 命中数)，
-    /// 覆盖首屏 + 预加载窗口即可，避免对 12 万条本地目录做海量磁盘扫描
-    private func startSequentialTranslation(for items: [DownloadedItem]) {
-        translateTask?.cancel()
-        let service = TranslationService.shared
-        translateTask = Task.detached(priority: .background) {
-            // 只预热前若干条目（覆盖首屏 + 预加载窗口），防止海量目录读盘拖慢启动
-            let warmupCount = min(items.count, 5000)
-            let ids = items.prefix(warmupCount).map { $0.id }
-            let batch = service.prefetchTranslations(ids: ids)
-            guard !batch.isEmpty, !Task.isCancelled else { return }
-            await MainActor.run {
-                guard !Task.isCancelled else { return }
-                if Self.isViewActive {
-                    // 单次 merge 写入：只触发一次 body 重算；超限裁剪统一走 CardTranslationStore
-                    CardTranslationStore.merge(&self.translatedSubtitles, batch: batch, active: self.pendingTranslationIDs)
-                }
-            }
-        }
-    }
-
-    /// 翻译结果内存上限与裁剪规则统一在 CardTranslationStore（与详情页共享同一套写回语义）
-    private func setTranslated(_ id: String, _ value: String) {
-        CardTranslationStore.set(&translatedSubtitles, id: id, value: value, active: pendingTranslationIDs)
-    }
-
-    /// 按需翻译单个卡片：缓存命中直接应用，否则排队翻译（滚动到哪翻译到哪）
-    ///
-    /// 关键修复：原先在主线程直接调用 `cachedTranslation`（会同步读盘），
-    /// 滚动时每个进入可视区的卡片都触发一次磁盘读取，造成主线程阻塞、列表卡顿（“垃圾优化”）。
-    /// 现在主线程只查内存缓存（内置表 + 内存 LRU，瞬时、零阻塞），
-    /// 磁盘读取与网络翻译全部下沉到后台任务，彻底解除滚动卡顿。
-    private func requestTranslation(for item: DownloadedItem) async {        let id = item.id
-        guard !id.isEmpty, translatedSubtitles[id] == nil, !pendingTranslationIDs.contains(id) else { return }
-        let service = TranslationService.shared
-        // 仅查内存缓存（内置表 + 内存 LRU），主线程零阻塞、瞬时返回
-        if let cached = service.cachedTranslationInMemory(for: id), !cached.isEmpty {
-            // 淡入动画：与网络翻译完成时的效果一致，避免瞬时跳变
-            withAnimation(.easeInOut(duration: 0.3)) { setTranslated(id, cached) }
-            return
-        }
-        pendingTranslationIDs.insert(id)
-        let subtitle = item.subtitle
-        // 磁盘缓存查询走 detached 立即执行（毫秒级、成本低，无需防抖）；
-        // 命中即应用，减少「卡片出现 → 等防抖 → 再查盘」的感知延迟
-        if let diskCached = try? await Task.detached(priority: .utility, operation: { service.cachedTranslation(for: id) }).value,
-           !diskCached.isEmpty {
-            if Task.isCancelled {
-                pendingTranslationIDs.remove(id)
-                return
-            }
-            await MainActor.run {
-                self.pendingTranslationIDs.remove(id)
-                if !diskCached.isEmpty, Self.isViewActive {
-                    withAnimation(.easeInOut(duration: 0.3)) { self.setTranslated(id, diskCached) }
-                }
-            }
-            return
-        }
-        // 磁盘未命中 → 网络翻译：短暂防抖，快速滑动时这张卡的任务会被取消 → 直接返回，不产生无谓的网络请求
-        try? await Task.sleep(nanoseconds: 120_000_000)
-        if Task.isCancelled {
-            pendingTranslationIDs.remove(id)
-            return
-        }
-        Task.detached(priority: .utility) {
-            // 后台线程发起网络翻译：translateText 内含信号量阻塞等待，必须脱离主线程执行
-            let result = try? await service.translateText(text: subtitle, projectId: id)
-            let final = result ?? ""
-            await MainActor.run {
-                self.pendingTranslationIDs.remove(id)
-                if !final.isEmpty, Self.isViewActive {
-                    // 淡入动画：翻译完成时副标题文字柔和过渡，不再生硬跳变
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        self.setTranslated(id, final)
-                    }
-                }
+                translationModel.prefetch(result, service: TranslationService.shared)
             }
         }
     }
