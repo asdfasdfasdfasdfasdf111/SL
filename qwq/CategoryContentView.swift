@@ -176,15 +176,7 @@ struct CategoryContentView: View {
 
     /// 离线用户名提示（PCL2 PageLoginLegacy 的 HintChinese 移植）
     private var offlineUsernameHint: String? {
-        let name = settings.offlineUsername.trimmingCharacters(in: .whitespacesAndNewlines)
-        if name.utf16.count > 16 {
-            return "用户名不能超过 16 个字符"
-        }
-        if !name.isEmpty, name.range(of: "^[0-9A-Za-z_]*$", options: .regularExpression) == nil {
-            // PCL2 HintChinese 语义：1.18+ 服务端拒绝非 [0-9A-Za-z_] 用户名（Invalid characters in username）
-            return "仅限英文、数字、下划线，否则 1.18+ 无法进入"
-        }
-        return nil
+        OfflineUsernameValidator.hint(for: settings.offlineUsername)
     }
 
     private var skinButton: some View {
