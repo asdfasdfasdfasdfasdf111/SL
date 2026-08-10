@@ -9,7 +9,6 @@ struct CategoryContentView: View {
     @EnvironmentObject var settings: LauncherSettings
     @ObservedObject var theme = ThemeManager.shared
     
-    @State private var buttonScale: CGFloat = 1.0
     @State private var isLaunching = false
     @State private var launchProgress: Double = 0.0
     @State private var usernameFieldScale: CGFloat = 1.0
@@ -75,7 +74,23 @@ struct CategoryContentView: View {
             usernameField
             skinButton
             Spacer()
-            launchButton(buttonWidth: buttonWidth)
+            LaunchButton(
+                buttonWidth: buttonWidth,
+                isLaunching: isLaunching,
+                launchPhase: launchPhase,
+                lightProgress: lightProgress,
+                darkProgress: darkProgress,
+                onTap: {
+                    isUsernameFocused = false
+                    guard !settings.selectedMinecraftVersion.isEmpty else {
+                        settings.launchErrorMessage = "请先在「游戏」分类中选择一个版本"
+                        settings.showLaunchAlert = true
+                        return
+                    }
+                    guard !isLaunching else { return }
+                    startLaunch()
+                }
+            )
         }
         .frame(width: cardWidth)
         .background(RoundedRectangle(cornerRadius: 24).fill(.regularMaterial).shadow(radius: 12))
@@ -201,87 +216,6 @@ struct CategoryContentView: View {
         }
         .buttonStyle(.plain)
         .scaleEffect(skinButtonScale)
-    }
-
-    private func launchButton(buttonWidth: CGFloat) -> some View {
-        Button(action: {
-            isUsernameFocused = false
-            withAnimation(.punchySpring) { buttonScale = 1.15 }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                withAnimation(.punchySpring) { buttonScale = 1.0 }
-            }
-            guard !settings.selectedMinecraftVersion.isEmpty else {
-                settings.launchErrorMessage = "请先在「游戏」分类中选择一个版本"
-                settings.showLaunchAlert = true
-                return
-            }
-            guard !isLaunching else { return }
-            startLaunch()
-        }) {
-            ZStack(alignment: .leading) {
-                if launchPhase == .downloading || launchPhase == .installing {
-                    Rectangle()
-                        .fill(theme.accentColor.opacity(0.6))
-                        .frame(width: buttonWidth * CGFloat(lightProgress), height: 50)
-                        .animation(.exaggeratedSpring, value: lightProgress)
-                }
-                if launchPhase == .launching {
-                    Rectangle()
-                        .fill(theme.accentColor.opacity(0.85))
-                        .frame(width: buttonWidth * CGFloat(darkProgress), height: 50)
-                        .animation(.exaggeratedSpring, value: darkProgress)
-                }
-                RoundedRectangle(cornerRadius: 25)
-                    .strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 1)
-                    .background(RoundedRectangle(cornerRadius: 25).fill(.ultraThinMaterial))
-                ZStack {
-                    if launchPhase == .idle {
-                        Text("启动游戏")
-                            .font(.system(size: 20, weight: .medium))
-                            .foregroundColor(.primary)
-                            .frame(width: buttonWidth, height: 50, alignment: .center)
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .bottom).combined(with: .opacity),
-                                removal: .move(edge: .top).combined(with: .opacity)
-                            ))
-                    }
-                    if launchPhase == .preparing {
-                        // 启动前准备（皮肤资源包应用等，此前按钮变灰却无文案反馈）
-                        Text("准备中…")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundColor(.primary)
-                            .frame(width: buttonWidth, height: 50, alignment: .center)
-                    }
-                    if launchPhase == .downloading {
-                        Text("Java 下载中")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.primary)
-                            .frame(width: buttonWidth, height: 50, alignment: .center)
-                    }
-                    if launchPhase == .installing {
-                        Text("Java 安装中")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.primary)
-                            .frame(width: buttonWidth, height: 50, alignment: .center)
-                    }
-                    if launchPhase == .launching {
-                        Text("启动中")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundColor(.primary)
-                            .frame(width: buttonWidth, height: 50, alignment: .center)
-                    }
-                }
-                .animation(.spring(response: 0.5, dampingFraction: 0.7), value: launchPhase)
-            }
-            .frame(width: buttonWidth, height: 50)
-            .mask(RoundedRectangle(cornerRadius: 25).frame(width: buttonWidth, height: 50))
-            .shadow(radius: 2)
-        }
-        .buttonStyle(.plain)
-        .scaleEffect(buttonScale)
-        .animation(.punchySpring, value: buttonScale)
-        .disabled(isLaunching)
-        .padding(.bottom, 30)
     }
 
     private func logPanel(logCardHeight: CGFloat) -> some View {
