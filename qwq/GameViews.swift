@@ -154,7 +154,7 @@ struct DownloadCategoryView: View {
             let range = NSRange(normalized.startIndex..., in: normalized)
             let hasChinese = Self.hasChineseRegex.firstMatch(in: normalized, range: range) != nil
             if hasChinese {
-                let englishTerms = await translateChineseToEnglish(normalized)
+                let englishTerms = await SearchTranslator.translate(normalized)
                 if !englishTerms.isEmpty {
                     searchQuery = englishTerms.joined(separator: " ")
                 }
@@ -220,44 +220,6 @@ struct DownloadCategoryView: View {
                 isLoadingMore = false
             }
         }
-    }
-
-    private func translateChineseToEnglish(_ text: String) async -> [String] {
-        guard Self.isViewActive else { return [] }
-        Self.searchTranslationCacheLock.lock()
-        if let cached = Self.searchTranslationCache[text] { Self.searchTranslationCacheLock.unlock(); return cached }
-        Self.searchTranslationCacheLock.unlock()
-        var components = URLComponents(string: "https://api.mymemory.translated.net/get")!
-        components.queryItems = [
-            URLQueryItem(name: "q", value: text),
-            URLQueryItem(name: "langpair", value: "zh|en")
-        ]
-        guard let url = components.url else { return [] }
-        var req = URLRequest(url: url)
-        req.setValue("Swim111Launcher/1.0 (Minecraft Launcher)", forHTTPHeaderField: "User-Agent")
-        req.timeoutInterval = 10
-        guard let (data, _) = try? await AppContext.shared.apiSession.data(for: req),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let matches = json["matches"] as? [[String: Any]] else { return [] }
-        var results: [String] = []
-        var seen = Set<String>()
-        for m in matches {
-            guard let t = m["translation"] as? String,
-                  !t.isEmpty, t.lowercased() != text.lowercased(),
-                  !seen.contains(t.lowercased()) else { continue }
-            seen.insert(t.lowercased())
-            results.append(t)
-        }
-        guard !results.isEmpty else { return [] }
-        Self.searchTranslationCacheLock.lock()
-        // 限制缓存大小：超过 100 条则清空一半
-        if Self.searchTranslationCache.count >= 100 {
-            let keys = Array(Self.searchTranslationCache.keys.prefix(50))
-            for k in keys { Self.searchTranslationCache.removeValue(forKey: k) }
-        }
-        Self.searchTranslationCache[text] = results
-        Self.searchTranslationCacheLock.unlock()
-        return results
     }
 
     var body: some View {
@@ -730,16 +692,12 @@ struct DownloadCategoryView: View {
     }
 
     private static var isViewActive = false
-    private static var searchTranslationCache: [String: [String]] = [:]
-    private static let searchTranslationCacheLock = NSLock()
 
     /// 清理静态缓存（内存警告时调用）
     static func clearStaticCaches() {
         ModrinthCategoryCache.clearAll()
+        SearchTranslator.clearCache()
         GameVersionManifest.clearCache()
-        searchTranslationCacheLock.lock()
-        searchTranslationCache.removeAll()
-        searchTranslationCacheLock.unlock()
         LoaderSupportChecker.clearMemoryCache()
     }
 
