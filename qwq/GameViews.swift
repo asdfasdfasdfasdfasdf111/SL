@@ -168,7 +168,7 @@ struct DownloadCategoryView: View {
             case .modpack: type = "modpack"
             default: return
             }
-            let result = await fetchRawModrinthItems(type: type, label: "", query: searchQuery, offset: 0)
+            let result = await ModrinthSearcher.search(type: type, label: "", query: searchQuery, offset: 0)
             if Task.isCancelled { return }
             guard Self.isViewActive else { return }
             await MainActor.run {
@@ -203,7 +203,7 @@ struct DownloadCategoryView: View {
         let offset = currentOffset
         let baseItems = items
         Task {
-            let result = await fetchRawModrinthItems(type: type, label: "", query: query, offset: offset, limit: 30)
+            let result = await ModrinthSearcher.search(type: type, label: "", query: query, offset: offset, limit: 30)
             if Task.isCancelled { return }
             await MainActor.run {
                 guard section == self.selectedSection else { self.isLoadingMore = false; return }
@@ -280,7 +280,7 @@ struct DownloadCategoryView: View {
         }
         .onAppear {
             Self.isViewActive = true
-            Self.loadCacheFromDisk()
+            ModrinthCategoryCache.loadFromDisk()
             let idx = computedHighlightIndex
             sectionHighlightY = sidebarOffsets[idx]
             LocalModCatalog.warmUp()
@@ -582,7 +582,7 @@ struct DownloadCategoryView: View {
             }
         }
 
-        if let cached = Self.cache(for: selectedSection, sub: selectedSubCategory) {
+        if let cached = ModrinthCategoryCache.cache(for: selectedSection, sub: selectedSubCategory) {
             items = cached
             currentOffset = cached.count
             hasMore = true
@@ -603,21 +603,21 @@ struct DownloadCategoryView: View {
             case .game:
                 result = await fetchMinecraftVersions(subCategory: selectedSubCategory)
             case .mod:
-                let r = await fetchRawModrinthItems(type: "mod", label: "模组", limit: 100)
+                let r = await ModrinthSearcher.search(type: "mod", label: "模组", limit: 100)
                 result = r.items; totalHits = r.totalHits
-                if !result.isEmpty { Self.cachedModItems = result; Self.saveCacheToDisk(result, for: .mod) }
+                if !result.isEmpty { ModrinthCategoryCache.cachedModItems = result; ModrinthCategoryCache.saveToDisk(result, for: .mod) }
             case .resourcePack:
-                let r = await fetchRawModrinthItems(type: "resourcepack", label: "资源包", limit: 100)
+                let r = await ModrinthSearcher.search(type: "resourcepack", label: "资源包", limit: 100)
                 result = r.items; totalHits = r.totalHits
-                if !result.isEmpty { Self.cachedResourcePackItems = result; Self.saveCacheToDisk(result, for: .resourcePack) }
+                if !result.isEmpty { ModrinthCategoryCache.cachedResourcePackItems = result; ModrinthCategoryCache.saveToDisk(result, for: .resourcePack) }
             case .shader:
-                let r = await fetchRawModrinthItems(type: "shader", label: "光影", limit: 100)
+                let r = await ModrinthSearcher.search(type: "shader", label: "光影", limit: 100)
                 result = r.items; totalHits = r.totalHits
-                if !result.isEmpty { Self.cachedShaderItems = result; Self.saveCacheToDisk(result, for: .shader) }
+                if !result.isEmpty { ModrinthCategoryCache.cachedShaderItems = result; ModrinthCategoryCache.saveToDisk(result, for: .shader) }
             case .modpack:
-                let r = await fetchRawModrinthItems(type: "modpack", label: "整合包", limit: 100)
+                let r = await ModrinthSearcher.search(type: "modpack", label: "整合包", limit: 100)
                 result = r.items; totalHits = r.totalHits
-                if !result.isEmpty { Self.cachedModpackItems = result; Self.saveCacheToDisk(result, for: .modpack) }
+                if !result.isEmpty { ModrinthCategoryCache.cachedModpackItems = result; ModrinthCategoryCache.saveToDisk(result, for: .modpack) }
             }
             if Task.isCancelled { return }
             await MainActor.run {
@@ -729,74 +729,26 @@ struct DownloadCategoryView: View {
         }
     }
 
-    private static func cache(for section: GameSidebarSection, sub: GameSubCategory?) -> [DownloadedItem]? {
-        switch section {
-        case .game:
-            if sub == lastSubCategory, let c = versionManifestCache { return c }
-            return nil
-        case .mod: return cachedModItems
-        case .resourcePack: return cachedResourcePackItems
-        case .shader: return cachedShaderItems
-        case .modpack: return cachedModpackItems
-        }
-    }
-
-    private static var versionManifestCache: [DownloadedItem]?
-    private static var lastSubCategory: GameSubCategory?
-    private static var cachedModItems: [DownloadedItem]?
-    private static var cachedResourcePackItems: [DownloadedItem]?
-    private static var cachedShaderItems: [DownloadedItem]?
-    private static var cachedModpackItems: [DownloadedItem]?
     private static var isViewActive = false
     private static var searchTranslationCache: [String: [String]] = [:]
     private static let searchTranslationCacheLock = NSLock()
 
     /// 清理静态缓存（内存警告时调用）
     static func clearStaticCaches() {
-        versionManifestCache = nil
-        lastSubCategory = nil
+        ModrinthCategoryCache.clearAll()
         GameVersionManifest.clearCache()
-        cachedModItems = nil
-        cachedResourcePackItems = nil
-        cachedShaderItems = nil
-        cachedModpackItems = nil
         searchTranslationCacheLock.lock()
         searchTranslationCache.removeAll()
         searchTranslationCacheLock.unlock()
         LoaderSupportChecker.clearMemoryCache()
     }
 
-    private enum CacheKey: String {
-        case mod = "modrinth_cache_mod"
-        case resourcePack = "modrinth_cache_resourcepack"
-        case shader = "modrinth_cache_shader"
-        case modpack = "modrinth_cache_modpack"
-    }
-
-    private static func loadCacheFromDisk() {
-        let cache = AppContext.shared.cacheManager
-        let decoder = JSONDecoder()
-        for key in [CacheKey.mod, .resourcePack, .shader, .modpack] {
-            guard let items: [DownloadedItem] = cache.object([DownloadedItem].self, forKey: key.rawValue) else { continue }
-            switch key {
-            case .mod: cachedModItems = items
-            case .resourcePack: cachedResourcePackItems = items
-            case .shader: cachedShaderItems = items
-            case .modpack: cachedModpackItems = items
-            }
-        }
-    }
-
-    private static func saveCacheToDisk(_ items: [DownloadedItem], for key: CacheKey) {
-        AppContext.shared.cacheManager.setObject(items, forKey: key.rawValue)
-    }
-
     private func fetchMinecraftVersions(subCategory: GameSubCategory?) async -> [DownloadedItem] {
-        if subCategory == Self.lastSubCategory, let cached = Self.versionManifestCache {
+        if subCategory == ModrinthCategoryCache.lastGameSubCategory, let cached = ModrinthCategoryCache.cachedGameVersions {
             return cached
         }
         let versions = await GameVersionManifest.fetchMerged()
-        guard !versions.isEmpty else { return Self.versionManifestCache ?? [] }
+        guard !versions.isEmpty else { return ModrinthCategoryCache.cachedGameVersions ?? [] }
         let filtered: [[String: Any]]
         switch subCategory {
         case .release:
@@ -828,44 +780,9 @@ struct DownloadCategoryView: View {
                 tags: []
             )
         }
-        Self.versionManifestCache = result
-        Self.lastSubCategory = subCategory
+        ModrinthCategoryCache.cachedGameVersions = result
+        ModrinthCategoryCache.lastGameSubCategory = subCategory
         return result
-    }
-
-    private func fetchRawModrinthItems(type: String, label: String, query: String = "", offset: Int = 0, limit: Int = 30) async -> (items: [DownloadedItem], totalHits: Int) {
-        var components = URLComponents(string: "https://api.modrinth.com/v2/search")!
-        var queryItems: [URLQueryItem] = [
-            URLQueryItem(name: "limit", value: "\(limit)"),
-            URLQueryItem(name: "offset", value: "\(offset)"),
-            URLQueryItem(name: "facets", value: "[[\"project_type:\(type)\"]]")
-        ]
-        if !query.isEmpty {
-            queryItems.append(URLQueryItem(name: "query", value: query))
-        }
-        components.queryItems = queryItems
-        guard let url = components.url else { return ([], 0) }
-        var req = URLRequest(url: url)
-        req.setValue("Swim111Launcher/1.0 (Minecraft Launcher)", forHTTPHeaderField: "User-Agent")
-        req.timeoutInterval = 10
-        guard let (data, _) = try? await AppContext.shared.apiSession.data(for: req),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let hits = json["hits"] as? [[String: Any]] else {
-            return ([], 0)
-        }
-        let totalHits = json["total_hits"] as? Int ?? hits.count
-        let items = hits.map { hit in
-            let projectId = hit["project_id"] as? String ?? hit["slug"] as? String ?? UUID().uuidString
-            let categories = hit["categories"] as? [String] ?? []
-            return DownloadedItem(
-                id: projectId,
-                name: hit["title"] as? String ?? "未知\(label)",
-                subtitle: hit["description"] as? String ?? "",
-                iconURL: hit["icon_url"] as? String,
-                tags: categories
-            )
-        }
-        return (items, totalHits)
     }
 
     private var gameSidebar: some View {
