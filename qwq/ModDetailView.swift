@@ -509,30 +509,11 @@ struct ModDetailView: View {
                 if pageTypeForIndex != .loaderSelector && pageTypeForIndex != .modpack {
                     // 光影页面：加载器只显示 Iris/OptiFine 等光影加载器，过滤模组加载器
                     let filteredLoaders = ShaderLoaderFilter.filtered(projectLoaders: projectLoaders, pageType: pageTypeForIndex)
-                    if !versionRangeText.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(pageTypeForIndex.supportedVersionTitle)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(.primary)
-                            Text(versionRangeText)
-                                .font(.system(size: 12))
-                                .foregroundColor(.secondary)
-                        }
-                        .padding(.top, 4)
-                    }
-                    if !filteredLoaders.isEmpty {
-                        HStack(spacing: 16) {
-                            ForEach(filteredLoaders, id: \.self) { loader in
-                                Image(assetName(for: loader))
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(height: 28)
-                                    .cornerRadius(6)
-                                    .shadow(color: .black.opacity(0.12), radius: 2, x: 0, y: 1)
-                            }
-                        }
-                        .padding(.top, 4)
-                    }
+                    SupportedMetaSection(
+                        title: pageTypeForIndex.supportedVersionTitle,
+                        rangeText: versionRangeText,
+                        filteredLoaders: filteredLoaders
+                    )
                 }
 
                 if let crossVersion = findCrossVersionDownload(for: selectedVersion),

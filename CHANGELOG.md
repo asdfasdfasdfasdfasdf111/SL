@@ -6,6 +6,7 @@
 
 ### 变更
 
+- **代码极致模块化（第二十二批）：ModDetailView.swift 由 591 行拆至 572 行**——拆出 `qwq/SupportedMetaSection.swift`（详情页「支持版本范围 + 加载器图标」元信息区独立组件：版本范围文本与过滤后加载器图标行，空值自动隐藏，加载器资源名解析走 LoaderNameResolver，纯展示无状态）。原 `detailPageContent` 内约 28 行内联块替换为 `SupportedMetaSection` 一行调用
 - **代码极致模块化（第二十一批）：ModDetailView.swift 由 634 行拆至 591 行**——拆出 `qwq/DetailPageHeader.swift`（详情页页头独立组件：返回按钮 + 名称大标题 + 翻译副标题 + 横向标签胶囊（ModrinthTagMap 翻译），数据与回调全部外部传入，纯展示无状态）。原 `detailPageContent` 头部约 47 行内联块替换为 `DetailPageHeader` 一行调用
 - **代码极致模块化（第二十批）：GameViews.swift 由 720 行拆至 680 行**——拆出 `qwq/CategoryResultsGrid.swift`（结果卡片网格独立组件：LazyVGrid 分页切片（前 displayLimit 条）/滚动锚点恢复/触底追加 120 条/卡片按需翻译，数据与回调全部外部传入，`displayLimit` @Binding 外置，滚动锚点静态成员随组件迁移）。原 `resultsGrid` 方法与 `lastAnchorItemID` 静态成员删除，`contentBody` 改挂 `CategoryResultsGrid`
 - **代码极致模块化（第十九批）：CategoryContentView.swift 由 637 行拆至 594 行**——拆出 `qwq/CloseSessionButton.swift`（右下角电源按钮独立组件：圆环辉光 + 弹入动画（放大→回弹→复位），可见性由 `isLaunching`/`hasRunningSessions` 传入，点击行为（NSAlert 关闭确认/终止进程/取消启动复位）外置为 `onTap` 回调——回调内容提取为视图私有方法 `handleCloseSessionTap`；弹入动画改可取消 Task（`onDisappear` cancel）防 UAF）。原 `closeButtonOverlay` 计算属性与其 `closeButtonScale`/`closeButtonGlow` @State 删除
