@@ -40,15 +40,25 @@ struct DownloadDetailView: View {
 
             // 右侧任务卡片（对标 StaticMyCard 列表）
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 12) {
-                    ForEach(manager.tasks.getTasks()) { task in
-                        DownloadTaskCard(task: task) {
-                            entries(for: task)
+                let taskList = manager.tasks.getTasks()
+                if taskList.isEmpty {
+                    // 空态兜底：手动关闭详情页期间任务完成被清空，再打开时避免空白
+                    Text("没有进行中的下载")
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 40)
+                } else {
+                    VStack(spacing: 12) {
+                        ForEach(taskList) { task in
+                            DownloadTaskCard(task: task) {
+                                entries(for: task)
+                            }
                         }
+                        Spacer(minLength: 0)
                     }
-                    Spacer(minLength: 0)
+                    .padding(.vertical, 2)
                 }
-                .padding(.vertical, 2)
             }
             .frame(maxWidth: .infinity)
         }
