@@ -6,6 +6,7 @@
 
 ### 变更
 
+- **代码极致模块化（第二十五批）：GameCategoryView.swift 由 261 行拆至 180 行**——拆出 `qwq/VersionPickerCard.swift`（「我的世界」页版本选择卡片独立组件：版本列表/未找到提示/右上角 Java 选择 popover/底部「添加文件夹/全盘查找游戏」按钮，`versions`/`hasVersions`/`selectedVersion`/`javaPickerLabel`/`showBottomButtons` 数据全量传入、`selectedJavaPath` @Binding 外置、`onSelect`/`onOpenFolderPicker`/`onFullDiskScan` 行为回调外置、popover 局部状态 `showJavaPicker` 下沉组件内）与 `qwq/GameScanService.swift`（游戏根目录扫描纯逻辑枚举：`resolveGameRoot(savedRoot:)` 已保存根目录优先→全盘兜底、`fullDiskScanGames()` 全盘扫描取总数+第一个有效游戏）。视图 body 约 110 行内联卡片区块替换为 `VersionPickerCard` 一行调用，`startScanning`/`fullDiskScan` 两处 `Task.detached` 扫描逻辑改一行转发，删除 `showJavaPicker` @State 与 `javaPickerLabel` 重复死分支（两分支同返回值）
 - **代码极致模块化（第二十四批）：ContentView.swift 由 333 行拆至 286 行**——拆出 `qwq/ModDragInstaller.swift`（拖拽安装模组纯逻辑：`findInstances(for:savedRoot:)` 扫描全部游戏根目录 + 用户选择根目录、按模组版本范围过滤匹配实例（去重，逐版本 `versionMatches`）；`install(modURL:to:)` 把模组文件拷贝到每个实例 `versions/<v>/mods`（同名覆盖），返回成功数）。视图 `findMatchingInstances`/`installModToInstances` 改为一行转发，弹窗提示仍留在视图
 - **代码极致模块化（第二十三批）：GameViews.swift 由 680 行拆至 667 行**——拆出 `qwq/ModrinthSectionType.swift`（纯逻辑：`GameSidebarSection` → Modrinth `project_type` 查询参数映射，游戏版本页返回 nil）。消除 `applyFilter`/`loadMore` 两处重复的 section→type switch，各改一行 `guard let type = ModrinthSectionType.type(for: section)` 
 - **代码极致模块化（第二十二批）：ModDetailView.swift 由 591 行拆至 572 行**——拆出 `qwq/SupportedMetaSection.swift`（详情页「支持版本范围 + 加载器图标」元信息区独立组件：版本范围文本与过滤后加载器图标行，空值自动隐藏，加载器资源名解析走 LoaderNameResolver，纯展示无状态）。原 `detailPageContent` 内约 28 行内联块替换为 `SupportedMetaSection` 一行调用

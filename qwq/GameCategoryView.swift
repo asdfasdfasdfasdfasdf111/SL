@@ -2,6 +2,8 @@
 //  GameCategoryView.swift
 //  模块化拆分：从 GameViews.swift 拆出「我的世界」分类页（版本选择卡片 + Java 选择），
 //  原文件剩余 DownloadCategoryView（下载游戏页）。
+//  第二十五批：版本卡片区块下沉 VersionPickerCard（qwq/VersionPickerCard.swift），
+//  扫描逻辑提炼 GameScanService（qwq/GameScanService.swift），本文件退化为 UI 编排 + 状态持有。
 //
 
 import SwiftUI
@@ -18,7 +20,6 @@ struct GameCategoryView: View {
     @State private var versions: [String] = []
     @State private var hasVersions = false
     @State private var scanTimedOut = false
-    @State private var showJavaPicker = false
     @State private var loadingTimer: Timer?
 
     private var javaPickerLabel: String {
@@ -32,9 +33,6 @@ struct GameCategoryView: View {
         if settings.isJavaScanning {
             return "扫描中..."
         }
-        if settings.availableJavaList.isEmpty {
-            return "自动选择 Java"
-        }
         return "自动选择 Java"
     }
 
@@ -47,114 +45,21 @@ struct GameCategoryView: View {
                     .transition(.opacity)
             }
             if showCard {
-                VStack(spacing: 0) {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        VStack(alignment: .leading, spacing: 16) {
-                            if hasVersions {
-                                Text("选择游戏版本").font(.headline).foregroundColor(.secondary).padding(.bottom, 4)
-                                ForEach(versions, id: \.self) { version in
-                                    VersionButton(title: version, isSelected: settings.selectedMinecraftVersion == version) {
-                                        withAnimation(.explosiveSpring) {
-                                            settings.selectedMinecraftVersion = version
-                                        }
-                                    }
-                                }
-                            } else {
-                                VStack(spacing: 20) {
-                                    Text("未找到游戏版本").font(.headline).foregroundColor(.secondary)
-                                    Text("请将 Minecraft 游戏文件夹（包含 versions 目录）放入常用目录（文稿、下载等），或手动选择")
-                                        .font(.caption).foregroundColor(.secondary).multilineTextAlignment(.center)
-                                    Button(action: openFolderPicker) {
-                                        Text("寻找版本")
-                                            .font(.system(size: 16, weight: .medium))
-                                            .foregroundColor(.primary)
-                                            .frame(width: 160, height: 40)
-                                            .background(RoundedRectangle(cornerRadius: 20).fill(.ultraThinMaterial).shadow(radius: 2))
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                                .padding(.vertical, 12)
-                            }
+                VersionPickerCard(
+                    versions: versions,
+                    hasVersions: hasVersions,
+                    selectedVersion: settings.selectedMinecraftVersion,
+                    javaPickerLabel: javaPickerLabel,
+                    showBottomButtons: hasVersions || (versions.isEmpty && !isLoading),
+                    selectedJavaPath: $settings.selectedJavaPath,
+                    onSelect: { version in
+                        withAnimation(.explosiveSpring) {
+                            settings.selectedMinecraftVersion = version
                         }
-                        .padding(24)
-                        .frame(minWidth: 280)
-                        .background(RoundedRectangle(cornerRadius: 24).fill(.regularMaterial).shadow(color: .black.opacity(0.15), radius: 12, x: 0, y: 5))
-                        .overlay(alignment: .topTrailing) {
-                            if hasVersions {
-                                Button(action: { showJavaPicker = true }) {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "cup.and.saucer.fill")
-                                            .font(.system(size: 9))
-                                            .foregroundColor(theme.accentColor)
-                                        Text(javaPickerLabel)
-                                            .font(.system(size: 9))
-                                            .foregroundColor(.secondary)
-                                            .lineLimit(1)
-                                    }
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(RoundedRectangle(cornerRadius: 6).fill(.ultraThinMaterial))
-                                }
-                                .buttonStyle(.plain)
-                                .popover(isPresented: $showJavaPicker, arrowEdge: .trailing) {
-                                    JavaPickerView(selectedJavaPath: $settings.selectedJavaPath)
-                                        .environmentObject(settings)
-                                }
-                                .padding([.top, .trailing], 10)
-                            }
-                        }
-                        Spacer()
-                    }
-                    if (hasVersions || (versions.isEmpty && !isLoading)) {
-                        VStack(spacing: 8) {
-                            Button(action: openFolderPicker) {
-                                Text("添加文件夹")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(.primary)
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 6)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(theme.accentColor, lineWidth: 1)
-                                            .background(.ultraThinMaterial)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.top, 12)
-                            Button(action: {
-                                isLoading = true
-                                Task.detached(priority: .userInitiated) {
-                                    let roots = await MinecraftVersionManager.asyncFullDiskScanForGames()
-                                    let count = roots.count
-                                    await MainActor.run {
-                                        isLoading = false
-                                        showCard = true
-                                        settings.javaPopupMessage = "已找到 \(count) 个游戏"
-                                        settings.showJavaPopup = true
-                                        if let first = roots.first {
-                                            let vlist = MinecraftVersionManager.getVersions(from: first)
-                                            if !vlist.isEmpty {
-                                                versions = vlist
-                                                settings.selectedGameRoot = first
-                                                settings.selectedMinecraftVersion = vlist.first ?? ""
-                                                hasVersions = true
-                                            }
-                                        }
-                                    }
-                                }
-                            }) {
-                                Text("全盘查找游戏")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.secondary.opacity(0.7))
-                                    .underline()
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    Spacer()
-                }
+                    },
+                    onOpenFolderPicker: openFolderPicker,
+                    onFullDiskScan: fullDiskScan
+                )
                 .transition(.opacity)
             }
         }
@@ -192,12 +97,7 @@ struct GameCategoryView: View {
         isLoading = true; showCard = false; hasVersions = false; scanTimedOut = false
         let scanTask = Task.detached(priority: .userInitiated) { () -> (root: String, versions: [String])? in
             let savedRoot = await MainActor.run { settings.selectedGameRoot }
-            if !savedRoot.isEmpty, FileManager.default.fileExists(atPath: savedRoot + "/versions") {
-                let versions = MinecraftVersionManager.getVersions(from: savedRoot)
-                if !versions.isEmpty { return (savedRoot, versions) }
-            }
-            if let result = await MinecraftVersionManager.asyncFindFirstValidGame() { return result }
-            else { return nil }
+            return await GameScanService.resolveGameRoot(savedRoot: savedRoot)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
             if isLoading && !scanTimedOut {
@@ -224,6 +124,25 @@ struct GameCategoryView: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         withAnimation(.easeOut(duration: 0.4)) { isLoading = false }
                     }
+                }
+            }
+        }
+    }
+
+    private func fullDiskScan() {
+        isLoading = true
+        Task.detached(priority: .userInitiated) {
+            let result = await GameScanService.fullDiskScanGames()
+            await MainActor.run {
+                isLoading = false
+                showCard = true
+                settings.javaPopupMessage = "已找到 \(result.count) 个游戏"
+                settings.showJavaPopup = true
+                if let first = result.first {
+                    versions = first.versions
+                    settings.selectedGameRoot = first.root
+                    settings.selectedMinecraftVersion = first.versions.first ?? ""
+                    hasVersions = true
                 }
             }
         }
