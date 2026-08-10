@@ -6,6 +6,7 @@
 
 ### 变更
 
+- **代码极致模块化（第二十三批）：GameViews.swift 由 680 行拆至 667 行**——拆出 `qwq/ModrinthSectionType.swift`（纯逻辑：`GameSidebarSection` → Modrinth `project_type` 查询参数映射，游戏版本页返回 nil）。消除 `applyFilter`/`loadMore` 两处重复的 section→type switch，各改一行 `guard let type = ModrinthSectionType.type(for: section)` 
 - **代码极致模块化（第二十二批）：ModDetailView.swift 由 591 行拆至 572 行**——拆出 `qwq/SupportedMetaSection.swift`（详情页「支持版本范围 + 加载器图标」元信息区独立组件：版本范围文本与过滤后加载器图标行，空值自动隐藏，加载器资源名解析走 LoaderNameResolver，纯展示无状态）。原 `detailPageContent` 内约 28 行内联块替换为 `SupportedMetaSection` 一行调用
 - **代码极致模块化（第二十一批）：ModDetailView.swift 由 634 行拆至 591 行**——拆出 `qwq/DetailPageHeader.swift`（详情页页头独立组件：返回按钮 + 名称大标题 + 翻译副标题 + 横向标签胶囊（ModrinthTagMap 翻译），数据与回调全部外部传入，纯展示无状态）。原 `detailPageContent` 头部约 47 行内联块替换为 `DetailPageHeader` 一行调用
 - **代码极致模块化（第二十批）：GameViews.swift 由 720 行拆至 680 行**——拆出 `qwq/CategoryResultsGrid.swift`（结果卡片网格独立组件：LazyVGrid 分页切片（前 displayLimit 条）/滚动锚点恢复/触底追加 120 条/卡片按需翻译，数据与回调全部外部传入，`displayLimit` @Binding 外置，滚动锚点静态成员随组件迁移）。原 `resultsGrid` 方法与 `lastAnchorItemID` 静态成员删除，`contentBody` 改挂 `CategoryResultsGrid`

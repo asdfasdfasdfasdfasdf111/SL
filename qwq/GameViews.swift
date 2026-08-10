@@ -158,14 +158,7 @@ struct DownloadCategoryView: View {
                 }
             }
             let section = selectedSection
-            let type: String
-            switch section {
-            case .mod: type = "mod"
-            case .resourcePack: type = "resourcepack"
-            case .shader: type = "shader"
-            case .modpack: type = "modpack"
-            default: return
-            }
+            guard let type = ModrinthSectionType.type(for: section) else { return }
             let result = await ModrinthSearcher.search(type: type, label: "", query: searchQuery, offset: 0)
             if Task.isCancelled { return }
             guard Self.isViewActive else { return }
@@ -187,13 +180,7 @@ struct DownloadCategoryView: View {
         guard hasMore, !isLoadingMore, selectedSection != .game else { return }
         isLoadingMore = true
         let section = selectedSection
-        let type: String
-        switch section {
-        case .mod: type = "mod"
-        case .resourcePack: type = "resourcepack"
-        case .shader: type = "shader"
-        case .modpack: type = "modpack"
-        default:
+        guard let type = ModrinthSectionType.type(for: section) else {
             isLoadingMore = false
             return
         }
