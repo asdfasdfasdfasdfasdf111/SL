@@ -1,67 +1,7 @@
 import Foundation
 
-public struct ModrinthMod: Identifiable, Codable {
-    public let id: String
-    public let slug: String
-    public let title: String
-    public let description: String?
-    public let icon_url: String?
-    public let downloads: Int
-    public let versions: [String]
-    
-    public var identifier: String { id }
-}
-
-public struct ModrinthProject: Codable {
-    public let id: String
-    public let title: String?
-    public let game_versions: [String]?
-    public let loaders: [String]?
-}
-
-public struct ModrinthVersion: Codable {
-    public let id: String
-    public let name: String
-    public let version_number: String
-    public let game_versions: [String]
-    public let loaders: [String]
-    public let files: [ModrinthFile]
-    
-    public struct ModrinthFile: Codable {
-        public let url: String
-        public let filename: String
-        public let primary: Bool
-        public let size: Int
-    }
-}
-
-public enum ModLoader: String, CaseIterable {
-    case fabric, forge, quilt, neoforge, rift, unknown
-}
-
-extension ModLoader {
-    var displayName: String {
-        switch self {
-        case .fabric: return "Fabric"
-        case .forge: return "Forge"
-        case .quilt: return "Quilt"
-        case .neoforge: return "NeoForge"
-        case .rift: return "Rift"
-        case .unknown: return "Unknown"
-        }
-    }
-
-    var assetName: String {
-        switch self {
-        case .fabric: return "fabric"
-        case .forge: return "Forge"
-        case .quilt: return "Quilt"
-        case .neoforge: return "NeoForged"
-        case .rift: return "fabric"
-        case .unknown: return "fabric"
-        }
-    }
-}
+// 数据模型族 → ModrinthModels.swift（ModrinthMod/ModrinthProject/ModrinthVersion）
+// ModLoader → ModLoader.swift（加载器枚举 + displayName/assetName）
 
 public class ModDownloader {
     private let baseURL = "https://api.modrinth.com/v2"
