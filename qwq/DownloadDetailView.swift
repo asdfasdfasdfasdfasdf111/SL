@@ -63,6 +63,12 @@ struct DownloadDetailView: View {
             .frame(maxWidth: .infinity)
         }
         .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // 独立页面自带全屏毛玻璃背景（互斥整页替换后不再依赖宿主视图背景）
+        .background(
+            BlurView(material: .fullScreenUI, blendingMode: .behindWindow)
+                .ignoresSafeArea()
+        )
         // 无返回键：再次点击圆形下载按钮即可回到刚才的页面（由 GameViews toggle 控制）
     }
 

@@ -6,7 +6,7 @@
 
 ### 新增
 
-- **下载详情页重构为独立页面（对标 PCL.Mac AppRouter 整页替换）**：彻底移除「详情页叠加在内容图层之上」的旧实现。详情页状态提升到全局 `DownloadDetailManager`（`isPresented`），由 `ContentView` 顶层 ZStack 渲染——打开时从右侧整页滑入（`move(edge: .trailing) + opacity` 非线性过渡，`interpolatingSpring` 触发），关闭时整页滑出，底层页面不再被破坏性叠加。圆形下载按钮同样提升到 ContentView 顶层全局 overlay（对标 PCL.Mac `installTaskButtonOverlay`），任何页面可见可点，点击 toggle 进/出详情页。游戏版本页、mod/光影/资源包/整合包下载全部走 `DownloadDetailManager.start(_:)` 进入详情页，完成/失败后 `dismiss()` 自动回原页
+- **下载详情页重构为独立页面（对标 PCL.Mac AppRouter 整页替换）**：彻底移除「详情页叠加在内容图层之上」的旧实现。详情页状态提升到全局 `DownloadDetailManager`（`isPresented`），由 `ContentView` 顶层 if/else **互斥整页替换**渲染——同一时刻视图树只有一页（详情页或主内容，二者互斥；动画完成后旧页面真正从视图树卸载，绝不叠加），打开时从右侧整页滑入（`move(edge: .trailing) + opacity` 非线性过渡，`interpolatingSpring` 触发），关闭时整页滑出，主内容向左滑出/滑入形成 push/pop 观感。圆形下载按钮同样提升到 ContentView 顶层全局 overlay（对标 PCL.Mac `installTaskButtonOverlay`），置于页面切换层之外、不随页面卸载，任何页面可见可点，点击 toggle 进/出详情页。游戏版本页、mod/光影/资源包/整合包下载全部走 `DownloadDetailManager.start(_:)` 进入详情页，完成/失败后 `dismiss()` 自动回原页
 - **崩溃自捕获（CrashReporter）**：app 启动时挂 SIGSEGV/SIGBUS/SIGILL/SIGABRT/SIGTRAP handler + `NSSetUncaughtExceptionHandler`，崩溃时把当前线程 backtrace 写入 `~/Library/Logs/qwq_crash.log`。此前 Xcode Run 崩溃被 LLDB 拦截、系统不落 `.ips`，崩溃堆栈永远丢失；此后崩溃可直接读取该日志定位
 - **新增下载详情页（毛玻璃风格，对标 PCL.Mac InstallingView）**：点击圆形下载按钮后不再只是视觉指示，而是进入真正的下载详情页——左侧 200pt 圆角矩形毛玻璃信息卡（总进度 / 实时下载速度 / 剩余文件，对标 PCL.Mac LeftTabView + PanelView），右侧逐任务毛玻璃卡逐阶段渲染进度（inprogress 显示实时百分比、finished 勾选、waiting 灰圈、failed 红叉，对标 StaticMyCard）。后端完整移植 PCL 的 `InstallTask` 任务模型：新增 `ModFileDownloadTask`（单文件下载任务，字节级进度写入 `currentStagePercentage`，走 `SingleFileDownloader → NetManager`，完成自动 `completeOneFile/complete`）、`DownloadDetailManager`（全局任务容器，`tasks.objectWillChange` 转发实时刷新）；`SpeedMeter` 速度数据源为 NetManager 分片下载现成上报，详情页直接读取。整合包下载完成后自动进入安装流程，普通文件下载完成后详情页自动关闭并弹「下载完成」
 - **新增游戏版本一键下载安装（游戏版本页点「下载」不再报错，对标 PCL.Mac DownloadPage）**：游戏版本页（加载器选择页）点下载 = 真正下载安装所选版本——复用 PCLCore `MinecraftInstaller.createTask`（客户端清单 → 资源索引 → 本体 jar → 依赖 libraries → natives），若该版本有可用加载器（`LoaderSupportChecker` 检测结果）则追加对应的 `FabricInstallTask`/`ForgeInstallTask`/`NeoforgeInstallTask`，由 createTask 在 jar 下载完成后自动串联安装（通过 `DataManager.inprogressInstallTasks` 按 key 查找，与 PCL.Mac 行为一致）。加载器版本号由新增的 `LoaderVersionResolver` 自动取最新（Fabric 优先最新稳定版，来源对标 PCL.Mac LoaderCard：meta.fabricmc.net / bmclapi2 forge、neoforge / meta.quiltmc.org）。实例名 = 版本号（带加载器时 + "-Fabric"/"-Forge"/"-NeoForge"，与本地实例命名约定一致）。全流程进入下载详情页展示进度，完成后自动关闭并弹「下载完成」。无可用加载器的版本自动装纯原版
@@ -71,6 +71,8 @@
 - 修复 AppIcon 资源引用缺失导致的 32x32@2x 图标缺口
 - 在线列表缓存优先：进入页面/搜索时先读磁盘缓存（离线、弱网也能秒开上次内容），无缓存才请求网络；所有分类列表拉取成功后自动持久化到磁盘缓存
 - 下载详情页交互调整：移除右上角 X 关闭按钮，圆形下载按钮改为开关切换（`zIndex` 提升至详情页之上，详情页打开时按钮仍可见可点），再点一次即可回到刚才的页面，无需返回键
+- **互斥整页替换（对标 PCL.Mac `router.getLastView()` 语义，用户强烈要求）**：详情页与主内容从「ZStack 叠加」改为 if/else 互斥——动画完成后上一个页面真正卸载，彻底解决「几个页面叠在一起、动画完不卸载」的问题；全局弹窗/提示/圆按钮提升到页面切换层之外，不随页面卸载
+- **代码极致模块化（第二批）**：`GameViews.swift` 再拆出 `GameCategoryView.swift`（「我的世界」分类页：版本选择卡 + Java 选择卡，原 1243–1493 行），文件由 1493 行降至 1242 行；按「顶层视图一个文件」的粒度逐块拆分，每拆一步编译验证一次（BUILD SUCCEEDED）
 
 ## [1.0.0] - 2026-08-07
 

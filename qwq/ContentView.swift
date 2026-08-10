@@ -27,6 +27,133 @@ struct ContentView: View {
     
     var body: some View {
         ZStack {
+            // 主内容与下载详情页互斥整页切换（对标 PCL.Mac router.getLastView() 整页替换）：
+            // if/else 保证同一时间视图树里只有一个页面——详情页打开时主内容真正卸载，
+            // 关闭时详情页真正卸载，动画完成后旧页面不残留、不叠层。
+            // 非线性动画由 DownloadDetailManager.start/toggle/dismiss 的 withAnimation 驱动。
+            if downloadDetail.isPresented {
+                DownloadDetailView()
+                    .transition(.asymmetric(
+                        // 详情页进入：从右滑入 + 淡入（push 观感）
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        // 详情页退出：向右滑出 + 淡出（pop 观感）
+                        removal: .move(edge: .trailing).combined(with: .opacity)
+                    ))
+                    .zIndex(30)
+            } else {
+                mainContent
+                    .transition(.asymmetric(
+                        // 主内容让位：向左滑出（配合详情页从右进入）
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        // 主内容回归：从右滑入（配合详情页向右退出）
+                        removal: .move(edge: .leading).combined(with: .opacity)
+                    ))
+            }
+
+            // 全局弹窗/提示/圆按钮：放在页面切换层之外，不随页面卸载
+            JavaSelectionPopup(message: settings.javaPopupMessage, isPresented: $settings.showJavaPopup)
+                .position(x: 450, y: 200)
+                .zIndex(100)
+
+            if showModInstallSheet {
+                ModInstallSelectionView(
+                    modName: pendingModName,
+                    modVersion: pendingModVersion,
+                    instances: modInstallInstances,
+                    onConfirm: { selected in
+                        installModToInstances(modURL: pendingModURL, instances: selected)
+                        showModInstallSheet = false
+                    },
+                    onCancel: {
+                        showModInstallSheet = false
+                    }
+                )
+                .zIndex(200)
+            }
+
+            if showModpackInstallSheet {
+                ModpackFolderPickerView(
+                    packName: pendingModpackName,
+                    onConfirm: { folderURL in
+                        installModpack(packURL: pendingModpackURL, to: folderURL)
+                        showModpackInstallSheet = false
+                    },
+                    onCancel: {
+                        showModpackInstallSheet = false
+                    }
+                )
+                .zIndex(200)
+            }
+
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(ThemeManager.shared.accentColor, lineWidth: 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(ThemeManager.shared.accentColor.opacity(0.08))
+                    )
+                    .padding(8)
+                    .allowsHitTesting(false)
+                    .zIndex(150)
+            }
+
+            // 圆形毛玻璃下载按钮：全局顶层（对标 PCL.Mac installTaskButtonOverlay），
+            // 任何页面可见可点；点击 toggle 进/出详情页（无返回键，再次点击回到刚才的页面）。
+            // zIndex(40) 高于详情页(30)：详情页打开时按钮仍可见可点。
+            if downloadDetail.showCircleButton {
+                ZStack {
+                    Circle()
+                        .fill(.ultraThinMaterial)
+                        .frame(width: 55, height: 55)
+                        .overlay(
+                            Circle()
+                                .stroke(.white.opacity(0.2), lineWidth: 1)
+                        )
+                        .shadow(color: .black.opacity(0.3), radius: 15, y: 6)
+
+                    Image(systemName: "arrow.down.to.line")
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundColor(.white)
+                }
+                .scaleEffect(downloadDetail.circleScale)
+                .opacity(downloadDetail.circleOpacity)
+                .padding(.trailing, 12)
+                .padding(.bottom, 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .zIndex(40)
+                .onTapGesture {
+                    // 动画由 DownloadDetailManager.toggle 内部统一触发（弹簧曲线）
+                    downloadDetail.toggle()
+                }
+            }
+        }
+        .frame(minWidth: 800, minHeight: 550)
+        .environmentObject(settings)
+        .alert("启动失败", isPresented: $settings.showLaunchAlert, presenting: settings.launchErrorMessage) { _ in
+            Button("确定") { settings.launchErrorMessage = nil }
+        } message: { error in
+            Text(error)
+        }
+        .onAppear {
+            if let window = NSApp.windows.first {
+                window.titlebarAppearsTransparent = true
+                window.styleMask.insert(.fullSizeContentView)
+                window.minSize = NSSize(width: 800, height: 550)
+                var frame = window.frame
+                if frame.size.height > window.minSize.height {
+                    frame.size.height = window.minSize.height
+                    window.setFrame(frame, display: true, animate: true)
+                }
+            }
+            JavaManager.shared.preScanJavaAsync()
+        }
+    }
+
+    /// 主内容页（分类导航 + 内容区 + 拖拽背景），与下载详情页互斥整页切换：
+    /// 详情页打开时本视图从视图树卸载，关闭后重建（状态靠全局单例/磁盘缓存兜底）。
+    @ViewBuilder
+    private var mainContent: some View {
+        ZStack {
             BlurView(material: .fullScreenUI, blendingMode: .behindWindow).ignoresSafeArea()
                 .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
                     return dragDropHandler.handleDrop(providers: providers)
@@ -90,117 +217,6 @@ struct ContentView: View {
                 }
                 .background(BlurView(material: .fullScreenUI, blendingMode: .behindWindow))
             }
-            JavaSelectionPopup(message: settings.javaPopupMessage, isPresented: $settings.showJavaPopup)
-                .position(x: 450, y: 200)
-                .zIndex(100)
-
-            if showModInstallSheet {
-                ModInstallSelectionView(
-                    modName: pendingModName,
-                    modVersion: pendingModVersion,
-                    instances: modInstallInstances,
-                    onConfirm: { selected in
-                        installModToInstances(modURL: pendingModURL, instances: selected)
-                        showModInstallSheet = false
-                    },
-                    onCancel: {
-                        showModInstallSheet = false
-                    }
-                )
-                .zIndex(200)
-            }
-
-            if showModpackInstallSheet {
-                ModpackFolderPickerView(
-                    packName: pendingModpackName,
-                    onConfirm: { folderURL in
-                        installModpack(packURL: pendingModpackURL, to: folderURL)
-                        showModpackInstallSheet = false
-                    },
-                    onCancel: {
-                        showModpackInstallSheet = false
-                    }
-                )
-                .zIndex(200)
-            }
-
-            if isDropTargeted {
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(ThemeManager.shared.accentColor, lineWidth: 3)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(ThemeManager.shared.accentColor.opacity(0.08))
-                    )
-                    .padding(8)
-                    .allowsHitTesting(false)
-                    .zIndex(150)
-            }
-
-            // 下载详情页：独立页面（对标 PCL.Mac router.append(.installing) 后 getLastView() 整页替换），
-            // 带非线性动画整页切换，不叠加在宿主视图图层上。
-            if downloadDetail.isPresented {
-                DownloadDetailView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(
-                        BlurView(material: .fullScreenUI, blendingMode: .behindWindow)
-                            .ignoresSafeArea()
-                    )
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .trailing).combined(with: .opacity),
-                        removal: .move(edge: .trailing).combined(with: .opacity)
-                    ))
-                    .zIndex(30)
-            }
-
-            // 圆形毛玻璃下载按钮：全局顶层（对标 PCL.Mac installTaskButtonOverlay），
-            // 任何页面可见可点；点击 toggle 进/出详情页（无返回键，再次点击回到刚才的页面）。
-            // zIndex(40) 高于详情页(30)：详情页打开时按钮仍可见可点。
-            if downloadDetail.showCircleButton {
-                ZStack {
-                    Circle()
-                        .fill(.ultraThinMaterial)
-                        .frame(width: 55, height: 55)
-                        .overlay(
-                            Circle()
-                                .stroke(.white.opacity(0.2), lineWidth: 1)
-                        )
-                        .shadow(color: .black.opacity(0.3), radius: 15, y: 6)
-
-                    Image(systemName: "arrow.down.to.line")
-                        .font(.system(size: 22, weight: .medium))
-                        .foregroundColor(.white)
-                }
-                .scaleEffect(downloadDetail.circleScale)
-                .opacity(downloadDetail.circleOpacity)
-                .padding(.trailing, 12)
-                .padding(.bottom, 12)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                .zIndex(40)
-                .onTapGesture {
-                    // 动画由 DownloadDetailManager.toggle 内部统一触发（弹簧曲线）
-                    downloadDetail.toggle()
-                }
-            }
-        }
-        .frame(minWidth: 800, minHeight: 550)
-        .environmentObject(settings)
-        .alert("启动失败", isPresented: $settings.showLaunchAlert, presenting: settings.launchErrorMessage) { _ in
-            Button("确定") { settings.launchErrorMessage = nil }
-        } message: { error in
-            Text(error)
-        }
-        .onAppear {
-            if let window = NSApp.windows.first {
-                window.titlebarAppearsTransparent = true
-                window.styleMask.insert(.fullSizeContentView)
-                window.minSize = NSSize(width: 800, height: 550)
-                var frame = window.frame
-                if frame.size.height > window.minSize.height {
-                    frame.size.height = window.minSize.height
-                    window.setFrame(frame, display: true, animate: true)
-                }
-            }
-            JavaManager.shared.preScanJavaAsync()
         }
     }
     private func handleModDrop(url: URL) {
