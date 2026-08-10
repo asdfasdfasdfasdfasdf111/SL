@@ -518,30 +518,16 @@ struct DownloadCategoryView: View {
             await MainActor.run {
                 guard !Task.isCancelled else { return }
                 if Self.isViewActive {
-                    // 单次 merge 写入：只触发一次 body 重算；merge 后裁剪超限条目
-                    self.translatedSubtitles.merge(batch) { _, new in new }
-                    self.trimTranslationsIfNeeded()
+                    // 单次 merge 写入：只触发一次 body 重算；超限裁剪统一走 CardTranslationStore
+                    CardTranslationStore.merge(&self.translatedSubtitles, batch: batch, active: self.pendingTranslationIDs)
                 }
             }
         }
     }
 
-    /// 翻译结果内存上限：滚动浏览会不断累积条目，超限时裁剪「非活跃」条目
-    /// （不在下载中的已完成翻译；滚动回看时由磁盘缓存瞬时恢复，功能不受影响）
-    private static let maxTranslatedSubtitles = 2000
-
-    /// 统一翻译写回入口：赋值 + 超限裁剪（裁剪移除非活跃条目，保留正在翻译的）
+    /// 翻译结果内存上限与裁剪规则统一在 CardTranslationStore（与详情页共享同一套写回语义）
     private func setTranslated(_ id: String, _ value: String) {
-        if translatedSubtitles[id] == nil, translatedSubtitles.count >= Self.maxTranslatedSubtitles {
-            trimTranslationsIfNeeded()
-        }
-        translatedSubtitles[id] = value
-    }
-
-    private func trimTranslationsIfNeeded() {
-        guard translatedSubtitles.count > Self.maxTranslatedSubtitles else { return }
-        let active = pendingTranslationIDs
-        translatedSubtitles = translatedSubtitles.filter { active.contains($0.key) }
+        CardTranslationStore.set(&translatedSubtitles, id: id, value: value, active: pendingTranslationIDs)
     }
 
     /// 按需翻译单个卡片：缓存命中直接应用，否则排队翻译（滚动到哪翻译到哪）

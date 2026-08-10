@@ -528,14 +528,10 @@ struct ModDetailView: View {
         }
     }
 
-    /// 详情页翻译结果上限：页签条目有限但防极端场景无限增长；超限整体淘汰（重新浏览时再翻译）
-    private static let maxTranslatedSubtitles = 2000
-
+    /// 翻译写回统一走 CardTranslationStore（与列表页共享同一套「写回 + 上限裁剪」规则；
+    /// 详情页无 pending 集合，活跃集传空——超限裁剪结果为空字典，与原整体清空语义等价）
     private func setTranslated(_ id: String, _ value: String) {
-        if translatedSubtitles[id] == nil, translatedSubtitles.count >= Self.maxTranslatedSubtitles {
-            translatedSubtitles.removeAll(keepingCapacity: true)
-        }
-        translatedSubtitles[id] = value
+        CardTranslationStore.set(&translatedSubtitles, id: id, value: value, active: [])
     }
 
     private func translateDetailDescription() {
