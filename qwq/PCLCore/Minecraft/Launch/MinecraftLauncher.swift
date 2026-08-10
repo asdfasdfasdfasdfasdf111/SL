@@ -133,14 +133,28 @@ public class MinecraftLauncher {
 
         // 3) 动态补齐缺失的关键参数（仅当 manifest 未提供时才追加，避免重复）
 
-        // -Xmx 内存：manifest 一般不含，始终追加
-        args.append("-Xmx\(instance.config.maxMemory)m")
+        // -Xmx 内存：manifest 一般不含；用户已显式指定（自定义 JVM 参数/高级设置）则不覆盖
+        if !args.contains(where: { $0.contains("-Xmx") }) {
+            args.append("-Xmx\(instance.config.maxMemory)m")
+        }
 
         // -Xms 堆初始大小：与 -Xmx 同级避免堆扩张时的 GC 停顿（参考 Swift Craft Launcher）。
         // 默认取 maxMemory 的一半，下限 256m；用户/清单已显式指定则不覆盖
         if !args.contains(where: { $0.contains("-Xms") }) {
             let xms = max(256, instance.config.maxMemory / 2)
             args.append("-Xms\(xms)m")
+        }
+
+        // Log4Shell 漏洞防御（对照 PCL2 ModLaunch.vb：老版本 1.18.1 及以下官方 JSON
+        // 不携带 -Dlog4j2.formatMsgNoLookups=true，需启动器强制补上，否则日志注入可执行代码）
+        if !args.contains(where: { $0.contains("log4j2.formatMsgNoLookups") }) {
+            args.append("-Dlog4j2.formatMsgNoLookups=true")
+        }
+
+        // -Djava.library.path：LWJGL 加载 native 库必需。官方 1.13+ JSON 自带，
+        // 第三方/自定义 JSON 丢失时补齐（对照 PCL2 McLaunchArgumentsJvmOld 强制注入）
+        if !args.contains(where: { $0.contains("java.library.path") }) {
+            args.append("-Djava.library.path=${natives_directory}")
         }
 
         // -Djna.tmpdir：若 manifest 未提供则补齐
@@ -242,7 +256,9 @@ public class MinecraftLauncher {
             "auth_access_token": options.accessToken,
             "auth_session": options.accessToken,
             "user_type": userType,
-            "version_type": "PCL.Mac \(SharedConstants.shared.version)",
+            // version_type：对照 PCL2 ModLaunch.vb（${version_type} = 版本类型，如 release/snapshot）。
+            // 旧实现硬编码 "PCL.Mac x" 会污染 F3 调试面板的版本类型显示，改用 manifest.type。
+            "version_type": instance.manifest.type.isEmpty ? "release" : instance.manifest.type,
             // user_properties：与 PCL2 一致传 {} （不带引号——Process.arguments 不走 shell，
             // 模板值会原样成为单个参数，带引号反而让 Java 收到字面 "{}"）
             "user_properties": "{}"

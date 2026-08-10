@@ -5,7 +5,6 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @State private var selectedCategory: Category = Category.all.first!
     @State private var searchText = ""
-    @State private var dragOffset: CGFloat = 0
     @StateObject private var settings = LauncherSettings.shared
     private let categories = Category.all
     private var selectedIndex: Int { categories.firstIndex(of: selectedCategory) ?? 0 }
@@ -189,17 +188,22 @@ struct ContentView: View {
                 Rectangle().fill(Color.secondary.opacity(0.3)).frame(height: 0.5).padding(.horizontal, 32)
                 GeometryReader { geometry in
                     let width = geometry.size.width
-                    HStack(spacing: 0) {
-                        ForEach(Array(categories.enumerated()), id: \.element.id) { index, category in
-                            CategoryContentView(category: category, searchText: searchText)
-                                .frame(width: width)
-                        }
+                    // 分类互斥切换：同一时刻视图树里只有当前分类页（.id 强制重建，
+                    // 切换走时旧页面真正卸载，对标 PCL.Mac router.getLastView() 整页替换；
+                    // 此前 HStack 同时渲染 6 页 + offset 平移，全部页面常驻不卸载）
+                    ZStack {
+                        CategoryContentView(category: categories[selectedIndex], searchText: searchText)
+                            .id(categories[selectedIndex].id)
+                            .frame(width: width)
+                            .transition(.asymmetric(
+                                insertion: .move(edge: .trailing).combined(with: .opacity),
+                                removal: .opacity
+                            ))
                     }
-                    .offset(x: -CGFloat(selectedIndex) * width + dragOffset)
+                    .clipped()
                     .animation(.spring(response: 0.6, dampingFraction: 0.65, blendDuration: 0.15), value: selectedIndex)
                     .gesture(
                         DragGesture()
-                            .onChanged { dragOffset = $0.translation.width }
                             .onEnded { value in
                                 let threshold = width * 0.25
                                 var newIndex = selectedIndex
@@ -208,9 +212,8 @@ struct ContentView: View {
                                 } else if value.translation.width > threshold && selectedIndex > 0 {
                                     newIndex = selectedIndex - 1
                                 }
-                                withAnimation(.spring(response: 0.6, dampingFraction: 0.65, blendDuration: 0.15)) {
+                                if newIndex != selectedIndex {
                                     selectedCategory = categories[newIndex]
-                                    dragOffset = 0
                                 }
                             }
                     )

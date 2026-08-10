@@ -79,16 +79,7 @@ struct JavaPickerView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(.primary)
                 Spacer()
-                Button(action: {
-                    isRefreshing = true
-                    withAnimation(Animation.timingCurve(0.25, 0.1, 0.25, 1.0, duration: 0.8)) {
-                        refreshRotation += 720
-                    }
-                    JavaManager.shared.refreshAvailableJavaList()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        isRefreshing = false
-                    }
-                }) {
+                Button(action: startRefresh) {
                     HStack(spacing: 3) {
                         Image(systemName: "arrow.triangle.2.circlepath")
                             .font(.system(size: 10))
@@ -100,6 +91,19 @@ struct JavaPickerView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isRefreshing)
+                .onChange(of: isRefreshing) { newValue in
+                    if newValue {
+                        // 点击后持续旋转直到刷新完成（repeatForever 非线性平滑旋转）
+                        withAnimation(.linear(duration: 1.0).repeatForever(autoreverses: false)) {
+                            refreshRotation += 360
+                        }
+                    } else {
+                        // 刷新完成：平滑回正停止
+                        withAnimation(.easeOut(duration: 0.35)) {
+                            refreshRotation = 0
+                        }
+                    }
+                }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -182,6 +186,14 @@ struct JavaPickerView: View {
         }
     }
     
+    private func startRefresh() {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        JavaManager.shared.refreshAvailableJavaList {
+            self.isRefreshing = false
+        }
+    }
+
     private func isOptionSelected(_ id: String) -> Bool {
         if id == "auto" {
             return localSelection == nil

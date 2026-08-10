@@ -165,6 +165,9 @@ private struct PanelView: View {
 private struct DownloadTaskCard<Content: View>: View {
     let task: InstallTask
     let content: () -> Content
+    // 入场动画：任务卡片出现时缩放+淡入弹入（对齐分类网格卡片，消除「卡片无动画」）
+    @State private var appearScale: CGFloat = 0.94
+    @State private var appearOpacity: Double = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -186,5 +189,13 @@ private struct DownloadTaskCard<Content: View>: View {
                 .fill(.regularMaterial)
                 .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
         )
+        .scaleEffect(appearScale)
+        .opacity(appearOpacity)
+        .onAppear {
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) {
+                appearScale = 1.0
+                appearOpacity = 1.0
+            }
+        }
     }
 }

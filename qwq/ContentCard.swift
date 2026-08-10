@@ -14,6 +14,10 @@ struct ContentCard: View {
     var action: (() -> Void)? = nil
     @ObservedObject var theme = ThemeManager.shared
     @State private var scale: CGFloat = 1.0
+    // 入场动画：卡片首次出现在网格中时缩放+淡入弹入（LazyVGrid 复用/滚动时重建会再次触发，
+    // 符合「进入可视区弹入」的预期；拆分重构时 searchPopInIds 动画丢失导致「有时没有动画」）
+    @State private var appearScale: CGFloat = 0.92
+    @State private var appearOpacity: Double = 0
 
     private var translatedTags: [String] {
         tags.compactMap { ModrinthTagMap[$0] }
@@ -71,6 +75,16 @@ struct ContentCard: View {
         .buttonStyle(.plain)
         .scaleEffect(scale)
         .animation(.spring(response: 0.4, dampingFraction: 0.5), value: scale)
+        // 入场弹入：延迟一个 runloop 确保 withAnimation 在 onAppear 之后的渲染帧生效，
+        // 避免数据已就绪时首次构建直接显示、动画被吞（「有时没有动画」的根因）
+        .scaleEffect(appearScale)
+        .opacity(appearOpacity)
+        .onAppear {
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) {
+                appearScale = 1.0
+                appearOpacity = 1.0
+            }
+        }
     }
 }
 

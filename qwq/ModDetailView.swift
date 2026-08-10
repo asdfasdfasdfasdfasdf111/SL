@@ -15,6 +15,7 @@ struct ModDetailView: View {
     let pageType: DetailPageType
     let onClose: () -> Void
     var onNavigateToMod: ((DownloadedItem) -> Void)? = nil
+    var onNavigateBackFromMod: (() -> Void)? = nil
     var gameSubCategory: GameSubCategory? = nil
 
     @ObservedObject var theme = ThemeManager.shared
@@ -366,6 +367,8 @@ struct ModDetailView: View {
 
     private func goBack() {
         if !prerequisiteStack.isEmpty {
+            // 从前置加载器页返回原分类（光影/资源包）：通知宿主恢复侧栏高亮
+            onNavigateBackFromMod?()
             withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                 navSlideOffset += pageWidth
             }

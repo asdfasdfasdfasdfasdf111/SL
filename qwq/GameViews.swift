@@ -269,9 +269,22 @@ struct DownloadCategoryView: View {
                     pageType: currentDetailPageType,
                     onClose: { closeDetail() },
                     onNavigateToMod: { modItem in
+                        // 进入前置加载器（Sodium/Iris）详情前记住当前分类，返回时恢复侧栏高亮
+                        if pendingReturnSection == nil {
+                            pendingReturnSection = selectedSection
+                        }
                         selectedSection = .mod
                         selectedSubCategory = nil
                         navigateTo(SidebarHighlight.index(for: .mod, sub: nil))
+                    },
+                    onNavigateBackFromMod: {
+                        // 从前置加载器详情返回原分类（如光影），侧栏高亮同步跳回
+                        if let restore = pendingReturnSection {
+                            selectedSection = restore
+                            selectedSubCategory = nil
+                            navigateTo(SidebarHighlight.index(for: restore, sub: nil))
+                        }
+                        pendingReturnSection = nil
                     },
                     gameSubCategory: selectedSubCategory
                 )
@@ -367,6 +380,7 @@ struct DownloadCategoryView: View {
     }
 
     private func closeDetail() {
+        pendingReturnSection = nil
         withAnimation(.easeInOut(duration: 0.25)) {
             showDetail = false
             selectedModItem = nil
@@ -381,7 +395,11 @@ struct DownloadCategoryView: View {
         }
     }
 
+    // 详情页进入前置加载器（Sodium/Iris）前的分类，返回时恢复侧栏高亮
+    @State private var pendingReturnSection: GameSidebarSection? = nil
+
     private func selectSection(_ section: GameSidebarSection, sub: GameSubCategory?) {
+        pendingReturnSection = nil
         selectedSection = section
         selectedSubCategory = sub
         searchText = ""

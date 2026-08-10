@@ -51,11 +51,12 @@ class JavaManager {
         }
     }
 
-    func refreshAvailableJavaList() {
+    func refreshAvailableJavaList(completion: (() -> Void)? = nil) {
         DispatchQueue.global(qos: .userInitiated).async {
             let list = self.scanInstalledJava(useCache: false)
             DispatchQueue.main.async {
                 LauncherSettings.shared.availableJavaList = list
+                completion?()
             }
         }
     }

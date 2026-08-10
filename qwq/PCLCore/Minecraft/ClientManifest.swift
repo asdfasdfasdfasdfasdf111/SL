@@ -27,7 +27,7 @@ public class ClientManifest {
         self.type = json["type"].stringValue
         self.assets = json["assets"].stringValue
         self.assetIndex = json["assetIndex"].exists() ? AssetIndex(json: json["assetIndex"]) : nil
-        self.libraries = json["libraries"].arrayValue.compactMap(Library.init(json:)).filter { $0.rules.isEmpty ? true : $0.rules.allSatisfy { $0.match() } }
+        self.libraries = json["libraries"].arrayValue.compactMap(Library.init(json:)).filter { Rule.check($0.rules) }
         self.arguments = json["arguments"].exists() ? Arguments(json: json["arguments"]) : nil
         self.minecraftArguments = json["minecraftArguments"].string
         self.javaVersion = json["javaVersion"]["majorVersion"].int
@@ -207,8 +207,9 @@ public class ClientManifest {
                     value = []
                 }
             }
+            /// 与 PCL2 一致：规则组整体按顺序叠加判定（allow 置命中、disallow 置否决）
             public func match() -> Bool {
-                rules.allSatisfy { $0.match() }
+                Rule.check(rules)
             }
         }
     }
@@ -222,8 +223,25 @@ public class ClientManifest {
             os = json["os"].exists() ? OSRule(json: json["os"]) : nil
             features = json["features"].exists() ? Features(json: json["features"]) : nil
         }
-        public func match() -> Bool {
-            (os?.match() ?? true) && (features?.match() ?? true) && action == "allow"
+        /// 单条规则「条件是否匹配」（不含 action 判断，与 PCL2 McJsonRuleCheck 单条 IsRightRule 对应）
+        public func conditionsMatch() -> Bool {
+            (os?.match() ?? true) && (features?.match() ?? true)
+        }
+        /// PCL2 McJsonRuleCheck 顺序叠加语义：逐条规则处理——
+        /// allow 且条件匹配 → 命中；disallow 且条件匹配 → 否决；后续规则覆盖先前的结论。
+        /// 注意：不能写成 allSatisfy（那会把含 disallow 规则的库无条件排除，
+        /// 例如 disallow: windows 的库在 macOS 上本应保留，allSatisfy 会误删导致缺库）。
+        public static func check(_ rules: [Rule]) -> Bool {
+            guard !rules.isEmpty else { return true }
+            var required = false
+            for rule in rules {
+                if rule.action == "allow" {
+                    if rule.conditionsMatch() { required = true }
+                } else {
+                    if rule.conditionsMatch() { required = false }
+                }
+            }
+            return required
         }
         public class OSRule {
             public let name: String?
@@ -233,8 +251,13 @@ public class ClientManifest {
                 arch = json["arch"].string
             }
             public func match() -> Bool {
-                if let name, name != "osx" { return false }
-                // TODO: 处理 arch
+                // 当前系统 macOS（osx）。与 PCL2 只在 Windows 上匹配 "windows" 同理，
+                // 本启动器只匹配 osx；"unknown" 视为通用（无系统限制）。
+                if let name {
+                    if name == "unknown" { return true }
+                    if name != "osx" { return false }
+                }
+                // TODO: 处理 arch（官方 macOS JSON 基本不含 arch 规则，风险低）
                 return true
             }
         }
