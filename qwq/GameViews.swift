@@ -47,28 +47,7 @@ struct DownloadCategoryView: View {
     // 下载详情页与圆按钮状态已提升到全局 DownloadDetailManager（ContentView 顶层渲染），
     // 本视图不再持有相关 @State，避免视图销毁后回调写 State 触发 UAF
 
-    private let sidebarOffsets: [CGFloat] = {
-        let hs: [CGFloat] = [36, 28, 28, 28, 36, 36, 36, 36]
-        var off: [CGFloat] = [12]
-        for i in 0..<7 { off.append(off[i] + hs[i]) }
-        return off
-    }()
-
-    private var computedHighlightIndex: Int {
-        switch selectedSection {
-        case .game:
-            switch selectedSubCategory {
-            case .release: return 1
-            case .snapshot: return 2
-            case .ancient: return 3
-            case .none: return 0
-            }
-        case .mod: return 4
-        case .resourcePack: return 5
-        case .shader: return 6
-        case .modpack: return 7
-        }
-    }
+    // 侧边栏高亮偏移表与 section→index 映射集中在 SidebarHighlight（与 GameSidebarView 共享）
 
     private var displayTitle: String {
         if selectedSection == .game, let sub = selectedSubCategory {
@@ -221,8 +200,8 @@ struct DownloadCategoryView: View {
             Self.isViewActive = true
             translationModel.activate()
             ModrinthCategoryCache.loadFromDisk()
-            let idx = computedHighlightIndex
-            sectionHighlightY = sidebarOffsets[idx]
+            let idx = SidebarHighlight.index(for: selectedSection, sub: selectedSubCategory)
+            sectionHighlightY = SidebarHighlight.offsets[idx]
             LocalModCatalog.warmUp()
             fetchItems()
             LocalModCatalog.preTranslateAll()
@@ -270,7 +249,6 @@ struct DownloadCategoryView: View {
         HStack(spacing: 0) {
             GameSidebarView(
                 theme: theme,
-                sidebarOffsets: sidebarOffsets,
                 selectedSection: $selectedSection,
                 selectedSubCategory: $selectedSubCategory,
                 subItemOpacity: $subItemOpacity,
@@ -293,7 +271,7 @@ struct DownloadCategoryView: View {
                     onNavigateToMod: { modItem in
                         selectedSection = .mod
                         selectedSubCategory = nil
-                        navigateTo(computedHighlightIndex)
+                        navigateTo(SidebarHighlight.index(for: .mod, sub: nil))
                     },
                     gameSubCategory: selectedSubCategory
                 )
@@ -399,7 +377,7 @@ struct DownloadCategoryView: View {
 
     private func navigateTo(_ idx: Int) {
         withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-            sectionHighlightY = sidebarOffsets[idx]
+            sectionHighlightY = SidebarHighlight.offsets[idx]
         }
     }
 
@@ -413,7 +391,7 @@ struct DownloadCategoryView: View {
         displayLimit = 120
         showDetail = false
         selectedModItem = nil
-        navigateTo(computedHighlightIndex)
+        navigateTo(SidebarHighlight.index(for: section, sub: sub))
         withAnimation(.easeInOut(duration: 0.12)) {
             contentOpacity = 0.6
             contentOffset = 8

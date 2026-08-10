@@ -6,6 +6,7 @@
 
 ### 变更
 
+- **代码极致模块化（第三十九批）：GameViews.swift 537→515 行、GameSidebarView.swift 100→95 行**——新建 `qwq/SidebarHighlight.swift`（侧边栏高亮纯逻辑：`offsets` 高亮 y 偏移表 + `index(for:sub:)` section→高亮 index 映射）。GameViews 删 `sidebarOffsets` 实例属性与 `computedHighlightIndex` 计算属性改转发；GameSidebarView 删除声明但从未使用的死参数 `sidebarOffsets`（body 零引用），组件参数减少一个
 - **代码极致模块化（第三十八批）：ModDetailView.swift 549→524 行**——新建 `qwq/DetailVersionDecision.swift`（详情页版本选中决策纯逻辑：`initialSelection` 首次加载默认选中（游戏版本页必须选用户点击的版本，其他页面优先当前实例版本；item.name 不在列表不急着回退）+ `resolveAfterManifest` manifest 就绪后决议（先保留现有选择含用户手动选择，其次 item.name，最后回退首位））。两处内联决策分支（含 20 行排障注释）各改一行转发，删 `getDefaultInstanceVersion` 纯包装方法（直接读 settings）
 - **代码极致模块化（第三十七批）：Services/JavaPathFinder.swift 263→229 行**——按顶层声明拆出 `qwq/JavaInfo.swift`（Java 信息模型，JavaManager/JavaVersionParser/ThemeManager 共享，与查找器无逻辑关系）与 `qwq/JavaEnvironment.swift`（JavaEnvironment 模型 + `compareJavaVersions` 版本比较工具）。纯搬移零行为变更，查找器保留多来源全量扫描 + 内存缓存
 - **代码极致模块化（第三十六批）：TranslationService.swift 275→141 行**——拆出 `qwq/ProjectTranslationTable.swift`（内置翻译表 + `match(id)`/`hint(forTitle:)` 查找）、`qwq/ChineseText.swift`（中文字符检测纯函数，消除原私有重复实现）、`qwq/TranslationSourceFetcher.swift`（三个翻译源竞速获取：Modrinth 详情 / 镜像翻译 / MyMemory 兜底，显式传 session 零共享状态）。服务只保留翻译主流程 + 并发限制 + 去重 + 缓存读取，引用点全部改走新模块

@@ -5,7 +5,6 @@ import SwiftUI
 
 struct GameSidebarView: View {
     let theme: ThemeManager
-    let sidebarOffsets: [CGFloat]
     @Binding var selectedSection: GameSidebarSection
     @Binding var selectedSubCategory: GameSubCategory?
     @Binding var subItemOpacity: [GameSubCategory: Double]
