@@ -72,13 +72,11 @@ struct ModDetailView: View {
     @State private var entryScale: CGFloat = 0.85
     @State private var entryOpacity: Double = 0
 
-    @State private var isDownloading = false
     @State private var bounceScale: CGFloat = 1.0
-
-    // 外部绑定：圆形毛玻璃按钮在最外层视图上，跨页面保留
-    @Binding var showCircleButton: Bool
-    @Binding var circleScale: CGFloat
-    @Binding var circleOpacity: Double
+    // 延迟动画任务（下载按钮弹跳 / 返回滑动）：onDisappear 时 cancel，
+    // 防止视图销毁后写已释放的 @State storage（UAF）
+    @State private var bounceTask: Task<Void, Never>?
+    @State private var backNavTask: Task<Void, Never>?
 
     @State private var modpackVersions: [ModpackVersion] = []
     @State private var isLoadingModpackVersions = false
@@ -259,16 +257,17 @@ struct ModDetailView: View {
                 }
                 .buttonStyle(.plain)
                 .scaleEffect(bounceScale)
-                .padding(.trailing, showCircleButton ? 88 : 12)
+                .padding(.trailing, downloadDetail.showCircleButton ? 88 : 12)
                 .padding(.bottom, 12)
-                .animation(.interpolatingSpring(stiffness: 170, damping: 14), value: showCircleButton)
+                .animation(.interpolatingSpring(stiffness: 170, damping: 14), value: downloadDetail.showCircleButton)
             }
         }
-        // 下载中状态跟随详情页开关：下载完成（dismiss）或手动关闭详情页后自动复位，
-        // 避免在任务回调（可能晚于视图销毁）里写 @State 造成 EXC_BAD_ACCESS（UAF）
-        .onChange(of: downloadDetail.isPresented) { isPresented in
-            isDownloading = isPresented
+        .onDisappear {
+            // 视图销毁：取消延迟动画任务，防止其继续写已释放的 @State storage（UAF）
+            bounceTask?.cancel()
+            backNavTask?.cancel()
         }
+        // 下载中状态跟随详情页开关：详情页打开/关闭时驱动下载按钮布局变化（圆按钮出现时左移）
     }
 
     private var allPages: [DownloadedItem] {
@@ -572,7 +571,10 @@ struct ModDetailView: View {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                 navSlideOffset += pageWidth
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            backNavTask?.cancel()
+            backNavTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                guard !Task.isCancelled else { return }
                 if !prerequisiteStack.isEmpty {
                     prerequisiteStack.removeLast()
                 }
@@ -582,35 +584,43 @@ struct ModDetailView: View {
         }
     }
 
+    /// 下载按钮弹跳动画（放大→回弹→复位）：改为可取消的 Task，视图销毁后不再写 bounceScale
+    private func playDownloadBounce() {
+        bounceTask?.cancel()
+        withAnimation(.interpolatingSpring(stiffness: 220, damping: 14)) {
+            bounceScale = 1.25
+        }
+        bounceTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.interpolatingSpring(stiffness: 200, damping: 16)) {
+                bounceScale = 0.92
+            }
+            try? await Task.sleep(nanoseconds: 170_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.interpolatingSpring(stiffness: 220, damping: 18)) {
+                bounceScale = 1.0
+            }
+        }
+    }
+
     private func startDownload() {
         guard !selectedVersion.isEmpty else { return }
-        isDownloading = true
 
         // 点击即提示「下载开始」（此前仅下载完成后才提示「下载完成」）
         settings.javaPopupMessage = "下载开始"
         settings.showJavaPopup = true
         
-        // 下载按钮弹动画（放大 → 缩小回弹，不消失）
-        withAnimation(.interpolatingSpring(stiffness: 220, damping: 14)) {
-            bounceScale = 1.25
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-            withAnimation(.interpolatingSpring(stiffness: 200, damping: 16)) {
-                bounceScale = 0.92
-            }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            withAnimation(.interpolatingSpring(stiffness: 220, damping: 18)) {
-                bounceScale = 1.0
-            }
-        }
-        
-        // 圆形毛玻璃按钮弹入（通过绑定作用在最外层视图）
+        // 下载按钮弹动画（放大 → 缩小回弹，不消失；可取消 Task，视图销毁后不再写 @State）
+        playDownloadBounce()
+
+        // 圆按钮弹入动画状态：先提取局部引用（闭包绝不隐式捕获 self 的 @State 指针）
+        let manager = downloadDetail
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
-            showCircleButton = true
+            manager.showCircleButton = true
             withAnimation(.interpolatingSpring(stiffness: 170, damping: 14)) {
-                circleScale = 1.0
-                circleOpacity = 1.0
+                manager.circleScale = 1.0
+                manager.circleOpacity = 1.0
             }
         }
         
@@ -621,10 +631,25 @@ struct ModDetailView: View {
         }
 
         // 真正的下载逻辑：解析目标文件 → 创建下载任务 → 打开详情页 → 启动任务
-        // （详情页对标 PCL.Mac InstallingView：左侧信息面板 + 右侧任务卡片，毛玻璃风格）
+        // 闭包只捕获值类型（pageType/item/selectedVersion/selectedLoader）与引用类型
+        // （settings/manager），绝不捕获视图 struct：视图销毁后 @State 指针悬垂 = UAF。
+        let pageType = self.pageType
+        let item = self.item
+        let selectedVersion = self.selectedVersion
+        let selectedLoader = self.selectedLoader
+        let selectedModpackVersionId = self.selectedModpackVersionId
+        let settings = self.settings
+
         Task.detached(priority: .userInitiated) {
             do {
-                let resolved = try await self.resolveDownloadFile()
+                let resolved = try await ModDetailView.resolveDownloadFile(
+                    pageType: pageType,
+                    item: item,
+                    selectedVersion: selectedVersion,
+                    selectedLoader: selectedLoader,
+                    selectedModpackVersionId: selectedModpackVersionId,
+                    settings: settings
+                )
                 // destination 必须是完整文件路径（目录 + 文件名），供 SingleFileDownloader 落盘
                 let destFile = resolved.destination.appendingPathComponent(resolved.filename)
                 let task = ModFileDownloadTask(
@@ -632,12 +657,12 @@ struct ModDetailView: View {
                     destination: destFile,
                     title: resolved.title
                 )
-                task.onComplete { [self] in
+                task.onComplete { [pageType, settings, manager] in
                     Task { @MainActor in
-                        if self.pageType == .modpack, task.failureReason == nil {
+                        if pageType == .modpack, task.failureReason == nil {
                             // 整合包：zip 下载完成后还需解压安装（含 Minecraft/加载器/模组下载）
-                            self.settings.javaPopupMessage = "正在安装整合包…"
-                            self.settings.showJavaPopup = true
+                            settings.javaPopupMessage = "正在安装整合包…"
+                            settings.showJavaPopup = true
                             Task.detached(priority: .userInitiated) {
                                 do {
                                     try await ModpackInstaller().install(
@@ -645,39 +670,40 @@ struct ModDetailView: View {
                                         to: URL(fileURLWithPath: LauncherSettings.shared.selectedGameRoot)
                                     )
                                     await MainActor.run {
-                                        // 不写 self.isDownloading：视图可能已销毁，写 @State 会 UAF 崩溃；
-                                        // 由 onChange(of: downloadDetail.isPresented) 在 dismiss 时复位
+                                        // 回调只操作全局单例（DownloadDetailManager）与 settings，
+                                        // 不写视图 @State：后台回调晚于视图销毁时写 State storage 会 UAF
                                         DownloadDetailManager.shared.dismiss()
-                                        self.settings.javaPopupMessage = "下载完成"
-                                        self.settings.showJavaPopup = true
+                                        settings.javaPopupMessage = "下载完成"
+                                        settings.showJavaPopup = true
                                     }
                                 } catch {
                                     await MainActor.run {
                                         DownloadDetailManager.shared.dismiss()
-                                        self.settings.launchErrorMessage = "整合包安装失败: \(error.localizedDescription)"
-                                        self.settings.showLaunchAlert = true
+                                        settings.launchErrorMessage = "整合包安装失败: \(error.localizedDescription)"
+                                        settings.showLaunchAlert = true
                                     }
                                 }
                             }
                         } else {
                             DownloadDetailManager.shared.dismiss()
                             if let reason = task.failureReason {
-                                self.settings.launchErrorMessage = "下载失败: \(reason)"
-                                self.settings.showLaunchAlert = true
+                                settings.launchErrorMessage = "下载失败: \(reason)"
+                                settings.showLaunchAlert = true
                             } else {
-                                self.settings.javaPopupMessage = "下载完成"
-                                self.settings.showJavaPopup = true
+                                settings.javaPopupMessage = "下载完成"
+                                settings.showJavaPopup = true
                             }
                         }
                     }
                 }
                 await MainActor.run {
-                    DownloadDetailManager.shared.start(task)
+                    manager.start(task)
                 }
                 task.start()
             } catch {
                 await MainActor.run {
-                    isDownloading = false
+                    // 只操作全局单例与 settings（引用类型，生命周期与视图解耦）
+                    DownloadDetailManager.shared.dismiss()
                     settings.launchErrorMessage = "下载失败: \(error.localizedDescription)"
                     settings.showLaunchAlert = true
                 }
@@ -690,12 +716,16 @@ struct ModDetailView: View {
     /// 若用户选了加载器则追加对应加载器任务（key = fabric/forge/neoforge），组合成 InstallTasks
     /// 进入下载详情页；createTask 内部会从 DataManager.inprogressInstallTasks 按 key 找到加载器任务，
     /// 在客户端 jar 下载完成后自动串联安装（与 PCL.Mac createTask 行为一致）。
+    /// 闭包只捕获值类型（versionStr/loader/loaderSupported）与引用类型（settings/manager），
+    /// 不捕获视图 struct：视图销毁后 @State 指针悬垂 = UAF。
     private func startGameVersionDownload() {
         let versionStr = selectedVersion
         // selectedLoader 非可选（默认 "fabric"），但加载器是否真的可装取决于 availableLoaders
         // （fetchLoaderSupport 实时检测结果）：无可用加载器的版本 → 装纯原版
         let loader = selectedLoader.lowercased()
         let loaderSupported = availableLoaders.contains { $0.lowercased() == loader }
+        let settings = self.settings
+        let manager = DownloadDetailManager.shared
 
         Task {
             do {
@@ -742,24 +772,26 @@ struct ModDetailView: View {
                     }
                 }
 
-                minecraftTask.onComplete { [self] in
+                let completedName = name
+                minecraftTask.onComplete { [settings, manager, completedName] in
                     Task { @MainActor in
-                        // 不写 self.isDownloading：视图可能已销毁，写 @State 会 UAF 崩溃；
-                        // 由 onChange(of: downloadDetail.isPresented) 在 dismiss 时复位
-                        DownloadDetailManager.shared.dismiss()
-                        self.settings.javaPopupMessage = "\(name) 下载完成"
-                        self.settings.showJavaPopup = true
+                        // 回调只操作全局单例（DownloadDetailManager）与 settings，
+                        // 不写视图 @State：后台回调晚于视图销毁时写 State storage 会 UAF
+                        manager.dismiss()
+                        settings.javaPopupMessage = "\(completedName) 下载完成"
+                        settings.showJavaPopup = true
                     }
                 }
 
                 // 打开详情页 + 同步 DataManager（createTask 内部按 tasks[key] 找加载器任务）→ 启动
                 await MainActor.run {
-                    DownloadDetailManager.shared.start(tasks)
+                    manager.start(tasks)
                 }
                 tasks.tasks["minecraft"]!.start()
             } catch {
                 await MainActor.run {
-                    isDownloading = false
+                    // 只操作全局单例与 settings（引用类型，生命周期与视图解耦）
+                    manager.dismiss()
                     settings.launchErrorMessage = "下载失败: \(error.localizedDescription)"
                     settings.showLaunchAlert = true
                 }
@@ -769,8 +801,15 @@ struct ModDetailView: View {
 
     /// 解析本次下载的目标文件信息（URL/文件名/目标目录/标题），供下载详情页任务使用。
     /// 返回后由 ModFileDownloadTask 负责带进度下载（SingleFileDownloader → NetManager）。
-    private func resolveDownloadFile() async throws -> (url: URL, filename: String, destination: URL, title: String) {
-        let settings = LauncherSettings.shared
+    /// 静态方法 + 显式参数：避免后台 Task 隐式捕获视图 struct（@State 指针悬垂 = UAF）。
+    private static func resolveDownloadFile(
+        pageType: DetailPageType,
+        item: DownloadedItem,
+        selectedVersion: String,
+        selectedLoader: String,
+        selectedModpackVersionId: String,
+        settings: LauncherSettings
+    ) async throws -> (url: URL, filename: String, destination: URL, title: String) {
         let gameVersion = selectedVersion
         let gameRoot = settings.selectedGameRoot
 

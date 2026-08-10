@@ -46,12 +46,8 @@ struct DownloadCategoryView: View {
     // 首帧只展示前 displayLimit 条，滚动到底部自动追加（网络模式条目 ≤ 100，永不触发截断）
     @State private var displayLimit = 120
 
-    // 圆形毛玻璃下载按钮 — 全局顶层，跨页面保留
-    @State private var showCircleButton = false
-    @State private var circleScale: CGFloat = 0.01
-    @State private var circleOpacity: Double = 0
-    // 下载详情页（点击圆形按钮后进入，对标 PCL.Mac InstallingView）
-    @ObservedObject private var downloadDetail = DownloadDetailManager.shared
+    // 下载详情页与圆按钮状态已提升到全局 DownloadDetailManager（ContentView 顶层渲染），
+    // 本视图不再持有相关 @State，避免视图销毁后回调写 State 触发 UAF
 
     private let sidebarOffsets: [CGFloat] = {
         let hs: [CGFloat] = [36, 28, 28, 28, 36, 36, 36, 36]
@@ -318,48 +314,9 @@ struct DownloadCategoryView: View {
                 applyFilter()
             }
         }
-        // 最顶层 overlay：圆形毛玻璃按钮（不随页面变化消失）
-        .overlay(alignment: .bottomTrailing) {
-            if showCircleButton {
-                ZStack {
-                    Circle()
-                        .fill(.ultraThinMaterial)
-                        .frame(width: 55, height: 55)
-                        .overlay(
-                            Circle()
-                                .stroke(.white.opacity(0.2), lineWidth: 1)
-                        )
-                        .shadow(color: .black.opacity(0.3), radius: 15, y: 6)
-
-                    Image(systemName: "arrow.down.to.line")
-                        .font(.system(size: 22, weight: .medium))
-                        .foregroundColor(.white)
-                }
-                .scaleEffect(circleScale)
-                .opacity(circleOpacity)
-                .padding(.trailing, 12)
-                .padding(.bottom, 12)
-                // 点击圆形按钮 → 下载详情页开关（再点一次回到刚才的页面，无需返回键）。
-                // zIndex 高于详情页：详情页打开时按钮仍可见可点（切换显示/隐藏）。
-                .zIndex(50)
-                .onTapGesture {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                        downloadDetail.isPresented.toggle()
-                    }
-                }
-            }
-        }
-        // 下载详情页（毛玻璃：左侧信息面板 + 右侧任务卡片，覆盖整个内容区）
-        .overlay {
-            if downloadDetail.isPresented {
-                DownloadDetailView()
-                    .transition(.asymmetric(
-                        insertion: .opacity.combined(with: .scale(scale: 0.96)),
-                        removal: .opacity
-                    ))
-                    .zIndex(10)
-            }
-        }
+        // 注意：圆形下载按钮与下载详情页已提升到 ContentView 顶层渲染
+        // （对标 PCL.Mac AppRouter：详情页为独立页面整页切换，圆按钮为全局 overlay，
+        //  不再挂在本宿主视图的 overlay 上——本视图会随分类切换销毁，是 UAF 崩溃根因）
     }
 
     private func mainHStack(
@@ -390,10 +347,7 @@ struct DownloadCategoryView: View {
                         selectedSubCategory = nil
                         navigateTo(computedHighlightIndex)
                     },
-                    gameSubCategory: selectedSubCategory,
-                    showCircleButton: $showCircleButton,
-                    circleScale: $circleScale,
-                    circleOpacity: $circleOpacity
+                    gameSubCategory: selectedSubCategory
                 )
                 .frame(width: contentWidth)
                 .frame(maxHeight: .infinity)

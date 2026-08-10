@@ -21,6 +21,9 @@ struct ContentView: View {
     @State private var isDropTargeted = false
     private let dragDropHandler = DragDropHandler()
     private let versionDetector = ModVersionDetector()
+    // 下载详情页独立页面 + 全局圆形下载按钮（对标 PCL.Mac AppRouter：
+    // 详情页为整页替换渲染的独立页面，圆按钮为 ContentView 顶层全局 overlay）
+    @ObservedObject private var downloadDetail = DownloadDetailManager.shared
     
     var body: some View {
         ZStack {
@@ -131,6 +134,52 @@ struct ContentView: View {
                     .padding(8)
                     .allowsHitTesting(false)
                     .zIndex(150)
+            }
+
+            // 下载详情页：独立页面（对标 PCL.Mac router.append(.installing) 后 getLastView() 整页替换），
+            // 带非线性动画整页切换，不叠加在宿主视图图层上。
+            if downloadDetail.isPresented {
+                DownloadDetailView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(
+                        BlurView(material: .fullScreenUI, blendingMode: .behindWindow)
+                            .ignoresSafeArea()
+                    )
+                    .transition(.asymmetric(
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        removal: .move(edge: .trailing).combined(with: .opacity)
+                    ))
+                    .zIndex(30)
+            }
+
+            // 圆形毛玻璃下载按钮：全局顶层（对标 PCL.Mac installTaskButtonOverlay），
+            // 任何页面可见可点；点击 toggle 进/出详情页（无返回键，再次点击回到刚才的页面）。
+            // zIndex(40) 高于详情页(30)：详情页打开时按钮仍可见可点。
+            if downloadDetail.showCircleButton {
+                ZStack {
+                    Circle()
+                        .fill(.ultraThinMaterial)
+                        .frame(width: 55, height: 55)
+                        .overlay(
+                            Circle()
+                                .stroke(.white.opacity(0.2), lineWidth: 1)
+                        )
+                        .shadow(color: .black.opacity(0.3), radius: 15, y: 6)
+
+                    Image(systemName: "arrow.down.to.line")
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundColor(.white)
+                }
+                .scaleEffect(downloadDetail.circleScale)
+                .opacity(downloadDetail.circleOpacity)
+                .padding(.trailing, 12)
+                .padding(.bottom, 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .zIndex(40)
+                .onTapGesture {
+                    // 动画由 DownloadDetailManager.toggle 内部统一触发（弹簧曲线）
+                    downloadDetail.toggle()
+                }
             }
         }
         .frame(minWidth: 800, minHeight: 550)
