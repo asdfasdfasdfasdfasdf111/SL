@@ -32,6 +32,28 @@ enum ModrinthCategoryCache {
         }
     }
 
+    /// 按分类写内存缓存（统一写入口，消除四处重复赋值）
+    static func setCache(_ items: [DownloadedItem], for section: GameSidebarSection) {
+        switch section {
+        case .game: cachedGameVersions = items
+        case .mod: cachedModItems = items
+        case .resourcePack: cachedResourcePackItems = items
+        case .shader: cachedShaderItems = items
+        case .modpack: cachedModpackItems = items
+        }
+    }
+
+    /// 分类 → 磁盘缓存键（游戏版本清单走内存缓存，无磁盘键）
+    static func diskKey(for section: GameSidebarSection) -> CacheKey? {
+        switch section {
+        case .mod: return .mod
+        case .resourcePack: return .resourcePack
+        case .shader: return .shader
+        case .modpack: return .modpack
+        case .game: return nil
+        }
+    }
+
     /// 清空内存缓存（内存警告时调用）
     static func clearAll() {
         cachedModItems = nil

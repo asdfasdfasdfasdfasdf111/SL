@@ -110,12 +110,9 @@ struct DownloadCategoryView: View {
                 }
                 return
             }
-            // 游戏版本页：本地过滤（本地版本列表）
+            // 游戏版本页：本地过滤（本地版本列表；统一谓词，tags 为空自动退化为标题+简介）
             if selectedSection == .game {
-                let filtered = items.filter {
-                    $0.name.localizedCaseInsensitiveContains(normalized) ||
-                    $0.subtitle.localizedCaseInsensitiveContains(normalized)
-                }
+                let filtered = items.filter { ItemFilter.matches($0, query: normalized) }
                 await MainActor.run {
                     debouncedSearchText = searchText
                     activeSearchQuery = ""
@@ -130,12 +127,7 @@ struct DownloadCategoryView: View {
             if LocalModCatalog.isReady {
             let local = LocalModCatalog.items(for: selectedSection)
             if !local.isEmpty {
-                let filtered = local.filter { item in
-                    item.name.localizedCaseInsensitiveContains(normalized) ||
-                    item.subtitle.localizedCaseInsensitiveContains(normalized) ||
-                    item.tags.contains { $0.localizedCaseInsensitiveContains(normalized) } ||
-                    ModrinthTagMap.contains { $1 == normalized && item.tags.contains($0) }
-                }
+                let filtered = local.filter { ItemFilter.matches($0, query: normalized) }
                 await MainActor.run {
                     debouncedSearchText = searchText
                     activeSearchQuery = ""
@@ -484,22 +476,18 @@ struct DownloadCategoryView: View {
             switch targetSection {
             case .game:
                 result = await fetchMinecraftVersions(subCategory: selectedSubCategory)
-            case .mod:
-                let r = await ModrinthSearcher.search(type: "mod", label: "模组", limit: 100)
+                totalHits = result.count
+            case .mod, .resourcePack, .shader, .modpack:
+                // 四类 Modrinth 分类统一走搜索 + 内存/磁盘缓存写回（type 由 ModrinthSectionType 映射）
+                let type = ModrinthSectionType.type(for: targetSection) ?? "mod"
+                let r = await ModrinthSearcher.search(type: type, label: "", limit: 100)
                 result = r.items; totalHits = r.totalHits
-                if !result.isEmpty { ModrinthCategoryCache.cachedModItems = result; ModrinthCategoryCache.saveToDisk(result, for: .mod) }
-            case .resourcePack:
-                let r = await ModrinthSearcher.search(type: "resourcepack", label: "资源包", limit: 100)
-                result = r.items; totalHits = r.totalHits
-                if !result.isEmpty { ModrinthCategoryCache.cachedResourcePackItems = result; ModrinthCategoryCache.saveToDisk(result, for: .resourcePack) }
-            case .shader:
-                let r = await ModrinthSearcher.search(type: "shader", label: "光影", limit: 100)
-                result = r.items; totalHits = r.totalHits
-                if !result.isEmpty { ModrinthCategoryCache.cachedShaderItems = result; ModrinthCategoryCache.saveToDisk(result, for: .shader) }
-            case .modpack:
-                let r = await ModrinthSearcher.search(type: "modpack", label: "整合包", limit: 100)
-                result = r.items; totalHits = r.totalHits
-                if !result.isEmpty { ModrinthCategoryCache.cachedModpackItems = result; ModrinthCategoryCache.saveToDisk(result, for: .modpack) }
+                if !result.isEmpty {
+                    ModrinthCategoryCache.setCache(result, for: targetSection)
+                    if let key = ModrinthCategoryCache.diskKey(for: targetSection) {
+                        ModrinthCategoryCache.saveToDisk(result, for: key)
+                    }
+                }
             }
             if Task.isCancelled { return }
             await MainActor.run {
