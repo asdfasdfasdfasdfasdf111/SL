@@ -1,51 +1,12 @@
 //
 //  ModDetailView.swift
 //  模块化拆分：从 GameViews.swift 拆出（原文件 2776 行，拆分后职责单一、可读性提升）
+//  纯 UI 详情页 + 下载编排：DetailPageType（qwq/DetailPageType.swift）、版本工具（qwq/VersionUtils.swift）、
+//  目录扫描（qwq/GameDirectoryScanner.swift）、下载解析（qwq/DownloadFileResolver.swift）均已拆至独立文件。
 //
 
 import SwiftUI
 import AppKit
-
-enum DetailPageType {
-    case resourcePack
-    case mod
-    case shader
-    case modpack
-    case loaderSelector
-
-    var titleText: String {
-        switch self {
-        case .resourcePack, .mod, .shader:
-            return "你拥有的受支持的版本"
-        case .modpack:
-            return "请选择下载版本"
-        case .loaderSelector:
-            return "请选择下载的模组加载器"
-        }
-    }
-
-    var supportedVersionTitle: String {
-        switch self {
-        case .resourcePack:
-            return "此资源包目前严格意义上支持的游戏版本"
-        case .mod:
-            return "此模组支持的游戏版本"
-        case .shader:
-            return "此光影目前严格意义上支持的游戏版本"
-        default:
-            return ""
-        }
-    }
-
-    var isCrossVersionDownload: Bool {
-        switch self {
-        case .resourcePack, .shader:
-            return true
-        default:
-            return false
-        }
-    }
-}
 
 struct ModDetailView: View {
     let item: DownloadedItem
@@ -123,12 +84,12 @@ struct ModDetailView: View {
                     if pageType == .mod {
                         if !projectGameVersions.isEmpty {
                             // 本地已安装的版本（用于求交集）
-                            let ownedSet = Set(localOwnedVersions())
+                            let ownedSet = Set(GameDirectoryScanner.localOwnedVersions(gameRoot: settings.selectedGameRoot))
                             // 交集：本地拥有且该模组兼容的版本
                             let compatible = projectGameVersions.filter { ownedSet.contains($0) }
                             if !compatible.isEmpty {
                                 // 只显示本地拥有且模组兼容的版本，全部列出
-                                sortedVersions = sortVersionsForDisplay(compatible)
+                                sortedVersions = GameVersionHelper.sortForDisplay(compatible, selected: settings.selectedMinecraftVersion)
                                 if let first = sortedVersions.first {
                                     selectedVersion = first
                                 }
@@ -138,9 +99,9 @@ struct ModDetailView: View {
                         }
                     } else if pageType == .shader || pageType == .resourcePack {
                         // 跨版本内容：本地拥有的全部版本都列出来，默认选最近的版本
-                        let owned = localOwnedVersions()
+                        let owned = GameDirectoryScanner.localOwnedVersions(gameRoot: settings.selectedGameRoot)
                         if !owned.isEmpty {
-                            sortedVersions = sortVersionsForDisplay(owned)
+                            sortedVersions = GameVersionHelper.sortForDisplay(owned, selected: settings.selectedMinecraftVersion)
                             if let first = sortedVersions.first {
                                 selectedVersion = first
                             }
@@ -155,7 +116,7 @@ struct ModDetailView: View {
 
     private var versionRangeText: String {
         guard !projectGameVersions.isEmpty else { return "" }
-        let sorted = projectGameVersions.sorted { compareVersions($0, $1) < 0 }
+        let sorted = projectGameVersions.sorted { GameVersionHelper.compare($0, $1) < 0 }
         if let first = sorted.first, let last = sorted.last {
             return first == last ? first : "\(first)-\(last)"
         }
@@ -185,9 +146,10 @@ struct ModDetailView: View {
                     pageWidth = width
                 }
                 if sortedVersions.isEmpty {
-                    if (pageType == .mod || pageType == .shader || pageType == .resourcePack), !hasScannedLocalVersions {
-                        scanLocalVersions()
-                    }
+                if (pageType == .mod || pageType == .shader || pageType == .resourcePack), !hasScannedLocalVersions {
+                    hasScannedLocalVersions = true
+                    localVersionLoaders = GameDirectoryScanner.scanLocalLoaderMap(gameRoot: settings.selectedGameRoot)
+                }
                     sortedVersions = availableVersions
 
                     // 默认选中：
@@ -216,7 +178,8 @@ struct ModDetailView: View {
                     fetchManifestVersions()
                 }
                 if pageType == .shader, !shaderFolderChecked {
-                    checkShaderFolders()
+                    shaderFolderChecked = true
+                    hasShaderFolder = GameDirectoryScanner.hasShaderFolder(gameRoot: settings.selectedGameRoot, versions: baseVersions)
                 }
                 if pageType == .modpack, modpackVersions.isEmpty {
                     fetchModpackVersions()
@@ -278,30 +241,6 @@ struct ModDetailView: View {
         ["1.21.4", "1.21.1", "1.18", "1.19.1"]
     }
 
-    // 愚人节版本列表（参考 PCL.Mac VersionManifest.swift）
-    private static let aprilFoolVersions: [String] = [
-        "15w14a", "1.rv-pre1", "3d shareware v1.34", "20w14infinite",
-        "22w13oneblockatatime", "23w13a_or_b", "24w14potato", "25w14craftmine"
-    ]
-
-    // 判断是否为愚人节版本（参考 PCL.Mac isAprilFoolVersion）
-    private static func isAprilFoolVersion(id: String, type: String) -> Bool {
-        let normalized = id.replacingOccurrences(of: "point", with: ".")
-        if aprilFoolVersions.contains(normalized.lowercased()) { return true }
-        guard type == "snapshot" else { return false }
-        // 新版 Mojang 命名（2026 起）：快照为「主版本号-snapshot-N」如 26.3-snapshot-7，
-        // 正式版为「主版本号」如 26.2，这些是正式内容，绝不能判为愚人节。
-        let snapshotPattern = #"^[0-9][0-9]?(\.[0-9]+)?-snapshot-[0-9]+$"#
-        if normalized.range(of: snapshotPattern, options: .regularExpression) != nil { return false }
-        // 旧版标准快照格式（如 23w33a）：正式快照，非愚人节
-        let oldSnapshotPattern = #"^[0-9]{2}w[0-9]{2}[a-z]$"#
-        if normalized.range(of: oldSnapshotPattern, options: .regularExpression) != nil { return false }
-        // 至少有一个字母（筛掉 1.x 与 1.x.x），且不是 -pre/-rc
-        if normalized.rangeOfCharacter(from: .letters) == nil { return false }
-        if normalized.contains("-pre") || normalized.contains("-rc") { return false }
-        return true
-    }
-
     private func fetchManifestVersions() {
         Task {
             let versions = await DownloadCategoryView.fetchMergedVersionManifest()
@@ -315,13 +254,13 @@ struct ModDetailView: View {
                 filtered = versions.filter { v in
                     let t = v["type"] as? String ?? ""
                     let id = v["id"] as? String ?? ""
-                    return (t == "snapshot" || t == "pending") && !Self.isAprilFoolVersion(id: id, type: t)
+                    return (t == "snapshot" || t == "pending") && !GameVersionHelper.isAprilFoolVersion(id: id, type: t)
                 }.compactMap { $0["id"] as? String }
             case .ancient:
                 filtered = versions.filter {
                     let t = $0["type"] as? String ?? ""
                     let id = $0["id"] as? String ?? ""
-                    return t == "old_alpha" || t == "old_beta" || Self.isAprilFoolVersion(id: id, type: t)
+                    return t == "old_alpha" || t == "old_beta" || GameVersionHelper.isAprilFoolVersion(id: id, type: t)
                 }.compactMap { $0["id"] as? String }
             case .none:
                 filtered = []
@@ -381,22 +320,6 @@ struct ModDetailView: View {
         }
     }
 
-    /// 读取本地游戏根目录 versions 文件夹，返回本地实际安装的有效版本列表。
-    /// 有效版本 = 目录中存在同名 .jar 或 .json 文件。
-    /// 注意：这里只做「本地拥有」判断，不做任何加载器/兼容性过滤，
-    /// 模组兼容性过滤由 fetchProjectDetails 结合 API 的 game_versions 求交集完成。
-    private func localOwnedVersions() -> [String] {
-        let gameRoot = settings.selectedGameRoot
-        guard !gameRoot.isEmpty else { return [] }
-        let versionsPath = gameRoot + "/versions"
-        guard let versionDirs = try? FileManager.default.contentsOfDirectory(atPath: versionsPath) else { return [] }
-        return versionDirs.filter { dir in
-            let jarPath = "\(versionsPath)/\(dir)/\(dir).jar"
-            let jsonPath = "\(versionsPath)/\(dir)/\(dir).json"
-            return FileManager.default.fileExists(atPath: jarPath) || FileManager.default.fileExists(atPath: jsonPath)
-        }
-    }
-
     /// 版本下拉列表的版本来源（仅决定「有哪些版本可显示」，不做过滤）：
     /// - 游戏版本页（加载器选择器）：优先使用 Mojang manifest 获取的版本列表
     /// - 其他页面：显示本地 versions 文件夹里实际安装的版本
@@ -404,37 +327,14 @@ struct ModDetailView: View {
     private var availableVersions: [String] {
         // 游戏版本页：优先使用 Mojang manifest 获取的版本列表
         if pageType == .loaderSelector && !manifestVersions.isEmpty {
-            return sortVersionsForDisplay(manifestVersions)
+            return GameVersionHelper.sortForDisplay(manifestVersions, selected: settings.selectedMinecraftVersion)
         }
         // 本地实际安装的版本
-        let owned = localOwnedVersions()
+        let owned = GameDirectoryScanner.localOwnedVersions(gameRoot: settings.selectedGameRoot)
         if !owned.isEmpty {
-            return sortVersionsForDisplay(owned)
+            return GameVersionHelper.sortForDisplay(owned, selected: settings.selectedMinecraftVersion)
         }
-        return sortVersionsForDisplay(baseVersions)
-    }
-
-    private func scanLocalVersions() {
-        hasScannedLocalVersions = true
-        let gameRoot = settings.selectedGameRoot
-        guard !gameRoot.isEmpty else { return }
-        let versionsPath = gameRoot + "/versions"
-        guard let versionDirs = try? FileManager.default.contentsOfDirectory(atPath: versionsPath) else { return }
-        for versionDir in versionDirs.prefix(10) {
-            let modsPath = "\(versionsPath)/\(versionDir)/mods"
-            guard let modFiles = try? FileManager.default.contentsOfDirectory(atPath: modsPath) else { continue }
-            var scannedCount = 0
-            for modFile in modFiles where modFile.hasSuffix(".jar") {
-                guard scannedCount < 3 else { break }
-                let jarURL = URL(fileURLWithPath: "\(modsPath)/\(modFile)")
-                let loader = ModLoaderDetector.detect(from: jarURL)
-                if loader != .unknown {
-                    localVersionLoaders[versionDir] = loader
-                    break
-                }
-                scannedCount += 1
-            }
-        }
+        return GameVersionHelper.sortForDisplay(baseVersions, selected: settings.selectedMinecraftVersion)
     }
 
     private func getDefaultInstanceVersion() -> String? {
@@ -482,51 +382,10 @@ struct ModDetailView: View {
             }
         }
         let sorted = result.sorted(by: { a, b in
-            compareVersions(a.0, b.0) > 0
+            GameVersionHelper.compare(a.0, b.0) > 0
         })
         cachedUniqueVersions = sorted
         return sorted
-    }
-
-    private func sortVersionsForDisplay(_ versions: [String]) -> [String] {
-        let gameSelected = settings.selectedMinecraftVersion
-        var sorted = versions.sorted { compareVersions($0, $1) > 0 }
-        if !gameSelected.isEmpty, let idx = sorted.firstIndex(of: gameSelected) {
-            sorted.remove(at: idx)
-            sorted.insert(gameSelected, at: 0)
-        }
-        return sorted
-    }
-
-    private func compareVersions(_ a: String, _ b: String) -> Int {
-        let pa = a.split(separator: ".").compactMap { Int($0) }
-        let pb = b.split(separator: ".").compactMap { Int($0) }
-        for i in 0..<max(pa.count, pb.count) {
-            let va = i < pa.count ? pa[i] : 0
-            let vb = i < pb.count ? pb[i] : 0
-            if va != vb { return va - vb }
-        }
-        return 0
-    }
-
-    private func checkShaderFolders() {
-        shaderFolderChecked = true
-        let gameRoot = settings.selectedGameRoot
-        guard !gameRoot.isEmpty else {
-            hasShaderFolder = false
-            return
-        }
-        for version in baseVersions {
-            let shaderPath = "\(gameRoot)/versions/\(version)/shaderpacks"
-            var isDir: ObjCBool = false
-            if FileManager.default.fileExists(atPath: shaderPath, isDirectory: &isDir), isDir.boolValue {
-                hasShaderFolder = true
-                return
-            }
-        }
-        let globalShaderPath = "\(gameRoot)/shaderpacks"
-        var isDir: ObjCBool = false
-        hasShaderFolder = FileManager.default.fileExists(atPath: globalShaderPath, isDirectory: &isDir) && isDir.boolValue
     }
 
     private func findCrossVersionDownload(for targetVersion: String) -> String? {
@@ -642,7 +501,7 @@ struct ModDetailView: View {
 
         Task.detached(priority: .userInitiated) {
             do {
-                let resolved = try await ModDetailView.resolveDownloadFile(
+                let resolved = try await DownloadFileResolver.resolve(
                     pageType: pageType,
                     item: item,
                     selectedVersion: selectedVersion,
@@ -796,74 +655,6 @@ struct ModDetailView: View {
                     settings.showLaunchAlert = true
                 }
             }
-        }
-    }
-
-    /// 解析本次下载的目标文件信息（URL/文件名/目标目录/标题），供下载详情页任务使用。
-    /// 返回后由 ModFileDownloadTask 负责带进度下载（SingleFileDownloader → NetManager）。
-    /// 静态方法 + 显式参数：避免后台 Task 隐式捕获视图 struct（@State 指针悬垂 = UAF）。
-    private static func resolveDownloadFile(
-        pageType: DetailPageType,
-        item: DownloadedItem,
-        selectedVersion: String,
-        selectedLoader: String,
-        selectedModpackVersionId: String,
-        settings: LauncherSettings
-    ) async throws -> (url: URL, filename: String, destination: URL, title: String) {
-        let gameVersion = selectedVersion
-        let gameRoot = settings.selectedGameRoot
-
-        guard !gameVersion.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未选择游戏版本"]) }
-        guard !gameRoot.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未设置游戏根目录"]) }
-
-        switch pageType {
-        case .mod:
-            guard !item.id.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "模组 ID 为空"]) }
-            // 游戏启动时 game_directory 指向 <gameRoot>/versions/<version>，
-            // mods 必须放在版本文件夹内才会被游戏加载
-            let modsDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("versions/\(gameVersion)/mods")
-            try FileManager.default.createDirectory(at: modsDir, withIntermediateDirectories: true)
-            let loader: ModLoader
-            switch selectedLoader.lowercased() {
-            case "fabric": loader = .fabric
-            case "forge": loader = .forge
-            case "neoforge", "neoforged": loader = .neoforge
-            case "quilt": loader = .quilt
-            default: loader = .fabric
-            }
-            let (url, filename) = try await ModDownloader().resolveLatestFile(modId: item.id, gameVersion: gameVersion, loader: loader)
-            return (url, filename, modsDir, item.name)
-
-        case .shader:
-            guard !item.id.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "光影 ID 为空"]) }
-            // 光影放在版本文件夹的 shaderpacks（游戏 gameDir = versions/<version>）
-            let shaderDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("versions/\(gameVersion)/shaderpacks")
-            try FileManager.default.createDirectory(at: shaderDir, withIntermediateDirectories: true)
-            // 光影项目版本的 loaders 字段通常是 ["minecraft"] 或空，不能按 fabric 模组过滤
-            let (url, filename) = try await ModDownloader().resolveLatestFile(modId: item.id, gameVersion: gameVersion)
-            return (url, filename, shaderDir, item.name)
-
-        case .resourcePack:
-            guard !item.id.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "资源包 ID 为空"]) }
-            // 资源包放在版本文件夹的 resourcepacks（游戏 gameDir = versions/<version>）
-            let resourcePackDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("versions/\(gameVersion)/resourcepacks")
-            try FileManager.default.createDirectory(at: resourcePackDir, withIntermediateDirectories: true)
-            // 资源包项目版本的 loaders 字段通常是 ["minecraft"] 或空，不能按 fabric 模组过滤
-            let (url, filename) = try await ModDownloader().resolveLatestFile(modId: item.id, gameVersion: gameVersion)
-            return (url, filename, resourcePackDir, item.name)
-
-        case .modpack:
-            guard !item.id.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "整合包 ID 为空"]) }
-            guard !selectedModpackVersionId.isEmpty else { throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "未选择整合包版本"]) }
-            // 整合包下载到版本目录
-            let versionDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("versions/\(selectedModpackVersionId)")
-            try FileManager.default.createDirectory(at: versionDir, withIntermediateDirectories: true)
-            let (url, filename) = try await ModpackDownloader().resolveFile(packId: item.id, versionId: selectedModpackVersionId)
-            return (url, filename, versionDir, item.name)
-
-        case .loaderSelector:
-            // 兜底：正常流程已在 startDownload() 提前走 startGameVersionDownload()，不会走到这里
-            throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "游戏版本下载请使用右下角下载按钮"])
         }
     }
 
