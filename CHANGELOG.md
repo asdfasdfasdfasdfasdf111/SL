@@ -6,6 +6,7 @@
 
 ### 变更
 
+- **代码极致模块化（第二十四批）：ContentView.swift 由 333 行拆至 286 行**——拆出 `qwq/ModDragInstaller.swift`（拖拽安装模组纯逻辑：`findInstances(for:savedRoot:)` 扫描全部游戏根目录 + 用户选择根目录、按模组版本范围过滤匹配实例（去重，逐版本 `versionMatches`）；`install(modURL:to:)` 把模组文件拷贝到每个实例 `versions/<v>/mods`（同名覆盖），返回成功数）。视图 `findMatchingInstances`/`installModToInstances` 改为一行转发，弹窗提示仍留在视图
 - **代码极致模块化（第二十三批）：GameViews.swift 由 680 行拆至 667 行**——拆出 `qwq/ModrinthSectionType.swift`（纯逻辑：`GameSidebarSection` → Modrinth `project_type` 查询参数映射，游戏版本页返回 nil）。消除 `applyFilter`/`loadMore` 两处重复的 section→type switch，各改一行 `guard let type = ModrinthSectionType.type(for: section)` 
 - **代码极致模块化（第二十二批）：ModDetailView.swift 由 591 行拆至 572 行**——拆出 `qwq/SupportedMetaSection.swift`（详情页「支持版本范围 + 加载器图标」元信息区独立组件：版本范围文本与过滤后加载器图标行，空值自动隐藏，加载器资源名解析走 LoaderNameResolver，纯展示无状态）。原 `detailPageContent` 内约 28 行内联块替换为 `SupportedMetaSection` 一行调用
 - **代码极致模块化（第二十一批）：ModDetailView.swift 由 634 行拆至 591 行**——拆出 `qwq/DetailPageHeader.swift`（详情页页头独立组件：返回按钮 + 名称大标题 + 翻译副标题 + 横向标签胶囊（ModrinthTagMap 翻译），数据与回调全部外部传入，纯展示无状态）。原 `detailPageContent` 头部约 47 行内联块替换为 `DetailPageHeader` 一行调用

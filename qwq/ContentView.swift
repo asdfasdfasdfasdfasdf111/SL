@@ -250,59 +250,12 @@ struct ContentView: View {
     }
 
     private func findMatchingInstances(for versionRange: String) -> [GameInstance] {
-        let roots = MinecraftVersionManager.findGameRootDirectories()
-        var seen = Set<String>()
-        var instances: [GameInstance] = []
-
-        for root in roots {
-            let normalized = (root as NSString).standardizingPath
-            guard !seen.contains(normalized) else { continue }
-            seen.insert(normalized)
-
-            let versions = MinecraftVersionManager.getVersions(from: normalized)
-            for version in versions {
-                if versionDetector.versionMatches(modVersion: versionRange, gameVersion: version) {
-                    instances.append(GameInstance(rootPath: normalized, version: version))
-                }
-            }
-        }
-
-        let savedRoot = settings.selectedGameRoot
-        if !savedRoot.isEmpty {
-            let normalized = (savedRoot as NSString).standardizingPath
-            if !seen.contains(normalized) {
-                let versions = MinecraftVersionManager.getVersions(from: normalized)
-                for version in versions {
-                    if versionDetector.versionMatches(modVersion: versionRange, gameVersion: version) {
-                        instances.append(GameInstance(rootPath: normalized, version: version))
-                    }
-                }
-            }
-        }
-
-        return instances
+        ModDragInstaller.findInstances(for: versionRange, savedRoot: settings.selectedGameRoot)
     }
 
     private func installModToInstances(modURL: URL?, instances: [GameInstance]) {
         guard let modURL = modURL else { return }
-        let modFileName = modURL.lastPathComponent
-
-        for instance in instances {
-            // 游戏启动时 gameDir = <rootPath>/versions/<version>，mods 在版本文件夹内
-            let modsDir = URL(fileURLWithPath: instance.rootPath).appendingPathComponent("versions/\(instance.version)/mods")
-            do {
-                try FileManager.default.createDirectory(at: modsDir, withIntermediateDirectories: true)
-                let destURL = modsDir.appendingPathComponent(modFileName)
-                if FileManager.default.fileExists(atPath: destURL.path) {
-                    try FileManager.default.removeItem(at: destURL)
-                }
-                try FileManager.default.copyItem(at: modURL, to: destURL)
-            } catch {
-                print("安装模组到 \(instance.rootPath) 失败: \(error.localizedDescription)")
-            }
-        }
-
-        let count = instances.count
+        let count = ModDragInstaller.install(modURL: modURL, to: instances)
         settings.javaPopupMessage = "模组已安装到 \(count) 个实例"
         settings.showJavaPopup = true
     }
