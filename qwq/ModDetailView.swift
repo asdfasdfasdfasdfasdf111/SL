@@ -369,7 +369,9 @@ struct ModDetailView: View {
     private func applyLoaders(_ loaders: [String]) {
         availableLoaders = loaders
         isLoadingLoaders = false
-        if !loaders.contains(selectedLoader), let first = loaders.first {
+        // 仅当用户未主动取消选择（非空）且当前选择不在可用列表时才自动选中第一个；
+        // 空字符串 = 用户点了已选中卡片主动取消（下载纯原版），刷新后保持不选
+        if !selectedLoader.isEmpty, !loaders.contains(selectedLoader), let first = loaders.first {
             selectedLoader = first
         }
     }
@@ -940,7 +942,8 @@ struct ModDetailView: View {
                                         isSelected: selectedLoader == loader
                                     ) {
                                         withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
-                                            selectedLoader = loader
+                                            // 再点已选中的卡片 = 取消选中（不装加载器，下载纯原版）
+                                            selectedLoader = (selectedLoader == loader) ? "" : loader
                                         }
                                     }
                                 }
@@ -1101,7 +1104,7 @@ struct ModDetailView: View {
         if lower.contains("fabric") { return "fabric" }
         if lower.contains("rift") { return "fabric" }
         // 回退：使用用户选择的 loader，而非硬编码版本
-        return selectedLoader
+        return selectedLoader.isEmpty ? "fabric" : selectedLoader
     }
 
     /// 详情页翻译结果上限：页签条目有限但防极端场景无限增长；超限整体淘汰（重新浏览时再翻译）
