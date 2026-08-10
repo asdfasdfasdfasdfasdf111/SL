@@ -8,21 +8,12 @@ struct CategoryContentView: View {
     let searchText: String
     @EnvironmentObject var settings: LauncherSettings
     @ObservedObject var theme = ThemeManager.shared
+    // 启动会话/日志面板/启动进度统一由全局单例持有（启动回调零 self 捕获，UAF 根治）
+    @ObservedObject var sessionManager = LaunchSessionManager.shared
     
-    @State private var isLaunching = false
-    @State private var launchProgress: Double = 0.0
     @State private var usernameFieldScale: CGFloat = 1.0
     @FocusState private var isUsernameFocused: Bool
     @State private var skinButtonScale: CGFloat = 1.0
-    @State private var showLogView = false
-    @State private var launchPhase: LaunchPhase = .idle
-    @State private var lightProgress: Double = 0.0
-    @State private var darkProgress: Double = 0.2
-    @State private var darkBarTarget: Double = 0.2
-    @State private var darkBarActive = false
-    @State private var darkBarTimer: Timer?
-    // 多会话支持：每次启动创建一个 GameSession
-    @State private var gameSessions: [GameSession] = []
 
     private var launchView: some View {
         GeometryReader { geometry in
@@ -56,8 +47,8 @@ struct CategoryContentView: View {
             .padding(.horizontal, 20)
             .padding(.vertical, 20)
             CloseSessionButton(
-                isLaunching: isLaunching,
-                hasRunningSessions: gameSessions.contains(where: { $0.isProcessRunning }),
+                isLaunching: sessionManager.isLaunching,
+                hasRunningSessions: sessionManager.hasRunningSessions,
                 onTap: { handleCloseSessionTap() }
             )
         }
@@ -77,10 +68,10 @@ struct CategoryContentView: View {
             Spacer()
             LaunchButton(
                 buttonWidth: buttonWidth,
-                isLaunching: isLaunching,
-                launchPhase: launchPhase,
-                lightProgress: lightProgress,
-                darkProgress: darkProgress,
+                isLaunching: sessionManager.isLaunching,
+                launchPhase: sessionManager.launchPhase,
+                lightProgress: sessionManager.lightProgress,
+                darkProgress: sessionManager.darkProgress,
                 onTap: {
                     isUsernameFocused = false
                     guard !settings.selectedMinecraftVersion.isEmpty else {
@@ -88,7 +79,7 @@ struct CategoryContentView: View {
                         settings.showLaunchAlert = true
                         return
                     }
-                    guard !isLaunching else { return }
+                    guard !sessionManager.isLaunching else { return }
                     startLaunch()
                 }
             )
@@ -116,7 +107,7 @@ struct CategoryContentView: View {
 
     /// 确保 skinImageURL 存在，不存在则从缓存/JAR/内置皮肤加载
     private func loadSkinImageIfNeeded() {
-        guard !isLaunching else { return }
+        guard !sessionManager.isLaunching else { return }
         if settings.skinImageURL != nil, FileManager.default.fileExists(atPath: settings.skinImageURL!.path) { return }
 
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -221,9 +212,9 @@ struct CategoryContentView: View {
 
     private func logPanel(logCardHeight: CGFloat) -> some View {
         Group {
-            if showLogView && !gameSessions.isEmpty {
+            if sessionManager.showLogView && !sessionManager.sessions.isEmpty {
                 HStack(alignment: .top, spacing: 12) {
-                    ForEach(gameSessions) { session in
+                    ForEach(sessionManager.sessions) { session in
                         sessionLogCard(session: session, logCardHeight: logCardHeight)
                             .frame(maxWidth: .infinity)
                             .transition(
@@ -237,10 +228,10 @@ struct CategoryContentView: View {
                 .frame(maxWidth: .infinity, alignment: .top)
             }
         }
-        .offset(y: showLogView ? 0 : 300)
-        .opacity(showLogView ? 1 : 0)
-        .animation(.exaggeratedSpring, value: showLogView)
-        .animation(.exaggeratedSpring, value: gameSessions.count)
+        .offset(y: sessionManager.showLogView ? 0 : 300)
+        .opacity(sessionManager.showLogView ? 1 : 0)
+        .animation(.exaggeratedSpring, value: sessionManager.showLogView)
+        .animation(.exaggeratedSpring, value: sessionManager.sessions.count)
     }
 
     private func sessionLogCard(session: GameSession, logCardHeight: CGFloat) -> some View {
@@ -253,25 +244,25 @@ struct CategoryContentView: View {
             session.isProcessRunning = false
             session.isLaunching = false
         }
-        let willBeEmpty = gameSessions.count == 1
+        let willBeEmpty = sessionManager.sessions.count == 1
         withAnimation(.exaggeratedSpring) {
-            gameSessions.removeAll { $0.id == session.id }
+            sessionManager.removeSession(session)
             if willBeEmpty {
-                showLogView = false
+                sessionManager.showLogView = false
             }
         }
         // 关闭最后一个会话时复位启动状态，确保关闭按钮消失
         if willBeEmpty {
-            resetLaunchState()
+            sessionManager.resetProgress()
             withAnimation(.easeOut(duration: 0.3)) {
-                launchPhase = .idle
+                sessionManager.launchPhase = .idle
             }
         }
     }
 
     /// 电源按钮点击：运行中有游戏 → NSAlert 确认后终止全部；否则取消启动并复位
     private func handleCloseSessionTap() {
-        let runningSessions = gameSessions.filter { $0.isProcessRunning }
+        let runningSessions = sessionManager.sessions.filter { $0.isProcessRunning }
         if !runningSessions.isEmpty {
             let alert = NSAlert()
             alert.messageText = runningSessions.count == 1 ? "确认关闭游戏？" : "确认关闭 \(runningSessions.count) 个正在运行的游戏？"
@@ -287,25 +278,19 @@ struct CategoryContentView: View {
                     s.isLaunching = false
                 }
                 withAnimation(.exaggeratedSpring) {
-                    gameSessions.removeAll()
-                    showLogView = false
+                    sessionManager.removeAllSessions()
+                    sessionManager.showLogView = false
                 }
-                resetLaunchState()
+                sessionManager.resetProgress()
                 withAnimation(.easeOut(duration: 0.3)) {
-                    launchPhase = .idle
+                    sessionManager.launchPhase = .idle
                 }
             }
         } else {
-            isLaunching = false
-            launchProgress = 0.0
-            lightProgress = 0.0
-            darkProgress = 0.2
-            darkBarTarget = 0.2
-            darkBarActive = false
-            stopDarkBarAnimation()
+            sessionManager.resetProgress()
             withAnimation(.easeOut(duration: 0.3)) {
-                launchPhase = .idle
-                showLogView = false
+                sessionManager.launchPhase = .idle
+                sessionManager.showLogView = false
             }
         }
     }
@@ -349,49 +334,29 @@ struct CategoryContentView: View {
         }
         .id(category.id)
         .onChange(of: settings.selectedMinecraftVersion) { _ in
-            if !isLaunching {
-                OfflineSkinService.loadAvatarFromGameOrBundle(isLaunching: isLaunching, settings: settings)
+            if !sessionManager.isLaunching {
+                OfflineSkinService.loadAvatarFromGameOrBundle(isLaunching: sessionManager.isLaunching, settings: settings)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("GameVersionSelected"))) { _ in
-            if !isLaunching {
-                OfflineSkinService.loadDefaultIfNeeded(isLaunching: isLaunching, settings: settings)
+            if !sessionManager.isLaunching {
+                OfflineSkinService.loadDefaultIfNeeded(isLaunching: sessionManager.isLaunching, settings: settings)
             }
         }
         .onAppear {
-            OfflineSkinService.loadAvatarFromGameOrBundle(isLaunching: isLaunching, settings: settings)
-            OfflineSkinService.loadDefaultIfNeeded(isLaunching: isLaunching, settings: settings)
+            OfflineSkinService.loadAvatarFromGameOrBundle(isLaunching: sessionManager.isLaunching, settings: settings)
+            OfflineSkinService.loadDefaultIfNeeded(isLaunching: sessionManager.isLaunching, settings: settings)
         }
         .onDisappear {
-            stopDarkBarAnimation()
+            sessionManager.stopDarkBarAnimation()
         }
     }
     
-    private func initLaunchState() {
-        isLaunching = true
-        launchPhase = .idle
-        lightProgress = 0.0
-        darkProgress = 0.2
-        darkBarTarget = 0.2
-        darkBarActive = false
-        launchProgress = 0.0
-    }
-
-    private func resetLaunchState() {
-        isLaunching = false
-        launchProgress = 0.0
-        lightProgress = 0.0
-        darkProgress = 0.2
-        darkBarTarget = 0.2
-        darkBarActive = false
-        stopDarkBarAnimation()
-    }
-
     private func startLaunch() {
-        initLaunchState()
+        sessionManager.beginLaunch()
         // 启动前准备阶段：皮肤资源包应用等耗时操作期间按钮显示「准备中…」，
         // 避免此前启动按钮变灰却仍显示「启动游戏」的无反馈等待
-        launchPhase = .preparing
+        sessionManager.launchPhase = .preparing
         let gameDir = settings.selectedGameRoot.isEmpty ? nil : settings.selectedGameRoot
         let version = settings.selectedMinecraftVersion
         // PCL2 风格离线用户名校验（非空 / 无英文引号 / ≤16 字符）：
@@ -399,7 +364,7 @@ struct CategoryContentView: View {
         let username = settings.offlineUsername.trimmingCharacters(in: .whitespacesAndNewlines)
         let nameError = validateOfflineUsername(username)
         guard nameError.isEmpty else {
-            resetLaunchState()
+            sessionManager.resetProgress()
             settings.launchErrorMessage = nameError
             settings.showLaunchAlert = true
             return
@@ -409,7 +374,7 @@ struct CategoryContentView: View {
         // 中文等字符会在服务端抛 "Invalid characters in username" 并断开连接（表现为「连接中断」）。
         // 启动前给明确警告，避免用户误以为启动器异常；保留「仍要启动」以兼容 1.18 之前的版本。
         if finalUsername.range(of: "^[0-9A-Za-z_]*$", options: .regularExpression) == nil {
-            resetLaunchState()
+            sessionManager.resetProgress()
             let alert = NSAlert()
             alert.messageText = "用户名可能无法进入游戏"
             alert.informativeText = "「\(finalUsername)」含非法字符，1.18+ 服务端会拒绝（连接中断），仅 1.18 前可用。仍要启动？"
@@ -429,11 +394,11 @@ struct CategoryContentView: View {
             gameDir: gameDir,
             progressHandler: { progress in
                 DispatchQueue.main.async {
-                    if progress > self.launchProgress {
-                        self.launchProgress = progress
+                    if progress > sessionManager.launchProgress {
+                        sessionManager.launchProgress = progress
                     }
-                    if self.launchPhase == .downloading || self.launchPhase == .installing {
-                        self.lightProgress = progress
+                    if sessionManager.launchPhase == .downloading || sessionManager.launchPhase == .installing {
+                        sessionManager.lightProgress = progress
                     }
                 }
             },
@@ -442,22 +407,22 @@ struct CategoryContentView: View {
                     switch phase {
                     case "downloading":
                         withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                            self.launchPhase = .downloading
+                            sessionManager.launchPhase = .downloading
                         }
                     case "installing":
                         withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                            self.launchPhase = .installing
+                            sessionManager.launchPhase = .installing
                         }
                     case "launching":
-                        self.lightProgress = 1.0
+                        sessionManager.lightProgress = 1.0
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                             withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                                self.launchPhase = .launching
+                                sessionManager.launchPhase = .launching
                             }
-                            self.darkProgress = 0.2
-                            self.darkBarTarget = 1.0
-                            self.darkBarActive = true
-                            self.startDarkBarAnimation()
+                            sessionManager.darkProgress = 0.2
+                            sessionManager.darkBarTarget = 1.0
+                            sessionManager.darkBarActive = true
+                            sessionManager.startDarkBarAnimation()
                         }
                     default:
                         break
@@ -467,7 +432,7 @@ struct CategoryContentView: View {
             logHandler: { logLine in
                 DispatchQueue.main.async {
                     guard let l = boundLauncher else { return }
-                    if let session = self.gameSessions.first(where: { $0.launcher === l }) {
+                    if let session = sessionManager.session(for: l) {
                         session.logs.append(logLine)
                     } else {
                         // session 尚未建立：暂存到 launcher，建立后 flush
@@ -478,49 +443,40 @@ struct CategoryContentView: View {
             launchSuccess: {
                 DispatchQueue.main.async {
                     if let l = boundLauncher,
-                       let session = self.gameSessions.first(where: { $0.launcher === l }) {
+                       let session = sessionManager.session(for: l) {
                         session.isLaunching = false
                     }
                     withAnimation(.exaggeratedSpring) {
-                        self.darkBarTarget = 1.0
+                        sessionManager.darkBarTarget = 1.0
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         withAnimation(.easeOut(duration: 0.4)) {
-                            self.launchPhase = .idle
+                            sessionManager.launchPhase = .idle
                         }
-                        self.resetLaunchState()
+                        sessionManager.resetProgress()
                     }
                 }
             },
             onLauncherReady: { launcher in
                 boundLauncher = launcher
                 DispatchQueue.main.async {
-                    let wasEmpty = self.gameSessions.isEmpty
-                    let usedIndices = Set(self.gameSessions.map { $0.index })
-                    var newIndex = 1
-                    while usedIndices.contains(newIndex) { newIndex += 1 }
-                    let session = GameSession(index: newIndex, launcher: launcher)
-                    // flush 暂存日志
-                    if !launcher.pendingLogs.isEmpty {
-                        session.logs.append(contentsOf: launcher.pendingLogs)
-                        launcher.pendingLogs.removeAll()
-                    }
+                    let wasEmpty = sessionManager.sessions.isEmpty
                     // 先触发面板弹出动画（offset/opacity 过渡）
                     if wasEmpty {
                         withAnimation(.exaggeratedSpring) {
-                            self.showLogView = true
+                            sessionManager.showLogView = true
                         }
                     }
-                    // 再插入 session（带 transition）
+                    // 再插入 session（带 transition）；索引分配与暂存日志 flush 在 addSession 内完成
                     withAnimation(.exaggeratedSpring) {
-                        self.gameSessions.append(session)
+                        sessionManager.addSession(launcher: launcher)
                     }
                 }
             },
             completion: { launcher, result in
                 DispatchQueue.main.async {
                     if let launcher = launcher,
-                       let session = self.gameSessions.first(where: { $0.launcher === launcher }) {
+                       let session = sessionManager.session(for: launcher) {
                         session.isProcessRunning = false
                         session.isLaunching = false
                     }
@@ -528,21 +484,21 @@ struct CategoryContentView: View {
                     case .success(let exitCode):
                         let userTerminated = launcher?.isUserTerminated ?? false
                         if exitCode != 0 && !userTerminated {
-                            self.settings.launchErrorMessage = "Minecraft 异常退出 (退出码: \(exitCode))，请查看日志"
-                            self.settings.showLaunchAlert = true
+                            settings.launchErrorMessage = "Minecraft 异常退出 (退出码: \(exitCode))，请查看日志"
+                            settings.showLaunchAlert = true
                         }
-                        self.resetLaunchState()
+                        sessionManager.resetProgress()
                         withAnimation(.easeOut(duration: 0.3)) {
-                            self.launchPhase = .idle
+                            sessionManager.launchPhase = .idle
                         }
                     case .failure(let error):
-                        self.resetLaunchState()
+                        sessionManager.resetProgress()
                         withAnimation(.easeOut(duration: 0.3)) {
-                            self.launchPhase = .idle
-                            if self.gameSessions.isEmpty { self.showLogView = false }
+                            sessionManager.launchPhase = .idle
+                            if sessionManager.sessions.isEmpty { sessionManager.showLogView = false }
                         }
-                        self.settings.launchErrorMessage = error.localizedDescription
-                        self.settings.showLaunchAlert = true
+                        settings.launchErrorMessage = error.localizedDescription
+                        settings.showLaunchAlert = true
                     }
                 }
             }
@@ -560,7 +516,7 @@ struct CategoryContentView: View {
                         skinURL: skin,
                         toVersion: version,
                         gameDir: URL(fileURLWithPath: gameDirPath),
-                        settings: self.settings
+                        settings: settings
                     )
                 } catch {
                     print("皮肤资源包应用失败: \(error.localizedDescription)")
@@ -572,23 +528,5 @@ struct CategoryContentView: View {
         } else {
             startGame()
         }
-    }
-    
-    private func startDarkBarAnimation() {
-        darkBarTimer?.invalidate()
-        darkBarTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
-            DispatchQueue.main.async {
-                guard self.darkBarActive else { return }
-                if self.darkProgress < self.darkBarTarget {
-                    let step = max(0.003, (self.darkBarTarget - self.darkProgress) * 0.08)
-                    self.darkProgress = min(self.darkBarTarget, self.darkProgress + step)
-                }
-            }
-        }
-    }
-
-    private func stopDarkBarAnimation() {
-        darkBarTimer?.invalidate()
-        darkBarTimer = nil
     }
 }
