@@ -56,13 +56,8 @@ struct ModDetailView: View {
     @State private var availableLoaders: [String] = []
     @State private var isLoadingLoaders = false
 
-    private static let loaderAssetMap: [String: String] = [
-        "fabric": "fabric", "forge": "Forge", "neoforge": "NeoForged",
-        "neoforged": "NeoForged", "quilt": "Quilt", "rift": "fabric"
-    ]
-
     private func assetName(for loader: String) -> String {
-        Self.loaderAssetMap[loader.lowercased()] ?? "fabric"
+        LoaderNameResolver.assetName(for: loader)
     }
 
     private func fetchProjectDetails() {
@@ -373,48 +368,18 @@ struct ModDetailView: View {
 
     private func uniqueGameVersions() -> [(gameVersion: String, version: ModpackVersion)] {
         if let cached = cachedUniqueVersions { return cached }
-        var seen: Set<String> = []
-        var result: [(String, ModpackVersion)] = []
-        for v in modpackVersions {
-            if let gv = v.game_versions.first, !seen.contains(gv) {
-                seen.insert(gv)
-                result.append((gv, v))
-            }
-        }
-        let sorted = result.sorted(by: { a, b in
-            GameVersionHelper.compare(a.0, b.0) > 0
-        })
+        let sorted = ModpackVersionGrouping.uniqueGameVersions(modpackVersions)
         cachedUniqueVersions = sorted
         return sorted
     }
 
     private func findCrossVersionDownload(for targetVersion: String) -> String? {
-        let sorted = sortedVersions.filter { $0 != targetVersion }
-        let targetIdx = sorted.firstIndex(of: targetVersion)
-        var candidates = sorted
-        if let idx = targetIdx {
-            let above = Array(sorted[0..<idx]).reversed()
-            let below = Array(sorted[(idx + 1)...])
-            candidates = above + below
-        }
-        for candidate in candidates {
-            if pageType == .resourcePack {
-                let gameRoot = settings.selectedGameRoot
-                let rpPath = "\(gameRoot)/versions/\(candidate)/resourcepacks"
-                var isDir: ObjCBool = false
-                if FileManager.default.fileExists(atPath: rpPath, isDirectory: &isDir), isDir.boolValue {
-                    return candidate
-                }
-            } else if pageType == .shader {
-                let gameRoot = settings.selectedGameRoot
-                let spPath = "\(gameRoot)/versions/\(candidate)/shaderpacks"
-                var isDir: ObjCBool = false
-                if FileManager.default.fileExists(atPath: spPath, isDirectory: &isDir), isDir.boolValue {
-                    return candidate
-                }
-            }
-        }
-        return nil
+        CrossVersionFinder.find(
+            in: sortedVersions,
+            target: targetVersion,
+            pageType: pageType,
+            gameRoot: settings.selectedGameRoot
+        )
     }
 
     private func navigateToPrerequisite(_ prereq: DownloadedItem) {
@@ -704,24 +669,6 @@ struct ModDetailView: View {
                     }
                 }
 
-                if pageTypeForIndex == .mod, isBasePage, let prereqs = getModPrerequisites(for: pageItem), !prereqs.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("前置模组")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(.primary)
-                            .padding(.top, 8)
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 10) {
-                                ForEach(prereqs, id: \.id) { prereq in
-                                    PrerequisiteModCard(item: prereq) {
-                                        navigateToPrerequisite(prereq)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
                 if let crossVersion = findCrossVersionDownload(for: selectedVersion),
                    pageTypeForIndex.isCrossVersionDownload, isBasePage {
                     VStack(alignment: .leading, spacing: 4) {
@@ -765,32 +712,12 @@ struct ModDetailView: View {
         }
     }
 
-    private func getModPrerequisites(for item: DownloadedItem) -> [DownloadedItem]? {
-        return nil
-    }
-
     private func getLoaderForVersion(_ version: String) -> String {
-        // 优先从本地扫描结果获取
-        if let detected = localVersionLoaders[version] {
-            return detected.assetName
-        }
-        // 从版本字符串后缀解析加载器（如 "1.20.1-Forge"、"26.3-snapshot-3-Fabric"）
-        let lower = version.lowercased()
-        let parts = lower.split(separator: "-")
-        for part in parts.reversed() {
-            let p = String(part).trimmingCharacters(in: .whitespaces)
-            if let matched = Self.loaderAssetMap[p] {
-                return matched
-            }
-        }
-        // 子串模糊匹配
-        if lower.contains("neoforge") || lower.contains("neoforged") { return "NeoForged" }
-        if lower.contains("forge") { return "Forge" }
-        if lower.contains("quilt") { return "Quilt" }
-        if lower.contains("fabric") { return "fabric" }
-        if lower.contains("rift") { return "fabric" }
-        // 回退：使用用户选择的 loader，而非硬编码版本
-        return selectedLoader.isEmpty ? "fabric" : selectedLoader
+        LoaderNameResolver.name(
+            forVersion: version,
+            localLoaders: localVersionLoaders,
+            fallback: selectedLoader
+        )
     }
 
     /// 详情页翻译结果上限：页签条目有限但防极端场景无限增长；超限整体淘汰（重新浏览时再翻译）

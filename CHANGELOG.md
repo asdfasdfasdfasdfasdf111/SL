@@ -6,6 +6,7 @@
 
 ### 变更
 
+- **代码极致模块化（第十二批）：ModDetailView.swift 由 829 行拆至 756 行**——拆出 `qwq/LoaderNameResolver.swift`（加载器 key→资源名映射 + 从版本字符串后缀/子串/本地扫描结果解析加载器，含用户选择回退）、`qwq/CrossVersionFinder.swift`（资源包/光影跨版本下载匹配：排除目标版本后按相邻顺序找第一个已建对应目录的版本）、`qwq/ModpackVersionGrouping.swift`（整合包版本按 game_versions 去重分组降序）。同时删除死代码 `getModPrerequisites`（恒返回 nil）与其「前置模组」渲染块，删 `loaderAssetMap` 静态字典
 - **代码极致模块化（第十一批）：GameViews.swift 由 870 行拆至 828 行**——拆出 `qwq/SearchTranslator.swift`（搜索翻译模块：`translate(_:)` 调用 MyMemory API 中文→英文候选词，自带 100 条上限内存缓存与锁，纯数据无视图依赖）。`DownloadCategoryView` 删除私有 `translateChineseToEnglish` 与 searchTranslationCache 静态成员，中文搜索改走 `SearchTranslator.translate`，`clearStaticCaches()` 改为调用 `SearchTranslator.clearCache()`
 - **代码极致模块化（第十批）：CategoryContentView.swift 由 897 行拆至 711 行**——拆出 `qwq/OfflineSkinService.swift`（离线皮肤服务枚举：`selectSkinImage(settings:)` 选择面板（校验/存原图/裁头像/持久化/PCL2 资源包应用）、`loadDefaultIfNeeded(isLaunching:settings:)` 默认皮肤恢复（磁盘缓存→JAR 提取→内置）、`loadAvatarFromGameOrBundle(isLaunching:settings:)` 启动后头像加载）。服务只依赖 LauncherSettings 单例 + isLaunching 传参，不持有视图；视图 onAppear/onChange/onReceive 三处改走新服务
 - **代码极致模块化（第九批）：GameViews.swift 由 953 行拆至 870 行**——拆出 `qwq/ModrinthSearcher.swift`（Modrinth 项目搜索纯数据获取：`search(type:label:query:offset:limit:)` 组装 facets 查询、UA 头、解析 hits → DownloadedItem，网络失败返回空）与 `qwq/ModrinthCategoryCache.swift`（分类两级缓存容器：四类 modrinth 内存缓存 + 游戏版本清单缓存（按子分类）+ `cache(for:sub:)`/`clearAll()`/`loadFromDisk()`/`saveCacheToDisk`，CacheKey 磁盘键随迁）。`DownloadCategoryView` 只保留视图态（isViewActive/搜索翻译缓存）与 `clearStaticCaches()` 聚合入口（AppContext 内存警告调用不变），fetchItems/loadMore 改走新模块
