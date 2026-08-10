@@ -53,17 +53,7 @@ struct DownloadDetailView: View {
             .frame(maxWidth: .infinity)
         }
         .padding(16)
-        .overlay(alignment: .topTrailing) {
-            Button(action: { manager.dismiss() }) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.secondary)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(.ultraThinMaterial))
-            }
-            .buttonStyle(.plain)
-            .padding(12)
-        }
+        // 无返回键：再次点击圆形下载按钮即可回到刚才的页面（由 GameViews toggle 控制）
     }
 
     /// 单个任务各阶段渲染（对标 InstallingView.getEntries）：

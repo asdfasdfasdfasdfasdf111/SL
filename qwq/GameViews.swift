@@ -339,12 +339,12 @@ struct DownloadCategoryView: View {
                 .opacity(circleOpacity)
                 .padding(.trailing, 12)
                 .padding(.bottom, 12)
-                // 点击圆形按钮 → 进入下载详情页（对标 PCL.Mac InstallingView）
+                // 点击圆形按钮 → 下载详情页开关（再点一次回到刚才的页面，无需返回键）。
+                // zIndex 高于详情页：详情页打开时按钮仍可见可点（切换显示/隐藏）。
+                .zIndex(50)
                 .onTapGesture {
-                    if !downloadDetail.isPresented {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                            downloadDetail.isPresented = true
-                        }
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                        downloadDetail.isPresented.toggle()
                     }
                 }
             }

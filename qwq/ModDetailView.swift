@@ -56,6 +56,7 @@ struct ModDetailView: View {
 
     @ObservedObject var theme = ThemeManager.shared
     @ObservedObject var settings = LauncherSettings.shared
+    @ObservedObject private var downloadDetail = DownloadDetailManager.shared
 
     @State private var selectedVersion: String = ""
     @State private var selectedLoader: String = "fabric"
@@ -262,6 +263,11 @@ struct ModDetailView: View {
                 .padding(.bottom, 12)
                 .animation(.interpolatingSpring(stiffness: 170, damping: 14), value: showCircleButton)
             }
+        }
+        // 下载中状态跟随详情页开关：下载完成（dismiss）或手动关闭详情页后自动复位，
+        // 避免在任务回调（可能晚于视图销毁）里写 @State 造成 EXC_BAD_ACCESS（UAF）
+        .onChange(of: downloadDetail.isPresented) { isPresented in
+            isDownloading = isPresented
         }
     }
 
@@ -639,14 +645,14 @@ struct ModDetailView: View {
                                         to: URL(fileURLWithPath: LauncherSettings.shared.selectedGameRoot)
                                     )
                                     await MainActor.run {
-                                        self.isDownloading = false
+                                        // 不写 self.isDownloading：视图可能已销毁，写 @State 会 UAF 崩溃；
+                                        // 由 onChange(of: downloadDetail.isPresented) 在 dismiss 时复位
                                         DownloadDetailManager.shared.dismiss()
                                         self.settings.javaPopupMessage = "下载完成"
                                         self.settings.showJavaPopup = true
                                     }
                                 } catch {
                                     await MainActor.run {
-                                        self.isDownloading = false
                                         DownloadDetailManager.shared.dismiss()
                                         self.settings.launchErrorMessage = "整合包安装失败: \(error.localizedDescription)"
                                         self.settings.showLaunchAlert = true
@@ -654,7 +660,6 @@ struct ModDetailView: View {
                                 }
                             }
                         } else {
-                            self.isDownloading = false
                             DownloadDetailManager.shared.dismiss()
                             if let reason = task.failureReason {
                                 self.settings.launchErrorMessage = "下载失败: \(reason)"
@@ -739,7 +744,8 @@ struct ModDetailView: View {
 
                 minecraftTask.onComplete { [self] in
                     Task { @MainActor in
-                        self.isDownloading = false
+                        // 不写 self.isDownloading：视图可能已销毁，写 @State 会 UAF 崩溃；
+                        // 由 onChange(of: downloadDetail.isPresented) 在 dismiss 时复位
                         DownloadDetailManager.shared.dismiss()
                         self.settings.javaPopupMessage = "\(name) 下载完成"
                         self.settings.showJavaPopup = true
