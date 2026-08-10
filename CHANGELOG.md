@@ -7,8 +7,11 @@
 ### 新增
 
 - **新增下载详情页（毛玻璃风格，对标 PCL.Mac InstallingView）**：点击圆形下载按钮后不再只是视觉指示，而是进入真正的下载详情页——左侧 200pt 圆角矩形毛玻璃信息卡（总进度 / 实时下载速度 / 剩余文件，对标 PCL.Mac LeftTabView + PanelView），右侧逐任务毛玻璃卡逐阶段渲染进度（inprogress 显示实时百分比、finished 勾选、waiting 灰圈、failed 红叉，对标 StaticMyCard）。后端完整移植 PCL 的 `InstallTask` 任务模型：新增 `ModFileDownloadTask`（单文件下载任务，字节级进度写入 `currentStagePercentage`，走 `SingleFileDownloader → NetManager`，完成自动 `completeOneFile/complete`）、`DownloadDetailManager`（全局任务容器，`tasks.objectWillChange` 转发实时刷新）；`SpeedMeter` 速度数据源为 NetManager 分片下载现成上报，详情页直接读取。整合包下载完成后自动进入安装流程，普通文件下载完成后详情页自动关闭并弹「下载完成」
+- **新增游戏版本一键下载安装（游戏版本页点「下载」不再报错，对标 PCL.Mac DownloadPage）**：游戏版本页（加载器选择页）点下载 = 真正下载安装所选版本——复用 PCLCore `MinecraftInstaller.createTask`（客户端清单 → 资源索引 → 本体 jar → 依赖 libraries → natives），若该版本有可用加载器（`LoaderSupportChecker` 检测结果）则追加对应的 `FabricInstallTask`/`ForgeInstallTask`/`NeoforgeInstallTask`，由 createTask 在 jar 下载完成后自动串联安装（通过 `DataManager.inprogressInstallTasks` 按 key 查找，与 PCL.Mac 行为一致）。加载器版本号由新增的 `LoaderVersionResolver` 自动取最新（Fabric 优先最新稳定版，来源对标 PCL.Mac LoaderCard：meta.fabricmc.net / bmclapi2 forge、neoforge / meta.quiltmc.org）。实例名 = 版本号（带加载器时 + "-Fabric"/"-Forge"/"-NeoForge"，与本地实例命名约定一致）。全流程进入下载详情页展示进度，完成后自动关闭并弹「下载完成」。无可用加载器的版本自动装纯原版
 
 ### 修复
+
+- 修复游戏版本页点「下载」弹「下载失败: 游戏版本页无需下载」：此前的下载链路只在 mod/shader/resourcePack/modpack 四类页面实现了下载逻辑，游戏版本页（loaderSelector）只做了占位守卫，而下载按钮又对所有页面显示，一按就撞上守卫报错。已改为真正的版本下载安装（见上方新增条目），并保留兜底文案
 
 - 修复「下载游戏」页面所有分类显示为空：版本清单（version_manifest）拉取失败时不再缓存空结果（此前一次失败会导致 5 分钟内所有游戏版本分类全部为空），网络恢复后自动重试
 - 修复模组列表实时翻译导致界面卡死：翻译结果改为独立字典异步更新，不再逐条改写列表数组触发全列表重建

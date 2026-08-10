@@ -606,6 +606,12 @@ struct ModDetailView: View {
             }
         }
         
+        // 游戏版本页：点下载 = 真正下载安装所选版本（+ 可选加载器），对标 PCL.Mac DownloadPage
+        if pageType == .loaderSelector {
+            startGameVersionDownload()
+            return
+        }
+
         // 真正的下载逻辑：解析目标文件 → 创建下载任务 → 打开详情页 → 启动任务
         // （详情页对标 PCL.Mac InstallingView：左侧信息面板 + 右侧任务卡片，毛玻璃风格）
         Task.detached(priority: .userInitiated) {
@@ -672,6 +678,87 @@ struct ModDetailView: View {
         }
     }
 
+    /// 游戏版本页下载安装（对标 PCL.Mac DownloadPage「开始下载」）：
+    /// 用 MinecraftInstaller.createTask 建 Minecraft 安装任务（客户端清单/资源索引/本体/依赖/natives），
+    /// 若用户选了加载器则追加对应加载器任务（key = fabric/forge/neoforge），组合成 InstallTasks
+    /// 进入下载详情页；createTask 内部会从 DataManager.inprogressInstallTasks 按 key 找到加载器任务，
+    /// 在客户端 jar 下载完成后自动串联安装（与 PCL.Mac createTask 行为一致）。
+    private func startGameVersionDownload() {
+        let versionStr = selectedVersion
+        // selectedLoader 非可选（默认 "fabric"），但加载器是否真的可装取决于 availableLoaders
+        // （fetchLoaderSupport 实时检测结果）：无可用加载器的版本 → 装纯原版
+        let loader = selectedLoader.lowercased()
+        let loaderSupported = availableLoaders.contains { $0.lowercased() == loader }
+
+        Task {
+            do {
+                let root = settings.selectedGameRoot
+                guard !root.isEmpty else { throw MyLocalizedError(reason: "未设置游戏根目录") }
+
+                let minecraftDirectory = MinecraftDirectory(rootURL: URL(fileURLWithPath: root), name: "默认文件夹")
+                let minecraftVersion = MinecraftVersion(displayName: versionStr)
+
+                // 实例名：原版 = 版本号；带加载器 = 版本号 + "-" + 加载器名（与本地实例命名约定一致，如 1.20.1-Fabric）
+                var name = versionStr
+                var loaderKey: String? = nil
+                if loaderSupported {
+                    let brand: ClientBrand
+                    switch loader {
+                    case "fabric": brand = .fabric
+                    case "forge": brand = .forge
+                    case "neoforge", "neoforged": brand = .neoforge
+                    case "quilt":
+                        throw MyLocalizedError(reason: "Quilt 暂不支持一键下载安装，请使用 Fabric 或 Forge")
+                    default:
+                        throw MyLocalizedError(reason: "不支持的加载器: \(loader)")
+                    }
+                    name += "-\(brand.getName())"
+                    loaderKey = brand.rawValue
+                }
+
+                // 组装任务集合（key 必须在 InstallTasks.getTasks() 固定顺序表内）
+                let tasks = InstallTasks.empty()
+                let minecraftTask = MinecraftInstaller.createTask(minecraftVersion, name, minecraftDirectory)
+                tasks.addTask(key: "minecraft", task: minecraftTask)
+
+                if let loaderKey {
+                    // 交互是「点加载器卡片选类型」，没有版本选择 UI → 自动取该加载器最新版本
+                    let loaderVersion = try await LoaderVersionResolver.latestVersion(loader: loaderKey, mcVersion: versionStr)
+                    switch loaderKey {
+                    case "fabric":
+                        tasks.addTask(key: "fabric", task: FabricInstallTask(loaderVersion: loaderVersion))
+                    case "forge":
+                        tasks.addTask(key: "forge", task: ForgeInstallTask(forgeVersion: loaderVersion))
+                    case "neoforge":
+                        tasks.addTask(key: "neoforge", task: NeoforgeInstallTask(neoforgeVersion: loaderVersion))
+                    default: break
+                    }
+                }
+
+                minecraftTask.onComplete { [self] in
+                    Task { @MainActor in
+                        self.isDownloading = false
+                        DownloadDetailManager.shared.dismiss()
+                        self.settings.javaPopupMessage = "\(name) 下载完成"
+                        self.settings.showJavaPopup = true
+                    }
+                }
+
+                // 打开详情页 + 同步 DataManager（createTask 内部按 tasks[key] 找加载器任务）→ 启动
+                await MainActor.run {
+                    DownloadDetailManager.shared.start(tasks)
+                }
+                tasks.tasks["minecraft"]!.start()
+            } catch {
+                await MainActor.run {
+                    isDownloading = false
+                    settings.launchErrorMessage = "下载失败: \(error.localizedDescription)"
+                    settings.showLaunchAlert = true
+                }
+            }
+        }
+    }
+
     /// 解析本次下载的目标文件信息（URL/文件名/目标目录/标题），供下载详情页任务使用。
     /// 返回后由 ModFileDownloadTask 负责带进度下载（SingleFileDownloader → NetManager）。
     private func resolveDownloadFile() async throws -> (url: URL, filename: String, destination: URL, title: String) {
@@ -728,8 +815,8 @@ struct ModDetailView: View {
             return (url, filename, versionDir, item.name)
 
         case .loaderSelector:
-            // 游戏版本页不需要下载
-            throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "游戏版本页无需下载"])
+            // 兜底：正常流程已在 startDownload() 提前走 startGameVersionDownload()，不会走到这里
+            throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "游戏版本下载请使用右下角下载按钮"])
         }
     }
 

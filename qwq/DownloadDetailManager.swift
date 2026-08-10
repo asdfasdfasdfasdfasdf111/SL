@@ -32,7 +32,15 @@ final class DownloadDetailManager: ObservableObject {
     /// 注意 key 必须在 InstallTasks.getTasks() 的固定顺序表内（minecraft/fabric/forge/neoforge/customFile），
     /// 否则 getTasks() 取不到任务（order 里没有的 key 会被过滤掉）
     func start(_ task: InstallTask, key: String = "customFile") {
-        tasks = InstallTasks.single(task, key: key)
+        start(InstallTasks.single(task, key: key))
+    }
+
+    /// 开始一组下载任务（如游戏版本安装：minecraft + fabric/forge/neoforge）并打开详情页
+    /// 同时同步到 DataManager.inprogressInstallTasks——MinecraftInstaller.createTask 内部靠它
+    /// 查找加载器任务（tasks["fabric"/"forge"/"neoforge"]）来串联加载器安装
+    func start(_ tasks: InstallTasks) {
+        self.tasks = tasks
+        DataManager.shared.inprogressInstallTasks = tasks
         isPresented = true
     }
 
