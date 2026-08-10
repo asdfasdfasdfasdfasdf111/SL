@@ -351,100 +351,13 @@ class JavaManager {
         }
     }
 
-    // MARK: - 版本解析（优先读 release 文件，不行再跑 java -version）
+    // MARK: - 版本解析（优先读 release 文件，不行再跑 java -version；主体在 JavaVersionParser）
 
     func parseJavaVersion(at path: String) -> JavaInfo? {
-        let javaBin = (path as NSString).resolvingSymlinksInPath
-        let homeDir = ((javaBin as NSString).deletingLastPathComponent as NSString).deletingLastPathComponent
-
-        // 优先读 release 文件（PCL.Mac 的做法，不需要启动进程）
-        let releasePaths = [
-            homeDir + "/release",
-            ((javaBin as NSString).deletingLastPathComponent as NSString).deletingLastPathComponent + "/release"
-        ]
-
-        var majorVersion = 0
-        var displayVersion = "未知"
-        var vendor: String? = nil
-        var arch = "unknown"
-
-        for releasePath in releasePaths {
-            guard let content = try? String(contentsOfFile: releasePath, encoding: .utf8) else { continue }
-            let lines = content.split(separator: "\n")
-            for line in lines {
-                let trimmed = line.trimmingCharacters(in: .whitespaces)
-                if trimmed.hasPrefix("JAVA_VERSION=") {
-                    let raw = String(trimmed.dropFirst(13)).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-                    // 去掉引号内的引号
-                    displayVersion = raw.replacingOccurrences(of: "\"", with: "")
-                    // 解析主版本号
-                    let cleaned = displayVersion.replacingOccurrences(of: "\"", with: "")
-                    if cleaned.hasPrefix("1.") {
-                        majorVersion = Int(cleaned.split(separator: ".").dropFirst().first ?? "0") ?? 0
-                    } else {
-                        majorVersion = Int(cleaned.split(separator: ".").first ?? "0") ?? 0
-                    }
-                }
-                if trimmed.hasPrefix("IMPLEMENTOR=") {
-                    vendor = String(trimmed.dropFirst(13)).trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-                }
-            }
-            if majorVersion > 0 { break }
-        }
-
-        // 如果 release 文件解析失败，回退到 java -version
-        if majorVersion == 0 {
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: javaBin)
-            task.arguments = ["-version"]
-            let pipe = Pipe()
-            task.standardError = pipe
-            try? task.run()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            task.waitUntilExit()
-            guard let output = String(data: data, encoding: .utf8) else { return nil }
-
-            let versionPattern = #"version "(\d+)"#
-            if let regex = try? NSRegularExpression(pattern: versionPattern),
-               let match = regex.firstMatch(in: output, range: NSRange(location: 0, length: output.utf16.count)) {
-                majorVersion = Int((output as NSString).substring(with: match.range(at: 1))) ?? 0
-            } else {
-                let oldPattern = #"version "1\.(\d+)"#
-                if let regex = try? NSRegularExpression(pattern: oldPattern),
-                   let match = regex.firstMatch(in: output, range: NSRange(location: 0, length: output.utf16.count)) {
-                    majorVersion = Int((output as NSString).substring(with: match.range(at: 1))) ?? 0
-                }
-            }
-
-            if output.contains("aarch64") || output.contains("arm64") { arch = "arm64" }
-            else if output.contains("x86_64") || output.contains("64-Bit") { arch = "x86_64" }
-
-            if let vendorRange = output.range(of: #"(?:Oracle|Azul|Eclipse|IBM|Microsoft|Amazon|Red Hat|Tencent|Alibaba|Huawei|BellSoft|SAP|AdoptOpenJDK|OpenJDK)"#, options: .regularExpression) {
-                vendor = String(output[vendorRange])
-            }
-            displayVersion = "\(majorVersion)"
-        }
-
-        // 用 file 命令检测架构（PCL.Mac 做法）
-        if arch == "unknown" {
-            let fileTask = Process()
-            fileTask.executableURL = URL(fileURLWithPath: "/usr/bin/file")
-            fileTask.arguments = [javaBin]
-            let filePipe = Pipe()
-            fileTask.standardOutput = filePipe
-            try? fileTask.run()
-            let fileData = filePipe.fileHandleForReading.readDataToEndOfFile()
-            fileTask.waitUntilExit()
-            let fileOutput = String(data: fileData, encoding: .utf8) ?? ""
-            if fileOutput.contains("arm64") { arch = "arm64" }
-            else if fileOutput.contains("x86_64") { arch = "x86_64" }
-        }
-
-        let normalizedArch = arch == "x86_64" ? "x64" : (arch == "arm64" ? "aarch64" : arch)
-
-        let info = JavaInfo(path: javaBin, majorVersion: majorVersion, fullVersion: displayVersion, architecture: normalizedArch, vendor: vendor, isValid: true)
-        if majorVersion >= 8 {
-            saveCachedJavaPath(javaBin)
+        guard let info = JavaVersionParser.parse(at: path) else { return nil }
+        // 缓存写入留在管理器中：解析器保持无副作用
+        if info.majorVersion >= 8 {
+            saveCachedJavaPath(path)
         }
         return info
     }
@@ -479,116 +392,9 @@ class JavaManager {
         return nil
     }
 
-    // MARK: - Java 下载（参考 PCL.Mac：Azul Zulu API）
+    // MARK: - Java 下载（参考 PCL.Mac：Azul Zulu API；主体在 JavaDownloader）
 
     func downloadJava(version: Int, progressHandler: @escaping (Double) -> Void, completion: @escaping (Result<URL, Error>) -> Void) {
-        let arch = currentArch == "aarch64" ? "aarch64" : "x64"
-
-        // 使用 Azul Zulu API 搜索可用版本
-        let apiURL = "https://api.azul.com/metadata/v1/zulu/packages/?os=macos&archive_type=zip&java_version=\(version)&arch=\(arch)&java_package_type=jdk&latest=true"
-
-        guard let url = URL(string: apiURL) else {
-            completion(.failure(NSError(domain: "JavaManager", code: -1)))
-            return
-        }
-
-        URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
-            guard let self = self else { return }
-            if let error = error { completion(.failure(error)); return }
-            guard let data = data else { completion(.failure(NSError(domain: "JavaManager", code: -2))); return }
-
-            guard let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-                  let pkg = json.first,
-                  let downloadURLStr = pkg["download_url"] as? String,
-                  let downloadURL = URL(string: downloadURLStr),
-                  let pkgName = pkg["name"] as? String else {
-                // Azul API 失败，回退到 Microsoft JDK
-                self.downloadMicrosoftJDK(version: version, arch: arch, progressHandler: progressHandler, completion: completion)
-                return
-            }
-
-            let downloadTask = URLSession.shared.downloadTask(with: downloadURL) { [weak self] tempURL, _, error in
-                guard let self = self else { return }
-                if let error = error { completion(.failure(error)); return }
-                guard let tempURL = tempURL else { completion(.failure(NSError(domain: "JavaManager", code: -3))); return }
-
-                let targetDir = self.javaBasePath.appendingPathComponent("jdk-\(version)")
-                try? FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
-
-                // 解压 zip
-                let unzip = Process()
-                unzip.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-                unzip.arguments = ["-o", tempURL.path, "-d", targetDir.path]
-                do {
-                    try unzip.run()
-                    unzip.waitUntilExit()
-                } catch {
-                    completion(.failure(error))
-                    return
-                }
-
-                // 查找解压后的 java 可执行文件
-                if let javaURL = self.findJavaExecutable(in: targetDir) {
-                    completion(.success(javaURL))
-                } else {
-                    completion(.failure(NSError(domain: "JavaManager", code: -4, userInfo: [NSLocalizedDescriptionKey: "解压后未找到 Java"])))
-                }
-            }
-            let observation = downloadTask.progress.observe(\.fractionCompleted) { progress, _ in
-                DispatchQueue.main.async { progressHandler(progress.fractionCompleted) }
-            }
-            objc_setAssociatedObject(downloadTask, "progressObserver", observation, .OBJC_ASSOCIATION_RETAIN)
-            downloadTask.resume()
-        }.resume()
-    }
-
-    private func downloadMicrosoftJDK(version: Int, arch: String, progressHandler: @escaping (Double) -> Void, completion: @escaping (Result<URL, Error>) -> Void) {
-        let urlString: String
-        if version == 17 {
-            urlString = arch == "aarch64" ? "https://aka.ms/download-jdk/microsoft-jdk-17-macOS-aarch64.tar.gz" : "https://aka.ms/download-jdk/microsoft-jdk-17-macOS-x64.tar.gz"
-        } else if version == 21 {
-            urlString = arch == "aarch64" ? "https://aka.ms/download-jdk/microsoft-jdk-21-macOS-aarch64.tar.gz" : "https://aka.ms/download-jdk/microsoft-jdk-21-macOS-x64.tar.gz"
-        } else {
-            completion(.failure(NSError(domain: "JavaManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "不支持的 Java 版本"])))
-            return
-        }
-        guard let url = URL(string: urlString) else {
-            completion(.failure(NSError(domain: "JavaManager", code: -2)))
-            return
-        }
-        let downloadTask = URLSession.shared.downloadTask(with: url) { [weak self] tempURL, _, error in
-            guard let self = self else { return }
-            if let error = error { completion(.failure(error)); return }
-            guard let tempURL = tempURL else { completion(.failure(NSError(domain: "JavaManager", code: -3))); return }
-            let targetDir = self.javaBasePath.appendingPathComponent("jdk-\(version)")
-            try? FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
-            let tar = Process()
-            tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-            tar.arguments = ["-xzf", tempURL.path, "-C", targetDir.path, "--strip-components=1"]
-            do {
-                try tar.run()
-                tar.waitUntilExit()
-                if tar.terminationStatus == 0, let javaURL = self.findJavaExecutable(in: targetDir) {
-                    completion(.success(javaURL))
-                } else {
-                    completion(.failure(NSError(domain: "JavaManager", code: -4, userInfo: [NSLocalizedDescriptionKey: "解压失败"])))
-                }
-            } catch { completion(.failure(error)) }
-        }
-        let observation = downloadTask.progress.observe(\.fractionCompleted) { progress, _ in
-            DispatchQueue.main.async { progressHandler(progress.fractionCompleted) }
-        }
-        objc_setAssociatedObject(downloadTask, "progressObserver", observation, .OBJC_ASSOCIATION_RETAIN)
-        downloadTask.resume()
-    }
-
-    private func findJavaExecutable(in directory: URL) -> URL? {
-        guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil) else { return nil }
-        for case let fileURL as URL in enumerator {
-            if fileURL.lastPathComponent == "java" && FileManager.default.isExecutableFile(atPath: fileURL.path) {
-                return fileURL
-            }
-        }
-        return nil
+        JavaDownloader.download(version: version, basePath: javaBasePath, arch: currentArch, progressHandler: progressHandler, completion: completion)
     }
 }

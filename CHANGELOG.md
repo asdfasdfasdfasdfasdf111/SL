@@ -76,6 +76,7 @@
 - **代码极致模块化（第三批）**：`ModDetailView.swift` 由 1188 行拆至 979 行，拆出 4 个职责单一文件——`DetailPageType.swift`（详情页类型枚举，ModDetailView/GameViews 共用）、`GameVersionHelper.swift`（版本比较/显示排序/愚人节版本判断共享工具，消除 ModDetailView 与 GameViews 中的重复私有实现）、`GameDirectoryScanner.swift`（本地已装版本/版本内加载器探测/光影文件夹检测扫描器）、`DownloadFileResolver.swift`（下载目标文件解析，静态方法保持闭包零 self 捕获的 UAF 防护语义不变）
 - **代码极致模块化（第四批）**：`GameViews.swift` 由 1242 行拆至 953 行，拆出 `GameVersionManifest.swift`（官方+未列出版本清单并发拉取合并，5 分钟内存缓存，ModDetailView 同步改用）与 `LocalModCatalog.swift`（本地 12 万条 Modrinth 全量目录：gzip 解析 + 磁盘缓存二次秒开 + 后台预热 + 翻译预取，`warmUp`/`items`/`isReady` 供 qwqApp 与视图调用）；GameViews 内的愚人节版本判断重复实现改用共享的 `GameVersionHelper.isAprilFoolVersion`
 - **代码极致模块化（第五批）**：`CategoryContentView.swift` 由 1001 行拆至 897 行，拆出 `GameSession.swift`（启动会话模型 + LaunchPhase + closeGameSession 通知）、`SessionLogCardView.swift`（启动日志卡片视图）、`SkinExtractor.swift`（从版本 JAR 提取 steve/alex 默认皮肤，unzip 临时目录提取）
+- **代码极致模块化（第六批）**：`JavaManager.swift` 由 593 行拆至 399 行，拆出 `JavaDownloader.swift`（Azul Zulu API 优先 + Microsoft JDK 17/21 回退的 JDK 下载解压）与 `JavaVersionParser.swift`（release 文件优先 + java -version 回退 + file 架构检测的版本解析）；JavaManager 的 `parseJavaVersion`/`downloadJava` 保留薄封装（缓存写入等副作用留在管理器，解析器保持无副作用）
 
 ## [1.0.0] - 2026-08-07
 
