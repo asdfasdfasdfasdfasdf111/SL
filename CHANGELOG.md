@@ -6,6 +6,7 @@
 
 ### 变更
 
+- **代码极致模块化（第三十七批）：Services/JavaPathFinder.swift 263→229 行**——按顶层声明拆出 `qwq/JavaInfo.swift`（Java 信息模型，JavaManager/JavaVersionParser/ThemeManager 共享，与查找器无逻辑关系）与 `qwq/JavaEnvironment.swift`（JavaEnvironment 模型 + `compareJavaVersions` 版本比较工具）。纯搬移零行为变更，查找器保留多来源全量扫描 + 内存缓存
 - **代码极致模块化（第三十六批）：TranslationService.swift 275→141 行**——拆出 `qwq/ProjectTranslationTable.swift`（内置翻译表 + `match(id)`/`hint(forTitle:)` 查找）、`qwq/ChineseText.swift`（中文字符检测纯函数，消除原私有重复实现）、`qwq/TranslationSourceFetcher.swift`（三个翻译源竞速获取：Modrinth 详情 / 镜像翻译 / MyMemory 兜底，显式传 session 零共享状态）。服务只保留翻译主流程 + 并发限制 + 去重 + 缓存读取，引用点全部改走新模块
 - **代码极致模块化（第三十五批）：ModDownloader.swift 297→237 行**——按顶层声明拆出 `qwq/ModrinthModels.swift`（Modrinth API v2 响应模型族：ModrinthMod/ModrinthProject/ModrinthVersion+嵌套 ModrinthFile，搜索/详情/翻译共享）与 `qwq/ModLoader.swift`（加载器枚举 + displayName/assetName 扩展）。纯搬移零行为变更，ModDownloader 保留下载服务本体（搜索缓存/去重/单文件下载/版本解析）
 - **代码极致模块化（第三十四批）：CategoryContentView.swift 532→302 行**——新建 `qwq/LaunchCoordinator.swift`（游戏启动编排 + 启动会话生命周期管理 enum：`start`（版本/用户名校验 → 皮肤资源包准备 → pclLaunch 六段回调 → 会话登记，177 行巨型方法整体下沉）、`closeSession`（日志卡 xmark → .closeGameSession 通知 → 终止进程 → 移除会话 → 空时复位启动状态）、`handlePowerTap`（电源按钮：运行中 NSAlert 确认终止全部 / 取消启动复位））。只操作引用类型单例（LauncherSettings/LaunchSessionManager）与全局函数 pclLaunch，六段回调零 self 捕获（UAF 根治语义不变）；视图三个方法改一行转发
