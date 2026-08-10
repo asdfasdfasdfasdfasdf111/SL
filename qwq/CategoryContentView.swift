@@ -19,8 +19,6 @@ struct CategoryContentView: View {
     @State private var lightProgress: Double = 0.0
     @State private var darkProgress: Double = 0.2
     @State private var darkBarTarget: Double = 0.2
-    @State private var closeButtonScale: CGFloat = 0.01
-    @State private var closeButtonGlow: CGFloat = 0
     @State private var darkBarActive = false
     @State private var darkBarTimer: Timer?
     // 多会话支持：每次启动创建一个 GameSession
@@ -57,10 +55,13 @@ struct CategoryContentView: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 20)
-            closeButtonOverlay
+            CloseSessionButton(
+                isLaunching: isLaunching,
+                hasRunningSessions: gameSessions.contains(where: { $0.isProcessRunning }),
+                onTap: { handleCloseSessionTap() }
+            )
         }
     }
-
     private func leftCard(cardWidth: CGFloat, avatarSize: CGFloat, buttonWidth: CGFloat) -> some View {
         VStack(spacing: 16) {
             if !settings.selectedMinecraftVersion.isEmpty {
@@ -268,87 +269,43 @@ struct CategoryContentView: View {
         }
     }
 
-    private var closeButtonOverlay: some View {
-        Group {
-            if isLaunching || gameSessions.contains(where: { $0.isProcessRunning }) {
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        Button(action: {
-                            let runningSessions = gameSessions.filter { $0.isProcessRunning }
-                            if !runningSessions.isEmpty {
-                                let alert = NSAlert()
-                                alert.messageText = runningSessions.count == 1 ? "确认关闭游戏？" : "确认关闭 \(runningSessions.count) 个正在运行的游戏？"
-                                alert.informativeText = "游戏进程将被终止，未保存的进度可能会丢失。"
-                                alert.alertStyle = .warning
-                                alert.addButton(withTitle: "关闭")
-                                alert.addButton(withTitle: "取消")
-                                let response = alert.runModal()
-                                if response == .alertFirstButtonReturn {
-                                    for s in runningSessions {
-                                        s.launcher.terminate()
-                                        s.isProcessRunning = false
-                                        s.isLaunching = false
-                                    }
-                                    withAnimation(.exaggeratedSpring) {
-                                        gameSessions.removeAll()
-                                        showLogView = false
-                                    }
-                                    resetLaunchState()
-                                    withAnimation(.easeOut(duration: 0.3)) {
-                                        launchPhase = .idle
-                                    }
-                                }
-                            } else {
-                                isLaunching = false
-                                launchProgress = 0.0
-                                lightProgress = 0.0
-                                darkProgress = 0.2
-                                darkBarTarget = 0.2
-                                darkBarActive = false
-                                stopDarkBarAnimation()
-                                withAnimation(.easeOut(duration: 0.3)) {
-                                    launchPhase = .idle
-                                    showLogView = false
-                                }
-                            }
-                        }) {
-                            ZStack {
-                                Circle()
-                                    .stroke(theme.accentColor.opacity(closeButtonGlow), lineWidth: 2.5)
-                                    .frame(width: 44, height: 44)
-                                    .scaleEffect(closeButtonScale * 1.8)
-                                Image(systemName: "power")
-                                    .font(.system(size: 18, weight: .medium))
-                                    .foregroundColor(.primary)
-                                    .frame(width: 44, height: 44)
-                                    .background(Circle().fill(.regularMaterial).shadow(radius: 4))
-                                    .scaleEffect(closeButtonScale)
-                            }
-                            .onAppear {
-                                withAnimation(.spring(response: 0.45, dampingFraction: 0.55)) {
-                                    closeButtonScale = 1.3
-                                    closeButtonGlow = 0.8
-                                }
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
-                                        closeButtonScale = 0.85
-                                    }
-                                }
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                        closeButtonScale = 1.0
-                                        closeButtonGlow = 0
-                                    }
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .padding(20)
-                        .help(gameSessions.contains(where: { $0.isProcessRunning }) ? "关闭所有游戏" : "取消启动")
-                    }
+    /// 电源按钮点击：运行中有游戏 → NSAlert 确认后终止全部；否则取消启动并复位
+    private func handleCloseSessionTap() {
+        let runningSessions = gameSessions.filter { $0.isProcessRunning }
+        if !runningSessions.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = runningSessions.count == 1 ? "确认关闭游戏？" : "确认关闭 \(runningSessions.count) 个正在运行的游戏？"
+            alert.informativeText = "游戏进程将被终止，未保存的进度可能会丢失。"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "关闭")
+            alert.addButton(withTitle: "取消")
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                for s in runningSessions {
+                    s.launcher.terminate()
+                    s.isProcessRunning = false
+                    s.isLaunching = false
                 }
+                withAnimation(.exaggeratedSpring) {
+                    gameSessions.removeAll()
+                    showLogView = false
+                }
+                resetLaunchState()
+                withAnimation(.easeOut(duration: 0.3)) {
+                    launchPhase = .idle
+                }
+            }
+        } else {
+            isLaunching = false
+            launchProgress = 0.0
+            lightProgress = 0.0
+            darkProgress = 0.2
+            darkBarTarget = 0.2
+            darkBarActive = false
+            stopDarkBarAnimation()
+            withAnimation(.easeOut(duration: 0.3)) {
+                launchPhase = .idle
+                showLogView = false
             }
         }
     }
