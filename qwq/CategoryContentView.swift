@@ -3,28 +3,6 @@ import AppKit
 import UniformTypeIdentifiers
 import Combine
 
-/// 单次游戏启动会话：绑定 launcher、日志、序号
-final class GameSession: ObservableObject, Identifiable {
-    let id: UUID = UUID()
-    let index: Int
-    let launcher: MinecraftLauncher
-    @Published var logs: [String] = []
-    @Published var isProcessRunning: Bool = true
-    @Published var isLaunching: Bool = true
-    init(index: Int, launcher: MinecraftLauncher) {
-        self.index = index
-        self.launcher = launcher
-    }
-}
-
-enum LaunchPhase: Equatable {
-    case idle
-    case preparing
-    case downloading
-    case installing
-    case launching
-}
-
 struct CategoryContentView: View {
     let category: Category
     let searchText: String
@@ -142,7 +120,7 @@ struct CategoryContentView: View {
         let gameDirPath = settings.selectedGameRoot.isEmpty ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "") : settings.selectedGameRoot
         if !settings.selectedMinecraftVersion.isEmpty && !gameDirPath.isEmpty,
            let gameDirURL = Optional(URL(fileURLWithPath: gameDirPath)),
-           let skinURL = extractSkinFromGameJar(version: settings.selectedMinecraftVersion, gameDir: gameDirURL) {
+           let skinURL = SkinExtractor.extractFromGameJar(version: settings.selectedMinecraftVersion, gameDir: gameDirURL) {
             if let skinData = try? Data(contentsOf: skinURL) {
                 try? skinData.write(to: skinDestURL)
                 settings.skinImageURL = skinDestURL
@@ -607,7 +585,7 @@ struct CategoryContentView: View {
         let gameDirPath2 = settings.selectedGameRoot.isEmpty ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "") : settings.selectedGameRoot
         if !settings.selectedMinecraftVersion.isEmpty && !gameDirPath2.isEmpty,
            let gameDirURL = Optional(URL(fileURLWithPath: gameDirPath2)),
-           let skinURL = extractSkinFromGameJar(version: settings.selectedMinecraftVersion, gameDir: gameDirURL) {
+           let skinURL = SkinExtractor.extractFromGameJar(version: settings.selectedMinecraftVersion, gameDir: gameDirURL) {
             let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             let skinDir = appSupport.appendingPathComponent("SL启动器/Skins")
             try? FileManager.default.createDirectory(at: skinDir, withIntermediateDirectories: true)
@@ -621,35 +599,6 @@ struct CategoryContentView: View {
             settings.skinImageURL = builtinURL
             settings.avatarImageURL = builtinURL
         }
-    }
-    
-    func extractSkinFromGameJar(version: String, gameDir: URL) -> URL? {
-        let jarURL = gameDir.appendingPathComponent("versions/\(version)/\(version).jar")
-        guard FileManager.default.fileExists(atPath: jarURL.path) else { return nil }
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-        if let skinURL = extractSkinFile(from: jarURL, tempDir: tempDir, skinName: "steve") {
-            return skinURL
-        }
-        if let skinURL = extractSkinFile(from: jarURL, tempDir: tempDir, skinName: "alex") {
-            return skinURL
-        }
-        return nil
-    }
-    
-    private func extractSkinFile(from jarURL: URL, tempDir: URL, skinName: String) -> URL? {
-        let result = AppContext.shared.processPool.execute(
-            "/usr/bin/unzip",
-            args: ["-j", jarURL.path, "assets/minecraft/textures/entity/\(skinName).png", "-d", tempDir.path],
-            timeout: 10
-        )
-        guard result != nil else { return nil }
-        let skinURL = tempDir.appendingPathComponent("\(skinName).png")
-        if FileManager.default.fileExists(atPath: skinURL.path) {
-            return skinURL
-        }
-        return nil
     }
     
     func loadAvatarFromGameOrBundle() {
@@ -687,7 +636,7 @@ struct CategoryContentView: View {
         }
         do {
             let gameDirURL = URL(fileURLWithPath: settings.selectedGameRoot.isEmpty ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "") : settings.selectedGameRoot)
-            if let skinURL = extractSkinFromGameJar(version: settings.selectedMinecraftVersion, gameDir: gameDirURL) {
+            if let skinURL = SkinExtractor.extractFromGameJar(version: settings.selectedMinecraftVersion, gameDir: gameDirURL) {
                 let avatarImage = try MinecraftSkinManager.shared.cropAvatar(from: skinURL)
                 let avatarDir = appSupport.appendingPathComponent("SL启动器/Avatars")
                 try FileManager.default.createDirectory(at: avatarDir, withIntermediateDirectories: true)
@@ -945,58 +894,4 @@ struct CategoryContentView: View {
         darkBarTimer?.invalidate()
         darkBarTimer = nil
     }
-}
-
-/// 独立的日志卡片视图：用 @ObservedObject 监听 session.logs 变化，确保日志实时刷新
-private struct SessionLogCardView: View {
-    @ObservedObject var session: GameSession
-    let logCardHeight: CGFloat
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text("启动日志\(session.index)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Spacer()
-                Button(action: {
-                    NotificationCenter.default.post(name: .closeGameSession, object: session)
-                }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help(session.isProcessRunning ? "关闭此游戏进程" : "移除此日志")
-            }
-            .padding(.horizontal, 8)
-            .padding(.top, 8)
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(session.logs.indices, id: \.self) { idx in
-                            Text(session.logs[idx])
-                                .font(.system(.caption2, design: .monospaced))
-                                .foregroundColor(.secondary)
-                                .id(idx)
-                        }
-                    }
-                    .padding(4)
-                }
-                .frame(height: logCardHeight)
-                .background(RoundedRectangle(cornerRadius: 8).fill(.ultraThinMaterial))
-                .onChange(of: session.logs.count) { _ in
-                    withAnimation(.exaggeratedSpring) {
-                        proxy.scrollTo(session.logs.count - 1, anchor: .bottom)
-                    }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .top)
-        .background(RoundedRectangle(cornerRadius: 16).fill(.regularMaterial).shadow(radius: 4))
-    }
-}
-
-extension Notification.Name {
-    static let closeGameSession = Notification.Name("closeGameSession")
 }
