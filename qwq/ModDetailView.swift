@@ -3,7 +3,8 @@
 //  模块化拆分：从 GameViews.swift 拆出（原文件 2776 行，拆分后职责单一、可读性提升）
 //  纯 UI 详情页 + 下载编排：DetailPageType（qwq/DetailPageType.swift）、版本工具（qwq/VersionUtils.swift）、
 //  目录扫描（qwq/GameDirectoryScanner.swift）、下载解析（qwq/DownloadFileResolver.swift）、
-//  版本选择区块（qwq/VersionSelectionSection.swift）、光影加载器过滤（qwq/ShaderLoaderFilter.swift）均已拆至独立文件。
+//  版本选择区块（qwq/VersionSelectionSection.swift）、光影加载器过滤（qwq/ShaderLoaderFilter.swift）、
+//  光影前置加载器提示（qwq/ShaderPrerequisiteSection.swift）均已拆至独立文件。
 //
 
 import SwiftUI
@@ -545,7 +546,7 @@ struct ModDetailView: View {
                 )
 
                 if pageTypeForIndex == .shader, !hasShaderFolder, shaderFolderChecked, isBasePage {
-                    shaderPrerequisiteSection
+                    ShaderPrerequisiteSection(onSelect: { navigateToPrerequisite($0) })
                 }
 
                 if pageTypeForIndex != .loaderSelector && pageTypeForIndex != .modpack {
@@ -594,29 +595,6 @@ struct ModDetailView: View {
         }
         .padding(.bottom, 90)
         }
-        }
-    }
-
-    private var shaderPrerequisiteSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("光影必要的光影加载器（启动运行后起效）")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(.secondary)
-                .padding(.top, 8)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    PrerequisiteModCard(
-                        item: DownloadedItem(id: "AANobbMI", name: "Sodium", subtitle: "性能优化模组", iconURL: nil, tags: [])
-                    ) {
-                        navigateToPrerequisite(DownloadedItem(id: "AANobbMI", name: "Sodium", subtitle: "现代渲染引擎优化模组", iconURL: nil, tags: []))
-                    }
-                    PrerequisiteModCard(
-                        item: DownloadedItem(id: "YL57xq9U", name: "Iris", subtitle: "光影加载器", iconURL: nil, tags: [])
-                    ) {
-                        navigateToPrerequisite(DownloadedItem(id: "YL57xq9U", name: "Iris", subtitle: "兼容Sodium的光影加载器", iconURL: nil, tags: []))
-                    }
-                }
-            }
         }
     }
 

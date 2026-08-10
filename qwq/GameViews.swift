@@ -350,47 +350,12 @@ struct DownloadCategoryView: View {
     ) -> some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
-                searchBarRow(cardPadding: cardPadding)
+                CategorySearchBar(title: displayTitle, searchText: $searchText, cardPadding: cardPadding)
                 contentBody(cardPadding: cardPadding, columns: columns, cardWidth: cardWidth)
             }
             .frame(width: contentWidth)
         }
         .frame(width: contentWidth + cardPadding * 2, alignment: .leading)
-    }
-
-    private func searchBarRow(cardPadding: CGFloat) -> some View {
-        HStack {
-            Text(displayTitle)
-                .font(.system(size: 26, weight: .bold))
-                .foregroundColor(.primary)
-
-            Spacer()
-
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundColor(.secondary)
-                    .font(.system(size: 12))
-                TextField("搜索\(displayTitle)...", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .frame(width: 160)
-                if !searchText.isEmpty {
-                    Button(action: { searchText = "" }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundColor(.secondary)
-                            .font(.system(size: 12))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(.ultraThinMaterial)
-            )
-        }
-        .padding(.top, cardPadding)
     }
 
     @ViewBuilder
