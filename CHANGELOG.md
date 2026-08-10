@@ -6,6 +6,7 @@
 
 ### 变更
 
+- **代码极致模块化（第十四批）：GameViews.swift 由 828 行拆至 755 行**——拆出 `qwq/GameSidebarView.swift`（分类侧边栏独立视图组件：section 高亮/游戏子分类展开/子项弹入动画，状态全部外部传入（`selectedSection`/`selectedSubCategory`/`subItemOpacity`/`sectionHighlightY` 四个 @Binding + 选择回调），纯展示无逻辑）。`DownloadCategoryView` 删除 `gameSidebar`/`sidebarSectionHeader`/`sidebarSubItem` 三个方法，mainHStack 改挂 `GameSidebarView`
 - **代码极致模块化（第十三批）：CategoryContentView.swift 由 711 行拆至 703 行**——拆出 `qwq/OfflineUsernameValidator.swift`（离线用户名合法性提示，PCL2 语义：>16 字符 / 非 `[0-9A-Za-z_]`，与 PCLCore 启动前硬校验 `validateOfflineUsername` 互补，输入框内联提示用）。视图 `offlineUsernameHint` 改为一行转发
 - **代码极致模块化（第十二批）：ModDetailView.swift 由 829 行拆至 756 行**——拆出 `qwq/LoaderNameResolver.swift`（加载器 key→资源名映射 + 从版本字符串后缀/子串/本地扫描结果解析加载器，含用户选择回退）、`qwq/CrossVersionFinder.swift`（资源包/光影跨版本下载匹配：排除目标版本后按相邻顺序找第一个已建对应目录的版本）、`qwq/ModpackVersionGrouping.swift`（整合包版本按 game_versions 去重分组降序）。同时删除死代码 `getModPrerequisites`（恒返回 nil）与其「前置模组」渲染块，删 `loaderAssetMap` 静态字典
 - **代码极致模块化（第十一批）：GameViews.swift 由 870 行拆至 828 行**——拆出 `qwq/SearchTranslator.swift`（搜索翻译模块：`translate(_:)` 调用 MyMemory API 中文→英文候选词，自带 100 条上限内存缓存与锁，纯数据无视图依赖）。`DownloadCategoryView` 删除私有 `translateChineseToEnglish` 与 searchTranslationCache 静态成员，中文搜索改走 `SearchTranslator.translate`，`clearStaticCaches()` 改为调用 `SearchTranslator.clearCache()`
