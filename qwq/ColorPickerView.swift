@@ -79,7 +79,11 @@ struct AnimatedCategoryPicker: View {
                     .background(GeometryReader { geo in
                         Color.clear
                             .onAppear { frames[category] = geo.frame(in: .global) }
-                            .onChange(of: geo.frame(in: .global)) { frames[category] = $0 }
+                            .onChange(of: geo.frame(in: .global)) { newFrame in
+                                // 布局事务中改 @State 会触发 "Modifying state during view update"（UAF 前兆），
+                                // 延迟到下一轮 runloop 再写，滑块位置晚一帧更新无感知
+                                DispatchQueue.main.async { frames[category] = newFrame }
+                            }
                     })
                 }
                 .buttonStyle(.plain)

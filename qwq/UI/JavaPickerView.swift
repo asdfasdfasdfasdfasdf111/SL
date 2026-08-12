@@ -181,8 +181,11 @@ struct JavaPickerView: View {
             selectedJavaPath = localSelection
         }
         .onChange(of: settings.availableJavaList) { _ in
-            cachedOptions = buildOptions()
-            updateSelectedIndex()
+            // onChange 处于视图更新事务中，同步写 @State 会触发 "Modifying state during view update"（UAF 前兆）
+            DispatchQueue.main.async {
+                cachedOptions = buildOptions()
+                updateSelectedIndex()
+            }
         }
     }
     

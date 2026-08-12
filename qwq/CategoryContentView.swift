@@ -101,7 +101,11 @@ struct CategoryContentView: View {
         .clipped()
         .padding(6)
         .onAppear {
-            loadSkinImageIfNeeded()
+            // 延迟到渲染事务外：onAppear 同步写 @Published 会触发
+            // "Modifying state during view update"（UAF 崩溃前兆）
+            DispatchQueue.main.async {
+                loadSkinImageIfNeeded()
+            }
         }
     }
 
@@ -278,17 +282,26 @@ struct CategoryContentView: View {
         .id(category.id)
         .onChange(of: settings.selectedMinecraftVersion) { _ in
             if !sessionManager.isLaunching {
-                OfflineSkinService.loadAvatarFromGameOrBundle(isLaunching: sessionManager.isLaunching, settings: settings)
+                // 延迟到渲染事务外执行：onChange 处于视图更新事务中，同步写 @Published
+                // 会触发 "Modifying state during view update" → 未定义行为 → UAF 崩溃（EXC_BAD_ACCESS 跳进位图区）
+                DispatchQueue.main.async {
+                    OfflineSkinService.loadAvatarFromGameOrBundle(isLaunching: sessionManager.isLaunching, settings: settings)
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("GameVersionSelected"))) { _ in
             if !sessionManager.isLaunching {
-                OfflineSkinService.loadDefaultIfNeeded(isLaunching: sessionManager.isLaunching, settings: settings)
+                DispatchQueue.main.async {
+                    OfflineSkinService.loadDefaultIfNeeded(isLaunching: sessionManager.isLaunching, settings: settings)
+                }
             }
         }
         .onAppear {
-            OfflineSkinService.loadAvatarFromGameOrBundle(isLaunching: sessionManager.isLaunching, settings: settings)
-            OfflineSkinService.loadDefaultIfNeeded(isLaunching: sessionManager.isLaunching, settings: settings)
+            // 同样延迟执行：onAppear 在视图渲染事务中触发，同步改 @Published 会破坏状态机
+            DispatchQueue.main.async {
+                OfflineSkinService.loadAvatarFromGameOrBundle(isLaunching: sessionManager.isLaunching, settings: settings)
+                OfflineSkinService.loadDefaultIfNeeded(isLaunching: sessionManager.isLaunching, settings: settings)
+            }
         }
         .onDisappear {
             sessionManager.stopDarkBarAnimation()

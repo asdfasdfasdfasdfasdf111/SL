@@ -149,7 +149,10 @@ struct ModDetailView: View {
                 applyDefaultVersionSelection()
                 triggerPageLoads()
             }
-            .onChange(of: geometry.size.width) { pageWidth = $0 }
+            .onChange(of: geometry.size.width) { newWidth in
+                // 布局事务中写 @State 会触发 "Modifying state during view update"（UAF 前兆）
+                DispatchQueue.main.async { pageWidth = newWidth }
+            }
             .onChange(of: selectedVersion) { newValue in
                 if pageType == .loaderSelector {
                     fetchLoaderSupport(for: newValue)

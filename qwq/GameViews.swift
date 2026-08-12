@@ -307,7 +307,10 @@ struct DownloadCategoryView: View {
         .overlay(
             Color.clear.frame(width: 0, height: 0)
                 .onAppear { geometryWidth = geometry.size.width }
-                .onChange(of: geometry.size.width) { geometryWidth = $0 }
+                .onChange(of: geometry.size.width) { newWidth in
+                    // 布局事务中写 @State 会触发 "Modifying state during view update"（UAF 前兆）
+                    DispatchQueue.main.async { geometryWidth = newWidth }
+                }
         )
     }
 
