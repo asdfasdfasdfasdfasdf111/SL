@@ -192,9 +192,13 @@ private struct DownloadTaskCard<Content: View>: View {
         .scaleEffect(appearScale)
         .opacity(appearOpacity)
         .onAppear {
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) {
-                appearScale = 1.0
-                appearOpacity = 1.0
+            // 入场弹入：延迟到渲染事务外（onAppear 处于视图更新事务中，同步写 @State 会触发
+            // "Modifying state during view update" → UAF 前兆）
+            DispatchQueue.main.async {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) {
+                    appearScale = 1.0
+                    appearOpacity = 1.0
+                }
             }
         }
     }

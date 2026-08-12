@@ -140,14 +140,20 @@ struct ModDetailView: View {
             }
             .clipped()
             .onAppear {
-                withAnimation(.interpolatingSpring(mass: 1.0, stiffness: 240, damping: 14, initialVelocity: 8)) {
-                    entryScale = 1.0
-                    entryOpacity = 1.0
-                    pageWidth = width
+                // ⚠️ onAppear 处于视图更新事务中：withAnimation 内写 pageWidth、applyDefaultVersionSelection
+                // （写 hasScannedLocalVersions/sortedVersions/selectedVersion）、triggerPageLoads
+                // （写 shaderFolderChecked/hasShaderFolder）均为同步 @State 写，会触发
+                // "Modifying state during view update"（UAF 前兆），整体延迟到渲染事务外执行
+                DispatchQueue.main.async {
+                    withAnimation(.interpolatingSpring(mass: 1.0, stiffness: 240, damping: 14, initialVelocity: 8)) {
+                        entryScale = 1.0
+                        entryOpacity = 1.0
+                        pageWidth = width
+                    }
+                    translationModel.activate()
+                    applyDefaultVersionSelection()
+                    triggerPageLoads()
                 }
-                translationModel.activate()
-                applyDefaultVersionSelection()
-                triggerPageLoads()
             }
             .onChange(of: geometry.size.width) { newWidth in
                 // 布局事务中写 @State 会触发 "Modifying state during view update"（UAF 前兆）

@@ -71,7 +71,12 @@ struct GameCategoryView: View {
             else { stopLoadingAnimation() }
         }
         .onAppear {
-            startScanning()
+            // ⚠️ startScanning 开头同步写 isLoading/showCard/hasVersions/scanTimedOut 四个 @State，
+            // onAppear 处于视图更新事务中，同步写会触发 "Modifying state during view update"（UAF 前兆），
+            // 整体延迟到渲染事务外执行（扫描逻辑本身异步，晚一帧启动无感知）
+            DispatchQueue.main.async {
+                startScanning()
+            }
         }
         .onDisappear {
             loadingTimer?.invalidate()

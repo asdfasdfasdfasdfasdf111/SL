@@ -40,7 +40,13 @@ struct CloseSessionButton: View {
                                     .background(Circle().fill(.regularMaterial).shadow(radius: 4))
                                     .scaleEffect(closeButtonScale)
                             }
-                            .onAppear { playPopAnimation() }
+                            .onAppear {
+                                // 入场弹入：延迟到渲染事务外（onAppear 处于视图更新事务中，
+                                // 同步写 @State 会触发 "Modifying state during view update" → UAF 前兆）
+                                DispatchQueue.main.async {
+                                    playPopAnimation()
+                                }
+                            }
                         }
                         .buttonStyle(.plain)
                         .padding(20)

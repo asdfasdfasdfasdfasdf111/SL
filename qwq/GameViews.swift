@@ -200,11 +200,16 @@ struct DownloadCategoryView: View {
             Self.isViewActive = true
             translationModel.activate()
             ModrinthCategoryCache.loadFromDisk()
-            let idx = SidebarHighlight.index(for: selectedSection, sub: selectedSubCategory)
-            sectionHighlightY = SidebarHighlight.offsets[idx]
             LocalModCatalog.warmUp()
-            fetchItems()
             LocalModCatalog.preTranslateAll()
+            // ⚠️ onAppear 处于视图更新事务中：sectionHighlightY 是 @State、fetchItems()
+            // 内部会同步写 isLoading/items/filteredResults 等 @State，同步执行会触发
+            // "Modifying state during view update"（UAF 前兆），整体延迟到渲染事务外执行
+            DispatchQueue.main.async {
+                let idx = SidebarHighlight.index(for: selectedSection, sub: selectedSubCategory)
+                sectionHighlightY = SidebarHighlight.offsets[idx]
+                fetchItems()
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
                     subItemOpacity[.release] = 1
@@ -221,16 +226,24 @@ struct DownloadCategoryView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: LocalModCatalog.readyNotification)) { _ in
             // 本地目录后台解析完成后，若正停在 mod/资源包/光影/整合包页，自动刷新为全量本地目录
+            // ⚠️ fetchItems 内部同步写 isLoading/items/filteredResults 等 @State，通知回调与
+            // 渲染事务可能重叠，延迟到渲染事务外执行
             if selectedSection != .game {
-                fetchItems()
+                DispatchQueue.main.async {
+                    fetchItems()
+                }
             }
         }
         .onChange(of: searchText) { _ in applyFilter() }
         .onChange(of: items) { newItems in
-            filteredResults = newItems
-            displayLimit = 120
-            if !searchText.trimmingCharacters(in: .whitespaces).isEmpty {
-                applyFilter()
+            // ⚠️ onChange 处于视图更新事务中，同步写 filteredResults/displayLimit 会触发
+            // "Modifying state during view update"（UAF 前兆），延迟到渲染事务外执行
+            DispatchQueue.main.async {
+                filteredResults = newItems
+                displayLimit = 120
+                if !searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+                    applyFilter()
+                }
             }
         }
         // 注意：圆形下载按钮与下载详情页已提升到 ContentView 顶层渲染
@@ -306,7 +319,10 @@ struct DownloadCategoryView: View {
         .clipped()
         .overlay(
             Color.clear.frame(width: 0, height: 0)
-                .onAppear { geometryWidth = geometry.size.width }
+                .onAppear {
+                    // 布局事务中写 @State 会触发 "Modifying state during view update"（UAF 前兆）
+                    DispatchQueue.main.async { geometryWidth = geometry.size.width }
+                }
                 .onChange(of: geometry.size.width) { newWidth in
                     // 布局事务中写 @State 会触发 "Modifying state during view update"（UAF 前兆）
                     DispatchQueue.main.async { geometryWidth = newWidth }

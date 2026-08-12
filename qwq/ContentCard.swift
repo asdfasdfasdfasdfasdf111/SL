@@ -80,9 +80,14 @@ struct ContentCard: View {
         .scaleEffect(appearScale)
         .opacity(appearOpacity)
         .onAppear {
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) {
-                appearScale = 1.0
-                appearOpacity = 1.0
+            // 入场弹入：延迟到渲染事务外（onAppear 处于视图更新事务中，同步写 @State 会触发
+            // "Modifying state during view update" → UAF 前兆；本组件在分类网格中会成批触发，
+            // 正是刷屏警告的主力来源），同时保证 withAnimation 在渲染帧之后生效
+            DispatchQueue.main.async {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) {
+                    appearScale = 1.0
+                    appearOpacity = 1.0
+                }
             }
         }
     }

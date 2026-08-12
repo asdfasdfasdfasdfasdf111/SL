@@ -44,8 +44,13 @@ struct SessionLogCardView: View {
                 .frame(height: logCardHeight)
                 .background(RoundedRectangle(cornerRadius: 8).fill(.ultraThinMaterial))
                 .onChange(of: session.logs.count) { _ in
-                    withAnimation(.exaggeratedSpring) {
-                        proxy.scrollTo(session.logs.count - 1, anchor: .bottom)
+                    // ⚠️ onChange 处于视图更新事务中，同步 scrollTo 会强制 layout，
+                    // 触发 AppKit "It's not legal to call -layoutSubtreeIfNeeded..." 布局递归警告；
+                    // 延迟到渲染事务外滚动（日志追加后晚一帧滚到底部无感知）
+                    DispatchQueue.main.async {
+                        withAnimation(.exaggeratedSpring) {
+                            proxy.scrollTo(session.logs.count - 1, anchor: .bottom)
+                        }
                     }
                 }
             }

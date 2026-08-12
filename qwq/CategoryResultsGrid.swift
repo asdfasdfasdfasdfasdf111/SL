@@ -46,10 +46,16 @@ struct CategoryResultsGrid: View {
                             Self.lastAnchorItemID = item.id
                             // 本地目录分页：最后一张已展示卡片进入可视区时追加下一批（增量 120 条），
                             // 避免把数万条目录一次性注入 ForEach 做全量 diff；滚出再滚回会再次触发
+                            // ⚠️ displayLimit 是 @Binding：onAppear 处于视图更新事务中，同步写会触发
+                            // "Modifying state during view update" → 状态机错乱 → 悬垂指针崩溃，
+                            // 必须延迟到渲染事务之外再写（分页晚一帧追加无感知）
                             if displayLimit < results.count {
                                 let lastVisibleIndex = min(displayLimit, results.count) - 1
                                 if results[lastVisibleIndex].id == item.id {
-                                    displayLimit = min(displayLimit + 120, results.count)
+                                    let newLimit = min(displayLimit + 120, results.count)
+                                    DispatchQueue.main.async {
+                                        displayLimit = newLimit
+                                    }
                                 }
                             }
                         }

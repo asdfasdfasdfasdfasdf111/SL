@@ -34,13 +34,18 @@ struct SkinLayerView: View {
             }
         }
         .onAppear {
-            if var ciImage = CIImage(data: imageData) {
-                let yOffset: CGFloat = ciImage.extent.height == 32 ? 0 : 32
-                ciImage = ciImage.cropped(to: CGRect(x: startX, y: startY + yOffset, width: 8, height: 8))
-                let context = CIContext(options: nil)
-                let extent = ciImage.extent
-                guard let cgImage = context.createCGImage(ciImage, from: extent) else { return }
-                self.image = NSImage(cgImage: cgImage, size: ciImage.extent.size)
+            // ⚠️ self.image 是 @State：onAppear 处于视图更新事务中，同步写会触发
+            // "Modifying state during view update"（UAF 前兆）。本组件正属皮肤头像裁剪链
+            // （0x26fffc2cb 崩溃地址内容为 ARGB 像素值），必须延迟到渲染事务外写
+            DispatchQueue.main.async {
+                if var ciImage = CIImage(data: imageData) {
+                    let yOffset: CGFloat = ciImage.extent.height == 32 ? 0 : 32
+                    ciImage = ciImage.cropped(to: CGRect(x: startX, y: startY + yOffset, width: 8, height: 8))
+                    let context = CIContext(options: nil)
+                    let extent = ciImage.extent
+                    guard let cgImage = context.createCGImage(ciImage, from: extent) else { return }
+                    self.image = NSImage(cgImage: cgImage, size: ciImage.extent.size)
+                }
             }
         }
     }
@@ -66,8 +71,13 @@ struct LogView: View {
             .frame(width: 260, height: 300)
             .background(RoundedRectangle(cornerRadius: 16).fill(.regularMaterial).shadow(radius: 4))
             .onChange(of: logs.count) { _ in
-                withAnimation(.exaggeratedSpring) {
-                    proxy.scrollTo(logs.count - 1, anchor: .bottom)
+                // ⚠️ onChange 处于视图更新事务中，同步 scrollTo 会强制 layout，
+                // 触发 AppKit "It's not legal to call -layoutSubtreeIfNeeded..." 布局递归警告；
+                // 延迟到渲染事务外滚动
+                DispatchQueue.main.async {
+                    withAnimation(.exaggeratedSpring) {
+                        proxy.scrollTo(logs.count - 1, anchor: .bottom)
+                    }
                 }
             }
         }

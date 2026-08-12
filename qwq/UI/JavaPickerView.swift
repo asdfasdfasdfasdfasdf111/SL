@@ -25,9 +25,13 @@ struct JavaSelectionPopup: View {
                 .scaleEffect(scale)
                 .opacity(opacity)
                 .onAppear {
-                    withAnimation(.exaggeratedSpring) {
-                        opacity = 1
-                        scale = 1
+                    // 入场弹入：延迟到渲染事务外（onAppear 处于视图更新事务中，
+                    // 同步写 @State 会触发 "Modifying state during view update" → UAF 前兆）
+                    DispatchQueue.main.async {
+                        withAnimation(.exaggeratedSpring) {
+                            opacity = 1
+                            scale = 1
+                        }
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                         withAnimation(.explosiveSpring) {
@@ -92,15 +96,19 @@ struct JavaPickerView: View {
                 .buttonStyle(.plain)
                 .disabled(isRefreshing)
                 .onChange(of: isRefreshing) { newValue in
-                    if newValue {
-                        // 点击后持续旋转直到刷新完成（repeatForever 非线性平滑旋转）
-                        withAnimation(.linear(duration: 1.0).repeatForever(autoreverses: false)) {
-                            refreshRotation += 360
-                        }
-                    } else {
-                        // 刷新完成：平滑回正停止
-                        withAnimation(.easeOut(duration: 0.35)) {
-                            refreshRotation = 0
+                    // ⚠️ onChange 处于视图更新事务中，withAnimation 内同步写 @State 会触发
+                    // "Modifying state during view update"（UAF 前兆），延迟到渲染事务外
+                    DispatchQueue.main.async {
+                        if newValue {
+                            // 点击后持续旋转直到刷新完成（repeatForever 非线性平滑旋转）
+                            withAnimation(.linear(duration: 1.0).repeatForever(autoreverses: false)) {
+                                refreshRotation += 360
+                            }
+                        } else {
+                            // 刷新完成：平滑回正停止
+                            withAnimation(.easeOut(duration: 0.35)) {
+                                refreshRotation = 0
+                            }
                         }
                     }
                 }
@@ -141,7 +149,11 @@ struct JavaPickerView: View {
                         GeometryReader { geo in
                             Color.clear
                                 .onAppear {
-                                    updateSelectedIndex()
+                                    // ⚠️ onAppear 处于视图更新事务中，updateSelectedIndex 写
+                                    // selectedIndex/highlightOffset @State，延迟到渲染事务外
+                                    DispatchQueue.main.async {
+                                        updateSelectedIndex()
+                                    }
                                 }
                         }
                     )
@@ -163,11 +175,16 @@ struct JavaPickerView: View {
         .scaleEffect(contentScale)
         .opacity(contentOpacity)
         .onAppear {
-            if !hasInitialized {
-                localSelection = selectedJavaPath
-                hasInitialized = true
-                cachedOptions = buildOptions()
-                updateSelectedIndex()
+            // ⚠️ 首次初始化写 localSelection/hasInitialized/cachedOptions/selectedIndex 等 @State，
+            // onAppear 处于视图更新事务中，同步写会触发 "Modifying state during view update"（UAF 前兆），
+            // 延迟到渲染事务外执行；Java 列表刷新本身异步，晚一帧无感知
+            DispatchQueue.main.async {
+                if !hasInitialized {
+                    localSelection = selectedJavaPath
+                    hasInitialized = true
+                    cachedOptions = buildOptions()
+                    updateSelectedIndex()
+                }
             }
             withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
                 contentScale = 1.0
@@ -178,7 +195,12 @@ struct JavaPickerView: View {
             }
         }
         .onDisappear {
-            selectedJavaPath = localSelection
+            // ⚠️ onDisappear 处于视图更新事务中，同步写 @Binding 会触发
+            // "Modifying state during view update"（UAF 前兆），延迟到渲染事务外
+            let finalSelection = localSelection
+            DispatchQueue.main.async {
+                selectedJavaPath = finalSelection
+            }
         }
         .onChange(of: settings.availableJavaList) { _ in
             // onChange 处于视图更新事务中，同步写 @State 会触发 "Modifying state during view update"（UAF 前兆）

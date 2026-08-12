@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+### 修复
+
+- **崩溃「连根拔起」：全工程生命周期回调同步状态写清零（EXC_BAD_ACCESS 0x26fffc2cb 追击收官）**——根因：SwiftUI 视图生命周期回调（onAppear/onChange/onReceive/onDisappear）正处于渲染事务中，同步写 `@State`/`@Published`/`@Binding` 会触发 "Modifying state during view update" → SwiftUI 状态机错乱 → 悬垂指针，执行流跳进已释放的图像像素缓冲区（崩溃地址内容 `0xff0000ff` 为 ARGB 像素值，与皮肤头像裁剪链吻合）。第一轮修复 8 处（3cd18d2）后仅覆盖 onChange/onReceive 与局部 onAppear，**漏掉三类高危点**：① 卡片入场动画类 onAppear（ContentCard 在分类网格中成批触发，正是 13:43 运行 0.5 秒内 14 条警告刷屏主力）② 函数调用链内同步写（GameViews.onAppear → fetchItems/applyDefaultVersionSelection/triggerPageLoads/startScanning 深层的 @State 写）③ 几何/滚动类（GeometryReader onAppear 写 width、onChange 中 scrollTo 触发 AppKit 布局递归警告 `-layoutSubtreeIfNeeded`）。本轮全工程 17 文件共 26 处回调全部包 `DispatchQueue.main.async` 延迟到渲染事务外，异步块只操作引用类型单例、零视图捕获（UAF 防护语义不变）：CategoryContentView（SkinLayerView 头像裁剪 image/skinImage 加载/用户名焦点动画）、CategoryResultsGrid（displayLimit @Binding 分页追加）、ColorPickerView（frames @State）、ContentCard/DownloadDetailView/GameCards/CloseSessionButton/ModpackFolderPickerView/ModInstallSelectionView（入场动画 @State）、GameViews（sectionHighlightY+fetchItems/items onChange 结果集+fetchItems onReceive/geometryWidth）、ModDetailView（onAppear 三方法+pageWidth）、SessionLogCardView/ViewComponents.LogView（scrollTo → 布局递归）、JavaPickerView（onAppear 初始化/GeometryReader updateSelectedIndex/onDisappear @Binding/刷新旋转）、GameCategoryView（startScanning 四 @State 连写）。编译通过
+
 ### 变更
 
 - **分类标签页互斥切换（对标 PCL.Mac `router.getLastView()` 整页替换语义，用户实测确认）**：此前 `ContentView` 的 GeometryReader 内用 HStack 同时渲染全部 6 个分类页（启动/游戏/下载/联机/赞助/个性化）+ `.offset` 平移，所有页面**常驻视图树、切换不卸载**（内存与状态全部滞留）。改为 ZStack 互斥渲染当前分类 + `.id(categories[selectedIndex].id)` 强制重建 + 不对称 transition（滑入+淡入 / 淡出），切换动画完成后旧页面真正从视图树卸载；删除不再使用的 `dragOffset` 与 `.onChanged` 拖拽跟手（手势保留，松手过阈值才切换）

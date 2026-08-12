@@ -167,7 +167,11 @@ struct CategoryContentView: View {
                 .focused($isUsernameFocused)
                 .onChange(of: isUsernameFocused) { focused in
                     if focused {
-                        withAnimation(.punchySpring) { usernameFieldScale = 1.1 }
+                        // ⚠️ onChange 处于视图更新事务中，withAnimation 内同步写 @State 同样会触发
+                        // "Modifying state during view update"（UAF 前兆），延迟到渲染事务外
+                        DispatchQueue.main.async {
+                            withAnimation(.punchySpring) { usernameFieldScale = 1.1 }
+                        }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             withAnimation(.punchySpring) { usernameFieldScale = 1.0 }
                         }

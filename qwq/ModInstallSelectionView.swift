@@ -145,11 +145,20 @@ struct ModInstallSelectionView: View {
         .scaleEffect(showContent ? 1 : 0.85)
         .opacity(showContent ? 1 : 0)
         .onAppear {
+            // ⚠️ selectedIds 是 @State：onAppear 处于视图更新事务中，同步写会触发
+            // "Modifying state during view update"（UAF 前兆），延迟到渲染事务外执行
             if instances.count == 1, let first = instances.first {
-                selectedIds = [first.id]
+                let singleId = first.id
+                DispatchQueue.main.async {
+                    selectedIds = [singleId]
+                }
             }
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                showContent = true
+            // 入场弹入：延迟到渲染事务外（onAppear 处于视图更新事务中，
+            // 同步写 @State 会触发 "Modifying state during view update" → UAF 前兆）
+            DispatchQueue.main.async {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                    showContent = true
+                }
             }
         }
     }
