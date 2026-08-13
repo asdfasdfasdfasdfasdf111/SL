@@ -20,7 +20,9 @@
 代码极致模块化：全工程巨型文件按「一个文件一个顶层声明」拆分为 30+ 个单一职责模块（累计 39 批收官）
 优化build_asan3/ ASan 构建产物目录加入 .gitignore 忽略，与 build_asan/、build_asan2/ 同理不再入库
 
-修复下载任务完成竞态导致的 UAF 崩溃：complete/dismiss 增加幂等与归属校验，杜绝旧任务迟到回调清掉新任务引用（崩溃 #4 根因）
+修复下载页游戏版本列表空白：官方 + 未列出两个清单源全部失败且无缓存时返回空数组；现增加 BMCLAPI 镜像自动回退（主源失败自动切换，不依赖设置二选一）+ CacheManager 磁盘缓存兜底（联网失败回退上次内容，弱网/被阻断时列表不再空白）
+修复游戏版本下载首个 await 返回时的 EXC_BAD_ACCESS：Swift 6.2 在 Swift 5 + Approachable Concurrency + 默认 MainActor 组合下会误编译存储 async 闭包的 ABI（swiftlang/swift#86332），现将闭包属性与初始化参数显式统一为 @MainActor，杜绝隐式 actor 参数错位与损坏地址跳转
+修复下载任务完成竞态导致的 UAF 风险：complete/dismiss 增加幂等与归属校验，杜绝旧任务迟到回调清掉新任务引用
 修复 EXC_BAD_ACCESS 崩溃根因：全工程 17 文件 26 处视图生命周期回调同步状态写清零（Modifying state during view update）
 修复下载链路 UAF：下载闭包零 self 捕获、动画改可取消 Task，视图销毁后不再写已释放的 State storage
 修复启动参数规则匹配误删库（移植 PCL2 顺序叠加语义 Rule.check）

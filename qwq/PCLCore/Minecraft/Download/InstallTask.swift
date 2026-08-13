@@ -160,11 +160,14 @@ public class MinecraftInstallTask: InstallTask {
     public var versionURL: URL { minecraftDirectory.versionsURL.appending(path: name) }
     public let minecraftVersion: MinecraftVersion
     public let minecraftDirectory: MinecraftDirectory
-    public let startTask: (MinecraftInstallTask) async throws -> Void
+    /// 显式固定为 MainActor 隔离，避免 Swift 6.2 + Swift 5 模式 + Approachable Concurrency
+    /// 将初始化器参数转换为存储 async 闭包时误生成 ABI（swiftlang/swift#86332）：
+    /// 隐式 actor 参数会与业务参数错位，最终在 await 返回处跳到损坏地址并 EXC_BAD_ACCESS。
+    public let startTask: @MainActor (MinecraftInstallTask) async throws -> Void
     public let architecture: Architecture
     @Published private var currentState: InstallState = .inprogress
     
-    public init(minecraftVersion: MinecraftVersion, minecraftDirectory: MinecraftDirectory, name: String, architecture: Architecture = .system, startTask: @escaping (MinecraftInstallTask) async throws -> Void) {
+    public init(minecraftVersion: MinecraftVersion, minecraftDirectory: MinecraftDirectory, name: String, architecture: Architecture = .system, startTask: @escaping @MainActor (MinecraftInstallTask) async throws -> Void) {
         self.minecraftVersion = minecraftVersion
         self.minecraftDirectory = minecraftDirectory
         self.name = name
