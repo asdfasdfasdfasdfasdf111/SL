@@ -18,6 +18,7 @@
 优化在线列表缓存优先：离线 / 弱网也能秒开上次内容
 优化 Java 查找：7 类来源全量扫描，release 文件一次读取探测主版本
 代码极致模块化：全工程巨型文件按「一个文件一个顶层声明」拆分为 30+ 个单一职责模块（累计 39 批收官）
+优化build_asan3/ ASan 构建产物目录加入 .gitignore 忽略，与 build_asan/、build_asan2/ 同理不再入库
 
 修复下载任务完成竞态导致的 UAF 崩溃：complete/dismiss 增加幂等与归属校验，杜绝旧任务迟到回调清掉新任务引用（崩溃 #4 根因）
 修复 EXC_BAD_ACCESS 崩溃根因：全工程 17 文件 26 处视图生命周期回调同步状态写清零（Modifying state during view update）

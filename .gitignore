@@ -8,6 +8,7 @@ xcuserdatad/
 build/
 /build_asan/
 /build_asan2/
+/build_asan3/
 /build_fix_check/
 *.o
 
