@@ -64,12 +64,8 @@ struct DownloadDetailView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // 独立页面自带全屏毛玻璃背景（互斥整页替换后不再依赖宿主视图背景）
-        .background(
-            BlurView(material: .fullScreenUI, blendingMode: .behindWindow)
-                .ignoresSafeArea()
-        )
-        // 无返回键：再次点击圆形下载按钮即可回到刚才的页面（由 GameViews toggle 控制）
+        .background(BlurView(material: .fullScreenUI, blendingMode: .behindWindow))
+        // 顶部导航由 ContentView 保持；再次点击右下角按钮可返回分类内容。
     }
 
     /// 单个任务各阶段渲染（对标 InstallingView.getEntries）：

@@ -26,28 +26,9 @@ struct ContentView: View {
     
     var body: some View {
         ZStack {
-            // 主内容与下载详情页互斥整页切换（对标 PCL.Mac router.getLastView() 整页替换）：
-            // if/else 保证同一时间视图树里只有一个页面——详情页打开时主内容真正卸载，
-            // 关闭时详情页真正卸载，动画完成后旧页面不残留、不叠层。
-            // 非线性动画由 DownloadDetailManager.start/toggle/dismiss 的 withAnimation 驱动。
-            if downloadDetail.isPresented {
-                DownloadDetailView()
-                    .transition(.asymmetric(
-                        // 详情页进入：从右滑入 + 淡入（push 观感）
-                        insertion: .move(edge: .trailing).combined(with: .opacity),
-                        // 详情页退出：向右滑出 + 淡出（pop 观感）
-                        removal: .move(edge: .trailing).combined(with: .opacity)
-                    ))
-                    .zIndex(30)
-            } else {
-                mainContent
-                    .transition(.asymmetric(
-                        // 主内容让位：向左滑出（配合详情页从右进入）
-                        insertion: .move(edge: .trailing).combined(with: .opacity),
-                        // 主内容回归：从右滑入（配合详情页向右退出）
-                        removal: .move(edge: .leading).combined(with: .opacity)
-                    ))
-            }
+            // 顶部标题栏与分类导航永久保留；下载详情只替换导航栏下方的内容区。
+            // 不能在这里整页替换，否则会把用户要求保留的导航栏一并卸载。
+            mainContent
 
             // 全局弹窗/提示/圆按钮：放在页面切换层之外，不随页面卸载
             JavaSelectionPopup(message: settings.javaPopupMessage, isPresented: $settings.showJavaPopup)
@@ -188,35 +169,35 @@ struct ContentView: View {
                 Rectangle().fill(Color.secondary.opacity(0.3)).frame(height: 0.5).padding(.horizontal, 32)
                 GeometryReader { geometry in
                     let width = geometry.size.width
-                    // 分类互斥切换：同一时刻视图树里只有当前分类页（.id 强制重建，
-                    // 切换走时旧页面真正卸载，对标 PCL.Mac router.getLastView() 整页替换；
-                    // 此前 HStack 同时渲染 6 页 + offset 平移，全部页面常驻不卸载）
                     ZStack {
-                        CategoryContentView(category: categories[selectedIndex], searchText: searchText)
-                            .id(categories[selectedIndex].id)
-                            .frame(width: width)
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .trailing).combined(with: .opacity),
-                                removal: .opacity
-                            ))
+                        if downloadDetail.isPresented {
+                            DownloadDetailView()
+                                .transition(.move(edge: .trailing).combined(with: .opacity))
+                        } else {
+                            CategoryContentView(category: categories[selectedIndex], searchText: searchText)
+                                .id(categories[selectedIndex].id)
+                                .frame(width: width)
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .trailing).combined(with: .opacity),
+                                    removal: .opacity
+                                ))
+                                .gesture(
+                                    DragGesture()
+                                        .onEnded { value in
+                                            let threshold = width * 0.25
+                                            var newIndex = selectedIndex
+                                            if value.translation.width < -threshold && selectedIndex < categories.count - 1 {
+                                                newIndex = selectedIndex + 1
+                                            } else if value.translation.width > threshold && selectedIndex > 0 {
+                                                newIndex = selectedIndex - 1
+                                            }
+                                            if newIndex != selectedIndex { selectedCategory = categories[newIndex] }
+                                        }
+                                )
+                        }
                     }
                     .clipped()
                     .animation(.spring(response: 0.6, dampingFraction: 0.65, blendDuration: 0.15), value: selectedIndex)
-                    .gesture(
-                        DragGesture()
-                            .onEnded { value in
-                                let threshold = width * 0.25
-                                var newIndex = selectedIndex
-                                if value.translation.width < -threshold && selectedIndex < categories.count - 1 {
-                                    newIndex = selectedIndex + 1
-                                } else if value.translation.width > threshold && selectedIndex > 0 {
-                                    newIndex = selectedIndex - 1
-                                }
-                                if newIndex != selectedIndex {
-                                    selectedCategory = categories[newIndex]
-                                }
-                            }
-                    )
                 }
                 .background(BlurView(material: .fullScreenUI, blendingMode: .behindWindow))
             }

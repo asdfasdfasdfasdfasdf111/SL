@@ -244,6 +244,14 @@ public actor NetManager {
     private var lastSpeedTime = Date()
     private var recentSpeed: Double = 0
 
+    private init() {
+        // 分片文件统一写入应用缓存目录；首次运行该目录不存在时 createFile 会直接失败。
+        try? FileManager.default.createDirectory(
+            at: SharedConstants.shared.temperatureURL,
+            withIntermediateDirectories: true
+        )
+    }
+
     // MARK: - 公开 API
 
     /// 下载单个文件（对标 PCL2 NetFile + LoaderDownload 单任务）
@@ -586,7 +594,11 @@ public actor NetManager {
             }
         }
 
-        // 创建分片临时文件
+        // 创建分片临时文件（目录可能被系统/用户清理，下载前再次确保存在）
+        try FileManager.default.createDirectory(
+            at: SharedConstants.shared.temperatureURL,
+            withIntermediateDirectories: true
+        )
         let tempURL = SharedConstants.shared.temperatureURL.appendingPathComponent(UUID().uuidString + ".tmp")
         guard FileManager.default.createFile(atPath: tempURL.path, contents: nil) else {
             throw NetDownloadError.fileFailed("无法创建临时文件")
