@@ -127,6 +127,7 @@
 - **代码极致模块化（第四批）**：`GameViews.swift` 由 1242 行拆至 953 行，拆出 `GameVersionManifest.swift`（官方+未列出版本清单并发拉取合并，5 分钟内存缓存，ModDetailView 同步改用）与 `LocalModCatalog.swift`（本地 12 万条 Modrinth 全量目录：gzip 解析 + 磁盘缓存二次秒开 + 后台预热 + 翻译预取，`warmUp`/`items`/`isReady` 供 qwqApp 与视图调用）；GameViews 内的愚人节版本判断重复实现改用共享的 `GameVersionHelper.isAprilFoolVersion`
 - **代码极致模块化（第五批）**：`CategoryContentView.swift` 由 1001 行拆至 897 行，拆出 `GameSession.swift`（启动会话模型 + LaunchPhase + closeGameSession 通知）、`SessionLogCardView.swift`（启动日志卡片视图）、`SkinExtractor.swift`（从版本 JAR 提取 steve/alex 默认皮肤，unzip 临时目录提取）
 - **代码极致模块化（第六批）**：`JavaManager.swift` 由 593 行拆至 399 行，拆出 `JavaDownloader.swift`（Azul Zulu API 优先 + Microsoft JDK 17/21 回退的 JDK 下载解压）与 `JavaVersionParser.swift`（release 文件优先 + java -version 回退 + file 架构检测的版本解析）；JavaManager 的 `parseJavaVersion`/`downloadJava` 保留薄封装（缓存写入等副作用留在管理器，解析器保持无副作用）
+- **共享 scheme 更新至 Xcode 1.8 格式**：`qwq.xcscheme` 经 Xcode 重新保存后属性顺序重排、scheme 版本 1.7→1.8（Debug 的 Address Sanitizer 全套内存检测配置保持不变，仍处于启用状态）；`build_asan/`、`build_asan2/` ASan 构建产物目录（各约 290MB 派生数据）加入 `.gitignore`，与既有 `build/` 同理不再入库
 
 ## [1.0.0] - 2026-08-07
 

@@ -6,6 +6,8 @@ xcuserdata/
 xcuserdatad/
 *.xcuserstate
 build/
+/build_asan/
+/build_asan2/
 *.o
 
 # 应用打包产物
