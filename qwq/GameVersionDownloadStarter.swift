@@ -21,6 +21,11 @@ enum GameVersionDownloadStarter {
         manager: DownloadDetailManager
     ) {
         Task {
+            // 先建空任务组并取 id：即使 do 内提前抛错（未设置根目录/加载器不支持/取版本失败等），
+            // catch 也有 ownerID 可做归属校验。绝不能用无归属的 dismiss() 去清「可能正在进行的
+            // 其它下载」——否则本次失败的迟到回调会清掉正在下载的新任务引用（崩溃 #4 同类竞态）。
+            let tasks = InstallTasks.empty()
+            let ownerID = tasks.id
             do {
                 let root = settings.selectedGameRoot
                 guard !root.isEmpty else { throw MyLocalizedError(reason: "未设置游戏根目录") }
@@ -46,8 +51,7 @@ enum GameVersionDownloadStarter {
                     loaderKey = brand.rawValue
                 }
 
-                // 组装任务集合（key 必须在 InstallTasks.getTasks() 固定顺序表内）
-                let tasks = InstallTasks.empty()
+                // 组装任务集合（key 必须在 InstallTasks.getTasks() 固定顺序表内；tasks 已在上面创建）
                 let minecraftTask = MinecraftInstaller.createTask(minecraftVersion, name, minecraftDirectory)
                 tasks.addTask(key: "minecraft", task: minecraftTask)
 
@@ -66,11 +70,14 @@ enum GameVersionDownloadStarter {
                 }
 
                 let completedName = name
-                minecraftTask.onComplete { [settings, manager, completedName] in
+                // 捕获任务组 id 做归属校验：complete() 的迟到回调若晚于下一个下载的
+                // start() 到达，dismiss(ownerID:) 会识别出「全局任务组已被替换」并拒绝清理，
+                // 避免旧任务清掉新任务的 InstallTasks 引用（跨任务交叉清理 UAF，崩溃 #4 根因）
+                minecraftTask.onComplete { [settings, manager, completedName, ownerID] in
                     Task { @MainActor in
                         // 回调只操作全局单例（DownloadDetailManager）与 settings，
                         // 不写视图 @State：后台回调晚于视图销毁时写 State storage 会 UAF
-                        manager.dismiss()
+                        manager.dismiss(ownerID: ownerID)
                         settings.javaPopupMessage = "\(completedName) 下载完成"
                         settings.showJavaPopup = true
                     }
@@ -84,7 +91,9 @@ enum GameVersionDownloadStarter {
             } catch {
                 await MainActor.run {
                     // 只操作全局单例与 settings（引用类型，生命周期与视图解耦）
-                    manager.dismiss()
+                    // 带 ownerID：若已有其它下载正在进行（start 已把其任务组放进 manager），
+                    // 归属不一致 → 拒绝清理，绝对不动正在下载的任务引用
+                    manager.dismiss(ownerID: ownerID)
                     settings.launchErrorMessage = "下载失败: \(error.localizedDescription)"
                     settings.showLaunchAlert = true
                 }

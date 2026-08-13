@@ -1,138 +1,43 @@
 # 更新日志
 
-本文件记录 SL 启动器（qwq）的重要变更。版本格式遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
+本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
-## [Unreleased]
+## Beta 0.1.2 版本发布 🚀（2026-08-13）
 
-### 修复
+新增游戏版本一键下载安装，支持 Fabric/Forge/NeoForge 加载器自动串联（对标 PCL.Mac DownloadPage）
+新增毛玻璃下载详情页与全局圆形下载按钮，移植 PCL 的 InstallTask 任务模型（总进度 / 实时速度 / 逐任务阶段渲染）
+新增崩溃自捕获（CrashReporter），崩溃时把堆栈写入 ~/Library/Logs/qwq_crash.log
+新增下载 SHA-1 校验（客户端 jar / 依赖库 / 原生库）
+新增 JVM 启动参数动态补齐与调优（-XstartOnFirstThread / G1GC / -Xms 等，查重后追加）
+新增离线用户名输入实时提示（PCL2 HintChinese 语义）
+本地 Modrinth 全量目录更新至 122,477 条目
 
-- **崩溃「连根拔起」：全工程生命周期回调同步状态写清零（EXC_BAD_ACCESS 0x26fffc2cb 追击收官）**——根因：SwiftUI 视图生命周期回调（onAppear/onChange/onReceive/onDisappear）正处于渲染事务中，同步写 `@State`/`@Published`/`@Binding` 会触发 "Modifying state during view update" → SwiftUI 状态机错乱 → 悬垂指针，执行流跳进已释放的图像像素缓冲区（崩溃地址内容 `0xff0000ff` 为 ARGB 像素值，与皮肤头像裁剪链吻合）。第一轮修复 8 处（3cd18d2）后仅覆盖 onChange/onReceive 与局部 onAppear，**漏掉三类高危点**：① 卡片入场动画类 onAppear（ContentCard 在分类网格中成批触发，正是 13:43 运行 0.5 秒内 14 条警告刷屏主力）② 函数调用链内同步写（GameViews.onAppear → fetchItems/applyDefaultVersionSelection/triggerPageLoads/startScanning 深层的 @State 写）③ 几何/滚动类（GeometryReader onAppear 写 width、onChange 中 scrollTo 触发 AppKit 布局递归警告 `-layoutSubtreeIfNeeded`）。本轮全工程 17 文件共 26 处回调全部包 `DispatchQueue.main.async` 延迟到渲染事务外，异步块只操作引用类型单例、零视图捕获（UAF 防护语义不变）：CategoryContentView（SkinLayerView 头像裁剪 image/skinImage 加载/用户名焦点动画）、CategoryResultsGrid（displayLimit @Binding 分页追加）、ColorPickerView（frames @State）、ContentCard/DownloadDetailView/GameCards/CloseSessionButton/ModpackFolderPickerView/ModInstallSelectionView（入场动画 @State）、GameViews（sectionHighlightY+fetchItems/items onChange 结果集+fetchItems onReceive/geometryWidth）、ModDetailView（onAppear 三方法+pageWidth）、SessionLogCardView/ViewComponents.LogView（scrollTo → 布局递归）、JavaPickerView（onAppear 初始化/GeometryReader updateSelectedIndex/onDisappear @Binding/刷新旋转）、GameCategoryView（startScanning 四 @State 连写）。编译通过
+优化加载器支持检测：三级缓存策略（内存 → 磁盘 7 天 TTL → 联网失败回退旧缓存），4xx 视为明确不支持，首次等待由数秒降至约 1 秒
+优化实时翻译：按需翻译 + 并发上限 24 + 内存上限 2000 条，滚动浏览不再卡顿
+优化空闲静默后台：计速器惰性启动、游戏日志增量读取、窗口轮询降频，空闲时几乎零 CPU 与内存占用
+优化在线列表缓存优先：离线 / 弱网也能秒开上次内容
+优化 Java 查找：7 类来源全量扫描，release 文件一次读取探测主版本
+代码极致模块化：全工程巨型文件按「一个文件一个顶层声明」拆分为 30+ 个单一职责模块（累计 39 批收官）
 
-### 变更
+修复下载任务完成竞态导致的 UAF 崩溃：complete/dismiss 增加幂等与归属校验，杜绝旧任务迟到回调清掉新任务引用（崩溃 #4 根因）
+修复 EXC_BAD_ACCESS 崩溃根因：全工程 17 文件 26 处视图生命周期回调同步状态写清零（Modifying state during view update）
+修复下载链路 UAF：下载闭包零 self 捕获、动画改可取消 Task，视图销毁后不再写已释放的 State storage
+修复启动参数规则匹配误删库（移植 PCL2 顺序叠加语义 Rule.check）
+修复 JVM 参数动态补齐三处偏差（-Xmx 查重 / Log4Shell 防御 / natives 路径兜底）
+修复 Java 查找链路五处功能失效（进程死锁 / 版本正则 / 并发覆盖 / 残留 JVM / stub 矛盾）
+修复创建世界 / 进入世界 EncoderException（离线用户名超 16 字符，完整移植 PCL2 离线登录）
+修复离线自定义皮肤无效（PCL2 皮肤资源包方案，全版本生效）
+修复游戏关闭 / 手动关闭进程检测不到（terminationHandler 前置 + 超时轮询兜底）
+修复下载详情页交互：圆按钮 toggle 开关、与主内容互斥整页替换、退出后滚动位置恢复
+修复光影详情页返回后侧栏高亮不跳回
+修复加载器选择页显示与所点版本不一致、1.10 等版本仍显示 4 张卡片
+修复解压 ZIP 的路径穿越（ZIP Slip）漏洞
+修复缓存读写并发死锁（NSLock → NSRecursiveLock）、崩溃日志误删共享目录、下载句柄未清理
+修复下载进度负数、下载卡片无动画、Java 刷新按钮动画不同步
+修复版本清单拉取失败缓存空结果、翻译缓存未全量应用等列表展示问题
 
-- **分类标签页互斥切换（对标 PCL.Mac `router.getLastView()` 整页替换语义，用户实测确认）**：此前 `ContentView` 的 GeometryReader 内用 HStack 同时渲染全部 6 个分类页（启动/游戏/下载/联机/赞助/个性化）+ `.offset` 平移，所有页面**常驻视图树、切换不卸载**（内存与状态全部滞留）。改为 ZStack 互斥渲染当前分类 + `.id(categories[selectedIndex].id)` 强制重建 + 不对称 transition（滑入+淡入 / 淡出），切换动画完成后旧页面真正从视图树卸载；删除不再使用的 `dragOffset` 与 `.onChanged` 拖拽跟手（手势保留，松手过阈值才切换）
-- **代码极致模块化（第三十九批）：GameViews.swift 537→515 行、GameSidebarView.swift 100→95 行**——新建 `qwq/SidebarHighlight.swift`（侧边栏高亮纯逻辑：`offsets` 高亮 y 偏移表 + `index(for:sub:)` section→高亮 index 映射）。GameViews 删 `sidebarOffsets` 实例属性与 `computedHighlightIndex` 计算属性改转发；GameSidebarView 删除声明但从未使用的死参数 `sidebarOffsets`（body 零引用），组件参数减少一个
-- **代码极致模块化（第三十八批）：ModDetailView.swift 549→524 行**——新建 `qwq/DetailVersionDecision.swift`（详情页版本选中决策纯逻辑：`initialSelection` 首次加载默认选中（游戏版本页必须选用户点击的版本，其他页面优先当前实例版本；item.name 不在列表不急着回退）+ `resolveAfterManifest` manifest 就绪后决议（先保留现有选择含用户手动选择，其次 item.name，最后回退首位））。两处内联决策分支（含 20 行排障注释）各改一行转发，删 `getDefaultInstanceVersion` 纯包装方法（直接读 settings）
-- **代码极致模块化（第三十七批）：Services/JavaPathFinder.swift 263→229 行**——按顶层声明拆出 `qwq/JavaInfo.swift`（Java 信息模型，JavaManager/JavaVersionParser/ThemeManager 共享，与查找器无逻辑关系）与 `qwq/JavaEnvironment.swift`（JavaEnvironment 模型 + `compareJavaVersions` 版本比较工具）。纯搬移零行为变更，查找器保留多来源全量扫描 + 内存缓存
-- **代码极致模块化（第三十六批）：TranslationService.swift 275→141 行**——拆出 `qwq/ProjectTranslationTable.swift`（内置翻译表 + `match(id)`/`hint(forTitle:)` 查找）、`qwq/ChineseText.swift`（中文字符检测纯函数，消除原私有重复实现）、`qwq/TranslationSourceFetcher.swift`（三个翻译源竞速获取：Modrinth 详情 / 镜像翻译 / MyMemory 兜底，显式传 session 零共享状态）。服务只保留翻译主流程 + 并发限制 + 去重 + 缓存读取，引用点全部改走新模块
-- **代码极致模块化（第三十五批）：ModDownloader.swift 297→237 行**——按顶层声明拆出 `qwq/ModrinthModels.swift`（Modrinth API v2 响应模型族：ModrinthMod/ModrinthProject/ModrinthVersion+嵌套 ModrinthFile，搜索/详情/翻译共享）与 `qwq/ModLoader.swift`（加载器枚举 + displayName/assetName 扩展）。纯搬移零行为变更，ModDownloader 保留下载服务本体（搜索缓存/去重/单文件下载/版本解析）
-- **代码极致模块化（第三十四批）：CategoryContentView.swift 532→302 行**——新建 `qwq/LaunchCoordinator.swift`（游戏启动编排 + 启动会话生命周期管理 enum：`start`（版本/用户名校验 → 皮肤资源包准备 → pclLaunch 六段回调 → 会话登记，177 行巨型方法整体下沉）、`closeSession`（日志卡 xmark → .closeGameSession 通知 → 终止进程 → 移除会话 → 空时复位启动状态）、`handlePowerTap`（电源按钮：运行中 NSAlert 确认终止全部 / 取消启动复位））。只操作引用类型单例（LauncherSettings/LaunchSessionManager）与全局函数 pclLaunch，六段回调零 self 捕获（UAF 根治语义不变）；视图三个方法改一行转发
-- **代码极致模块化（第三十三批）：GameViews.swift 620→537 行、ModDetailView.swift 560→549 行，石山融合重构**——新建 `qwq/CardTranslationModel.swift`（`@MainActor` 卡片副标题翻译状态 + 按需翻译调度，`@Published translated` + pending 去重集 + isActive 生命周期守卫；`prefetch` 批量预取（覆盖首屏 + 预加载窗口，防 12 万条本地目录海量读盘）、`requestTranslation` 统一「内存缓存 → 磁盘缓存（detached 查盘）→ 网络翻译（防抖去重）」流程、`subtitle(for:)` 取展示副标题；异步写回先经 `isActive` 守卫 + 网络分支 `[weak self]` 对象级守卫，UAF 防护）。**消除两处重复的按需翻译调度**：GameViews 原 `startSequentialTranslation`/`requestTranslation`/`setTranslated`/`translateTask` 与 ModDetailView 原简化版 `translateDetailDescription`/`setTranslated` 全部删除改转发——详情页改为逐条走共享调度，磁盘缓存命中的简介也能秒出（原简化实现只查内存 + 直接联网）
-- **代码极致模块化（第三十二批）：GameViews.swift 627→620 行、ModDetailView.swift 564→560 行，石山融合重构**——新建 `qwq/CardTranslationStore.swift`（卡片副标题翻译结果的内存存储助手：`set`/`merge` 统一「写回 + 2000 条上限裁剪」规则，超限只保留活跃条目）。**消除两处重复的翻译缓存写回逻辑**：GameViews 原「裁剪版 `setTranslated` + `trimTranslationsIfNeeded` + 预取后 merge+裁剪」与 ModDetailView 原「整体清空版 `setTranslated`」各改一行转发——ModDetailView 无 pending 集合，活跃集传空 → 裁剪结果为空字典，与原 `removeAll` 语义完全等价
-- **代码极致模块化（第三十一批）：MinecraftSkinManager.swift 由 211 行拆至 41 行，死代码清理**——`grep -rn` 全工程验证零调用者后删除 8 个方法与 2 个属性：`downloadAuthlibInjector`/`buildOfflineSkinMeta`/`buildAuthlibInjectorArgs`/`applySkinToJar`/`restoreOriginalJar`/`isAuthlibInjectorAvailable`/`getAuthlibInjectorPath`/`runCommand` + `authlibInjectorURL`/`defaultSkinNames`。离线登录链路实际走 PCLCore（`MinecraftLauncher.downloadAuthlibInjector` 静态方法，同名不同实现，与皮肤管理器无关），离线皮肤已移植 PCL2 资源包方案（第七批），JAR 顶层贴图替换方式对 1.19.3+ 无效——JAR 修改方式与 authlib 注入参数构建均为死代码。保留 `saveSkin`（OfflineSkinService:45 调用）/`getSkinData`（OfflineSkinService:84 + CategoryContentView:120）/`skinsDirectory` 持久化三件套
-- **代码极致模块化（第三十批）：ModDetailView.swift onAppear 50 行大块提炼为两个私有方法**——`applyDefaultVersionSelection()`（首次加载：本地加载器扫描 + 版本列表就绪 + 默认选中版本决策，含 loaderSelector 按 item.name 选中语义与「等 manifest 就绪二次决议」注释）与 `triggerPageLoads()`（条件数据加载：Mojang 版本清单 / 光影目录检测 / 整合包版本 / 项目详情与翻译）。onAppear 缩为 3 行编排，body 结构清晰化
-- **代码极致模块化（第二十九批）：GameViews.swift 由 647 行拆至 627 行，石山融合重构**——新建 `qwq/ItemFilter.swift`（搜索过滤谓词纯逻辑：标题/简介/标签/中文标签映射表反向匹配，tags 为空自动退化为「标题+简介」匹配，与游戏版本页简化版行为完全等价）。**消除 applyFilter 两处重复过滤谓词**（游戏版本页简化版 + 本地目录完整版）统一走 `ItemFilter.matches`；`ModrinthCategoryCache` 补统一写入口 `setCache(_:for:)`（消除 `fetchItems` 中 mod/resourcePack/shader/modpack 四处 `cachedXxxItems = result` 重复赋值）与 `diskKey(for:)`（分类→磁盘键映射），**fetchItems 四段几乎相同的搜索+缓存 switch 合并为单一 default 分支**（type 由 ModrinthSectionType 映射，约 20 行 → 8 行）
-- **代码极致模块化（第二十八批）：GameViews.swift 由 667 行拆至 647 行、ModDetailView.swift 由 572 行拆至 553 行，石山融合重构**——新建 `qwq/GameVersionFilter.swift`（版本清单按子分类过滤纯逻辑：`filteredIDs(_:subCategory:)` 返回 id 列表，release=全部正式版 / snapshot=标准快照+未列出 pending 排除愚人节 / ancient=alpha+beta+愚人节 / none=空，零状态零副作用）。**消除两处完全相同的过滤 switch**：`GameViews.fetchMinecraftVersions`（原 22 行内联过滤 + map 构 DownloadedItem）与 `ModDetailView.fetchManifestVersions`（原 19 行内联过滤）各改一行转发，重复逻辑合并为共享模块
-- **代码极致模块化（第二十七批）：CategoryContentView.swift 由 594 行拆至 532 行，启动链路 UAF 根治**——新建 `qwq/LaunchSessionManager.swift`（游戏启动会话全局单例：`sessions`/`showLogView` 与启动进度组 `isLaunching`/`launchProgress`/`launchPhase`/`lightProgress`/`darkProgress`/`darkBarTarget`/`darkBarActive` 全部 @Published 外迁，含 `addSession`（会话索引分配 + pendingLogs flush）/`session(for:)`/`removeSession`/`removeAllSessions`/`beginLaunch`/`resetProgress`/深色进度条动画 start/stop（Timer 改 `[weak self]` 防循环引用））。视图删除 12 个启动相关 @State 改挂 `@ObservedObject sessionManager`；`startLaunch` 六段 pclLaunch 回调（progress/phase/log/success/ready/completion）由 `self.xxx` 写 @State 全改为操作引用类型单例——**零 self 捕获**，视图销毁后回调触发不再写已释放的 State storage（UAF 根治，与 DownloadDetailManager 治理模式一致：游戏可运行数小时后 completion 才触发，视图早已随分类切换销毁）；`initLaunchState`/`resetLaunchState`/`startDarkBarAnimation`/`stopDarkBarAnimation` 四个私有方法删除（迁单例）
-- **代码极致模块化（第二十六批）：ModInstallViews.swift 316 行按顶层声明拆为三个文件并删除原文件**——`qwq/GameInstance.swift`（游戏实例数据模型：rootPath+version，displayName 展示名归一，Identifiable+Equatable）、`qwq/ModInstallSelectionView.swift`（模组安装目标选择弹窗：实例多选列表+取消/安装(N)，选中状态为弹窗生命周期内局部 @State，数据回调全外部传入）、`qwq/ModpackFolderPickerView.swift`（整合包安装位置选择弹窗：NSOpenPanel 选目录+路径展示+安装按钮，局部 @State，回调外部传入）。三者均为独立顶层声明，按「一个文件一个顶层声明」原则拆分，纯搬移零行为变更
-- **代码极致模块化（第二十五批）：GameCategoryView.swift 由 261 行拆至 180 行**——拆出 `qwq/VersionPickerCard.swift`（「我的世界」页版本选择卡片独立组件：版本列表/未找到提示/右上角 Java 选择 popover/底部「添加文件夹/全盘查找游戏」按钮，`versions`/`hasVersions`/`selectedVersion`/`javaPickerLabel`/`showBottomButtons` 数据全量传入、`selectedJavaPath` @Binding 外置、`onSelect`/`onOpenFolderPicker`/`onFullDiskScan` 行为回调外置、popover 局部状态 `showJavaPicker` 下沉组件内）与 `qwq/GameScanService.swift`（游戏根目录扫描纯逻辑枚举：`resolveGameRoot(savedRoot:)` 已保存根目录优先→全盘兜底、`fullDiskScanGames()` 全盘扫描取总数+第一个有效游戏）。视图 body 约 110 行内联卡片区块替换为 `VersionPickerCard` 一行调用，`startScanning`/`fullDiskScan` 两处 `Task.detached` 扫描逻辑改一行转发，删除 `showJavaPicker` @State 与 `javaPickerLabel` 重复死分支（两分支同返回值）
-- **代码极致模块化（第二十四批）：ContentView.swift 由 333 行拆至 286 行**——拆出 `qwq/ModDragInstaller.swift`（拖拽安装模组纯逻辑：`findInstances(for:savedRoot:)` 扫描全部游戏根目录 + 用户选择根目录、按模组版本范围过滤匹配实例（去重，逐版本 `versionMatches`）；`install(modURL:to:)` 把模组文件拷贝到每个实例 `versions/<v>/mods`（同名覆盖），返回成功数）。视图 `findMatchingInstances`/`installModToInstances` 改为一行转发，弹窗提示仍留在视图
-- **代码极致模块化（第二十三批）：GameViews.swift 由 680 行拆至 667 行**——拆出 `qwq/ModrinthSectionType.swift`（纯逻辑：`GameSidebarSection` → Modrinth `project_type` 查询参数映射，游戏版本页返回 nil）。消除 `applyFilter`/`loadMore` 两处重复的 section→type switch，各改一行 `guard let type = ModrinthSectionType.type(for: section)` 
-- **代码极致模块化（第二十二批）：ModDetailView.swift 由 591 行拆至 572 行**——拆出 `qwq/SupportedMetaSection.swift`（详情页「支持版本范围 + 加载器图标」元信息区独立组件：版本范围文本与过滤后加载器图标行，空值自动隐藏，加载器资源名解析走 LoaderNameResolver，纯展示无状态）。原 `detailPageContent` 内约 28 行内联块替换为 `SupportedMetaSection` 一行调用
-- **代码极致模块化（第二十一批）：ModDetailView.swift 由 634 行拆至 591 行**——拆出 `qwq/DetailPageHeader.swift`（详情页页头独立组件：返回按钮 + 名称大标题 + 翻译副标题 + 横向标签胶囊（ModrinthTagMap 翻译），数据与回调全部外部传入，纯展示无状态）。原 `detailPageContent` 头部约 47 行内联块替换为 `DetailPageHeader` 一行调用
-- **代码极致模块化（第二十批）：GameViews.swift 由 720 行拆至 680 行**——拆出 `qwq/CategoryResultsGrid.swift`（结果卡片网格独立组件：LazyVGrid 分页切片（前 displayLimit 条）/滚动锚点恢复/触底追加 120 条/卡片按需翻译，数据与回调全部外部传入，`displayLimit` @Binding 外置，滚动锚点静态成员随组件迁移）。原 `resultsGrid` 方法与 `lastAnchorItemID` 静态成员删除，`contentBody` 改挂 `CategoryResultsGrid`
-- **代码极致模块化（第十九批）：CategoryContentView.swift 由 637 行拆至 594 行**——拆出 `qwq/CloseSessionButton.swift`（右下角电源按钮独立组件：圆环辉光 + 弹入动画（放大→回弹→复位），可见性由 `isLaunching`/`hasRunningSessions` 传入，点击行为（NSAlert 关闭确认/终止进程/取消启动复位）外置为 `onTap` 回调——回调内容提取为视图私有方法 `handleCloseSessionTap`；弹入动画改可取消 Task（`onDisappear` cancel）防 UAF）。原 `closeButtonOverlay` 计算属性与其 `closeButtonScale`/`closeButtonGlow` @State 删除
-- **代码极致模块化（第十八批）：CategoryContentView.swift 由 703 行拆至 637 行**——拆出 `qwq/LaunchButton.swift`（启动游戏按钮独立视图组件：阶段进度条（Java 下载/安装浅色条、启动中深色条）+ 状态文案切换（启动游戏/准备中/Java 下载中/Java 安装中/启动中）+ 点击弹跳动画；启动编排逻辑（版本校验/错误弹窗/startLaunch）通过 `onTap` 回调外置，点击动画改用可取消 Task（`onDisappear` cancel），组件销毁后不再写 State storage，UAF 防护语义不变）。原 `launchButton` 方法与其 `buttonScale` @State 删除，`leftCard` 改挂 `LaunchButton`
-- **代码极致模块化（第十七批）：GameViews.swift 由 755 行拆至 720 行、ModDetailView.swift 由 656 行拆至 634 行**——拆出 `qwq/CategorySearchBar.swift`（分类页「标题 + 搜索框」纯视图组件：放大镜图标/清空按钮/毛玻璃底，搜索文本 @Binding 外置，原 `searchBarRow` 删除）与 `qwq/ShaderPrerequisiteSection.swift`（光影详情页「必要光影加载器」固定提示卡组件：Sodium/Iris 两张前置模组卡，点击回调外部注入，原 `shaderPrerequisiteSection` 计算属性删除）
-- **代码极致模块化（第十六批）：ModDetailView.swift 由 756 行拆至 656 行**——拆出 `qwq/VersionSelectionSection.swift`（详情页「版本/加载器选择」区块独立视图组件：整合包版本 4 分组网格 / 游戏版本页加载器选择卡 / 普通版本卡片横向列表三态渲染，选择状态 `selectedVersion`/`selectedLoader`/`selectedModpackVersionId` 三个 @Binding 外置，加载器名解析走 LoaderNameResolver，纯展示无网络/缓存副作用）与 `qwq/ShaderLoaderFilter.swift`（纯逻辑：光影页加载器白名单过滤（仅 Iris/OptiFine），项目未声明时回退默认列表，含小写去重）。ModDetailView `detailPageContent` 中约 94 行内联选择区块与 16 行 shader 过滤内联逻辑替换为两行调用；`getLoaderForVersion` 私有方法删除（唯一调用点随区块下沉组件内）
-- **代码极致模块化（第十五批）：JavaManager.swift 由 399 行拆至 195 行**——拆出 `qwq/JavaDiscovery.swift`（Java 可执行文件发现枚举：7 类来源全量扫描——java_home -V / java_home 默认 / JVM 目录枚举 / Homebrew(opt+Cellar) / SDKMAN / 常见路径 / which java，内置符号链接归一化去重与可执行性过滤，命令执行用 ProcessPool）。`JavaManager.scanInstalledJava` 的 245 行 7 段扫描压缩为「发现 → 逐条 `parseJavaVersion`」，锁/磁盘缓存/DataManager 同步副作用保留在管理器；私有 `runProcess` 随之删除（唯一调用点在已下沉的扫描段）
-- **代码极致模块化（第十四批）：GameViews.swift 由 828 行拆至 755 行**——拆出 `qwq/GameSidebarView.swift`（分类侧边栏独立视图组件：section 高亮/游戏子分类展开/子项弹入动画，状态全部外部传入（`selectedSection`/`selectedSubCategory`/`subItemOpacity`/`sectionHighlightY` 四个 @Binding + 选择回调），纯展示无逻辑）。`DownloadCategoryView` 删除 `gameSidebar`/`sidebarSectionHeader`/`sidebarSubItem` 三个方法，mainHStack 改挂 `GameSidebarView`
-- **代码极致模块化（第十三批）：CategoryContentView.swift 由 711 行拆至 703 行**——拆出 `qwq/OfflineUsernameValidator.swift`（离线用户名合法性提示，PCL2 语义：>16 字符 / 非 `[0-9A-Za-z_]`，与 PCLCore 启动前硬校验 `validateOfflineUsername` 互补，输入框内联提示用）。视图 `offlineUsernameHint` 改为一行转发
-- **代码极致模块化（第十二批）：ModDetailView.swift 由 829 行拆至 756 行**——拆出 `qwq/LoaderNameResolver.swift`（加载器 key→资源名映射 + 从版本字符串后缀/子串/本地扫描结果解析加载器，含用户选择回退）、`qwq/CrossVersionFinder.swift`（资源包/光影跨版本下载匹配：排除目标版本后按相邻顺序找第一个已建对应目录的版本）、`qwq/ModpackVersionGrouping.swift`（整合包版本按 game_versions 去重分组降序）。同时删除死代码 `getModPrerequisites`（恒返回 nil）与其「前置模组」渲染块，删 `loaderAssetMap` 静态字典
-- **代码极致模块化（第十一批）：GameViews.swift 由 870 行拆至 828 行**——拆出 `qwq/SearchTranslator.swift`（搜索翻译模块：`translate(_:)` 调用 MyMemory API 中文→英文候选词，自带 100 条上限内存缓存与锁，纯数据无视图依赖）。`DownloadCategoryView` 删除私有 `translateChineseToEnglish` 与 searchTranslationCache 静态成员，中文搜索改走 `SearchTranslator.translate`，`clearStaticCaches()` 改为调用 `SearchTranslator.clearCache()`
-- **代码极致模块化（第十批）：CategoryContentView.swift 由 897 行拆至 711 行**——拆出 `qwq/OfflineSkinService.swift`（离线皮肤服务枚举：`selectSkinImage(settings:)` 选择面板（校验/存原图/裁头像/持久化/PCL2 资源包应用）、`loadDefaultIfNeeded(isLaunching:settings:)` 默认皮肤恢复（磁盘缓存→JAR 提取→内置）、`loadAvatarFromGameOrBundle(isLaunching:settings:)` 启动后头像加载）。服务只依赖 LauncherSettings 单例 + isLaunching 传参，不持有视图；视图 onAppear/onChange/onReceive 三处改走新服务
-- **代码极致模块化（第九批）：GameViews.swift 由 953 行拆至 870 行**——拆出 `qwq/ModrinthSearcher.swift`（Modrinth 项目搜索纯数据获取：`search(type:label:query:offset:limit:)` 组装 facets 查询、UA 头、解析 hits → DownloadedItem，网络失败返回空）与 `qwq/ModrinthCategoryCache.swift`（分类两级缓存容器：四类 modrinth 内存缓存 + 游戏版本清单缓存（按子分类）+ `cache(for:sub:)`/`clearAll()`/`loadFromDisk()`/`saveCacheToDisk`，CacheKey 磁盘键随迁）。`DownloadCategoryView` 只保留视图态（isViewActive/搜索翻译缓存）与 `clearStaticCaches()` 聚合入口（AppContext 内存警告调用不变），fetchItems/loadMore 改走新模块
-- **代码极致模块化（第八批）：ModDetailView.swift 由 979 行拆至 829 行**——拆出 `qwq/GameVersionDownloadStarter.swift`（游戏版本一键下载安装编排：MinecraftInstaller.createTask + 可选 Fabric/Forge/NeoForge 加载器任务串联，实例名 = 版本号+加载器名，纯编排不持有视图）与 `qwq/ModFileDownloadStarter.swift`（mod/shader/resourcePack/modpack 单文件下载编排：DownloadFileResolver 解析 → ModFileDownloadTask → 详情页启动；整合包下载完成后自动接 ModpackInstaller 安装）。两个启动器都是显式传参（值类型 + settings/manager 引用类型），闭包零 self 捕获，UAF 防护语义不变；ModDetailView 的 `startDownload` 只保留 UI 部分（弹提示/回弹动画/圆按钮弹入）后转发
-- **代码极致模块化（第七批）：MinecraftSkinManager.swift 由 392 行拆至 172 行**——拆出 `qwq/SkinAvatarCropper.swift`（`SkinAvatarCropper` 枚举：皮肤合法性校验 `validateSkin` / 正面头像裁剪 `cropAvatar`（64 高度叠加 layer1+layer2、32 高度直接取头图层、最近邻缩放）/ `HeadDirection` 取景方向，纯图像逻辑无副作用）与 `qwq/SkinResourcePackApplier.swift`（`SkinResourcePackApplier` 枚举：PCL2 离线皮肤资源包方案 `apply`/`remove`，含 `pack.mcmeta` 生成、wide/slim 双模型 × 9 默认皮肤写入、`/usr/bin/zip` 打包、`options.txt` resourcePacks 注入与摘除）。管理器只保留皮肤持久化（`saveSkin`/`getSkinData`）、authlib-injector 下载与 JVM 参数、JAR 修改旧版回退（1.13+ 无效）。CategoryContentView 中 `validateSkin`/`cropAvatar` 改走 `SkinAvatarCropper`，`applySkinAsResourcePack` 改走 `SkinResourcePackApplier`
+## Beta 0.1.1 版本发布 🚀（2026-08-07）
 
-### 新增
-
-- **下载详情页重构为独立页面（对标 PCL.Mac AppRouter 整页替换）**：彻底移除「详情页叠加在内容图层之上」的旧实现。详情页状态提升到全局 `DownloadDetailManager`（`isPresented`），由 `ContentView` 顶层 if/else **互斥整页替换**渲染——同一时刻视图树只有一页（详情页或主内容，二者互斥；动画完成后旧页面真正从视图树卸载，绝不叠加），打开时从右侧整页滑入（`move(edge: .trailing) + opacity` 非线性过渡，`interpolatingSpring` 触发），关闭时整页滑出，主内容向左滑出/滑入形成 push/pop 观感。圆形下载按钮同样提升到 ContentView 顶层全局 overlay（对标 PCL.Mac `installTaskButtonOverlay`），置于页面切换层之外、不随页面卸载，任何页面可见可点，点击 toggle 进/出详情页。游戏版本页、mod/光影/资源包/整合包下载全部走 `DownloadDetailManager.start(_:)` 进入详情页，完成/失败后 `dismiss()` 自动回原页
-- **崩溃自捕获（CrashReporter）**：app 启动时挂 SIGSEGV/SIGBUS/SIGILL/SIGABRT/SIGTRAP handler + `NSSetUncaughtExceptionHandler`，崩溃时把当前线程 backtrace 写入 `~/Library/Logs/qwq_crash.log`。此前 Xcode Run 崩溃被 LLDB 拦截、系统不落 `.ips`，崩溃堆栈永远丢失；此后崩溃可直接读取该日志定位
-- **新增下载详情页（毛玻璃风格，对标 PCL.Mac InstallingView）**：点击圆形下载按钮后不再只是视觉指示，而是进入真正的下载详情页——左侧 200pt 圆角矩形毛玻璃信息卡（总进度 / 实时下载速度 / 剩余文件，对标 PCL.Mac LeftTabView + PanelView），右侧逐任务毛玻璃卡逐阶段渲染进度（inprogress 显示实时百分比、finished 勾选、waiting 灰圈、failed 红叉，对标 StaticMyCard）。后端完整移植 PCL 的 `InstallTask` 任务模型：新增 `ModFileDownloadTask`（单文件下载任务，字节级进度写入 `currentStagePercentage`，走 `SingleFileDownloader → NetManager`，完成自动 `completeOneFile/complete`）、`DownloadDetailManager`（全局任务容器，`tasks.objectWillChange` 转发实时刷新）；`SpeedMeter` 速度数据源为 NetManager 分片下载现成上报，详情页直接读取。整合包下载完成后自动进入安装流程，普通文件下载完成后详情页自动关闭并弹「下载完成」
-- **新增游戏版本一键下载安装（游戏版本页点「下载」不再报错，对标 PCL.Mac DownloadPage）**：游戏版本页（加载器选择页）点下载 = 真正下载安装所选版本——复用 PCLCore `MinecraftInstaller.createTask`（客户端清单 → 资源索引 → 本体 jar → 依赖 libraries → natives），若该版本有可用加载器（`LoaderSupportChecker` 检测结果）则追加对应的 `FabricInstallTask`/`ForgeInstallTask`/`NeoforgeInstallTask`，由 createTask 在 jar 下载完成后自动串联安装（通过 `DataManager.inprogressInstallTasks` 按 key 查找，与 PCL.Mac 行为一致）。加载器版本号由新增的 `LoaderVersionResolver` 自动取最新（Fabric 优先最新稳定版，来源对标 PCL.Mac LoaderCard：meta.fabricmc.net / bmclapi2 forge、neoforge / meta.quiltmc.org）。实例名 = 版本号（带加载器时 + "-Fabric"/"-Forge"/"-NeoForge"，与本地实例命名约定一致）。全流程进入下载详情页展示进度，完成后自动关闭并弹「下载完成」。无可用加载器的版本自动装纯原版
-
-### 修复
-
-- **定位并修复崩溃 `EXC_BAD_ACCESS (code=257, address=0x26fffc2cb)` 真正根因（xcresult 铁证）**：此前三处日志（`~/Library/Logs/qwq_crash.log` / 系统 DiagnosticReports / 沙盒容器）全空，是因为**用户从 Xcode Run，LLDB 拦截 EXC_BAD_ACCESS → 系统不落 .ips、CrashReporter 的 signal handler 也没机会执行**——日志永远不会生成，排查方向转投 `DerivedData/.../Logs/Launch/Run-*.xcresult`，抓到崩溃前兆：启动后反复刷屏 `[SwiftUI] Modifying state during view update, this will cause undefined behavior.`。**因果链**：视图生命周期回调（onAppear/onChange/onReceive）里同步写 `@Published`/`@State` → 视图更新事务中触发 objectWillChange → SwiftUI 状态机错乱产生悬垂指针 → 执行流跳进已释放内存（崩溃地址处内容 `0xff0000ff` 为 ARGB 像素，与皮肤头像裁剪位图缓冲吻合）→ `EXC_BAD_ACCESS`。**修复 8 处**（全部改 `DispatchQueue.main.async` 延迟到渲染事务外，异步块只操作引用类型单例、零视图捕获，UAF 防护语义不变）：① `CategoryContentView.onAppear` 同步调 `OfflineSkinService.loadAvatarFromGameOrBundle/loadDefaultIfNeeded`（内部写 `settings.avatarImageURL` 等 @Published）；② `.onChange(of: settings.selectedMinecraftVersion)` 同链路；③ `.onReceive(GameVersionSelected)` 同链路；④ `onAppear` 内 `loadSkinImageIfNeeded`（写 `settings.skinImageURL`）；⑤ `ColorPickerView` 滑块 `.onChange(of: geo.frame)` 写 `frames` @State；⑥ `GameViews` `.onChange(of: geometry.size.width)` 写 `geometryWidth`；⑦ `ModDetailView` 同款 `pageWidth`；⑧ `JavaPickerView` `.onChange(of: settings.availableJavaList)` 写 `cachedOptions`。另新建共享 scheme 开启 Address Sanitizer（+ Malloc Scribble/GuardEdges/StackLogging），下次崩溃 Xcode 直接给「分配点→释放点→使用点」完整堆栈
-- **修复启动参数规则匹配误删库（对照 PCL2 `ModJsonRuleCheck`，本轮最严重）**：库过滤原用 `rules.allSatisfy { $0.match() }`——`match()` 语义为「条件匹配 && action==allow」，而 PCL2 规则是**顺序叠加**：allow 且条件匹配 → 命中；disallow 且条件匹配 → 否决；后续规则覆盖先前结论。例如 `disallow: windows` 的库在 macOS 上本应保留，`allSatisfy` 却把它无条件排除导致启动缺库（崩溃/闪退风险源之一）。现移植 PCL2 语义为 `Rule.check(_:)`（新增 `conditionsMatch()` 只判条件，`check` 逐条叠加），库过滤、`RuleTag.match()`、`Arguments` 全部改走；`OSRule` 增加 `"unknown"` 视为通用（与 PCL2 只在目标 OS 匹配同理，本启动器只匹配 osx）
-- **修复 JVM 参数动态补齐三处偏差（对照 PCL2 `ModLaunch.vb` 审查）**：① `-Xmx` 由无条件追加改为先查重（用户自定义 JVM 参数/高级设置显式指定过 `-Xmx` 时不再覆盖）；② 新增 Log4Shell 漏洞防御——老版本（1.18.1 及以下）官方 JSON 不携带 `-Dlog4j2.formatMsgNoLookups=true`，现查重后强制补上（PCL2 强制注入），否则日志注入可执行代码；③ 新增 `-Djava.library.path=${natives_directory}` 查重兜底——第三方/自定义 JSON 缺失该参数时 LWJGL 找不到 native 库无法启动（官方 1.13+ JSON 自带则不重复）
-- **修复 `version_type` 启动参数语义错误**：原硬编码 `"PCL.Mac \(SharedConstants.shared.version)"` 会污染 F3 调试面板的版本类型显示。对照 PCL2 `ModLaunch.vb`，`${version_type}` 应为版本类型（release/snapshot），改为 `instance.manifest.type`（为空兜底 "release"）
-- **修复 Java 刷新按钮旋转动画与刷新完成不同步**：原实现点击后固定旋转 720°、1.5 秒硬编码复位，扫描耗时>1.5s 时圈已停但刷新未完、<1.5s 时转完还空等。现 `refreshAvailableJavaList` 增加 completion 回调（主线程更新 `availableJavaList` 后触发），`JavaPickerView` 用 `.onChange(of: isRefreshing)` 驱动——刷新中 `.linear(duration: 1).repeatForever(autoreverses: false)` 持续旋转（非线性平滑），刷新完成回调置 false 后 `.easeOut(0.35)` 回正停止；连点由 `guard` + `.disabled` 防重入
-- **修复光影详情页跳转光影加载器下载后返回、左侧栏高亮不跳回**：详情页进入前置加载器（Sodium/Iris）前用 `pendingReturnSection` 记住原分类，`ModDetailView.goBack()` 弹出前置栈时回调 `onNavigateBackFromMod` 恢复 `selectedSection` + 侧栏高亮；`closeDetail`/`selectSection` 清残留状态，避免脏数据
-- **修复下载页卡片有时没有动画**：拆分重构时 `searchPopInIds` 弹入动画丢失，卡片数据就绪后首次构建直接显示、动画被吞。`ContentCard` 补 `appearScale`/`appearOpacity` 初始值 + `onAppear` 内 `withAnimation(.spring)` 弹入（scale 0.92→1 / opacity 0→1），`DownloadTaskCard` 同样补（0.94→1）——卡片出现时必然弹入，滚动重建进入可视区也会再次弹入
-- **修复 Java 查找链路五处功能失效（用户实测「改过 Java 查找后失效很多」）**：① `JavaVersionParser` 裸 `Process` 死锁——`java -version`/`file` 分支对失效路径（缓存残留、已卸载 Java）`run()` 失败后 `readDataToEndOfFile()` 永远等不到管道 EOF，扫描线程永久卡死，`isScanning` 卡在 true 导致后续所有扫描返回空列表（Java 列表消失、启动找不到 Java）。改为执行前校验可执行性 + `do-catch` 失败即返；② 版本正则漏配现代格式——原只匹配 `version "1.8.x"` 老格式，`version "21.0.1"` 这类现代输出匹配失败被判无效（release 文件缺失时 11+ 版本全部丢失），改为老格式/现代格式双正则；③ `scanInstalledJava` 并发返回空——扫描中另一线程（刷新按钮连点、预扫描与 UI 刷新并发）直接拿空列表覆盖 `availableJavaList`，改为 NSCondition 等待进行中扫描完成再返回；④ `syncJavaVirtualMachines` 只增不删——Java 卸载后 `DataManager.javaVirtualMachines` 残留失效 JVM，启动时可能选中已删除路径，改为同步前先移除可执行文件已不存在的旧条目；⑤ `/usr/bin/java` stub 前后矛盾——`JavaDiscovery`/`resolveJavaExecutable` 把它当真实 Java，`LaunchPrecheck` 却明确排除（macOS 上它是系统占位符不是真 JDK），兜底处改为先解析出真实版本号才可用。另修 `JavaDiscovery` Cellar 路径构造错误（`replacingOccurrences` 把 `/opt/homebrew/opt` 拼成错误路径，Cellar 下 Java 永远扫不到）与 `JavaVersionParser` 解析不出主版本号时不再返回无效 `JavaInfo`（`majorVersion==0` 直接判 nil）
-
-- **修复下载链路 UAF 崩溃（`EXC_BAD_ACCESS`，下载详情页/圆按钮相关操作后偶发）**：根因是下载回调闭包 `[self]` 捕获整个视图 struct——struct 含所有 `@State` 存储指针，回调（`Task.detached`/`onComplete`/`asyncAfter`）晚于视图销毁触发时，读写这些悬垂指针即 UAF（执行流跳进已释放数据区）。本次彻底切断：① 所有下载闭包改为只捕获值类型（pageType/item/selectedVersion/selectedLoader 等）与引用类型（`LauncherSettings.shared`/`DownloadDetailManager.shared`），`resolveDownloadFile` 改为静态方法显式传参，`Task.detached` 内零 `self` 捕获；② 下载按钮弹跳动画与返回滑动动画由 `DispatchQueue.main.asyncAfter` 写 `@State` 改为可取消 `Task`，`onDisappear` 统一 cancel——视图销毁后不再写已释放的 State storage；③ 详情页打开/关闭动画由 `DownloadDetailManager.start/toggle/dismiss` 内部统一 `withAnimation(.interpolatingSpring)` 触发（此前 `start()` 无动画、页面瞬现）
-- **修复下载详情页偶发崩溃 `EXC_BAD_ACCESS (code=257, address=0x26fffc2cb)`**：根因是下载任务完成回调（`onComplete`）里直接写视图的 `@State`（`self.isDownloading`）——回调可能在用户已离开页面后触发，此时视图已销毁，写已释放的 State storage 造成 UAF（对齐故障、跳进数据区）。改为：回调只操作全局单例（`DownloadDetailManager.dismiss()` / 弹窗提示），「下载中」状态由 `onChange(of: downloadDetail.isPresented)` 跟随详情页开关自动复位（视图存活时才执行，销毁则无需复位）
-- **修复下载详情页交互（对标 PCL.Mac：点圆形按钮 toggle 开关，无返回键）**：此前详情页以全屏叠加层盖住整个内容区，把右下角圆形按钮也盖住了，用户无法再次点击回到原页面，只能点右上角 xmark 关闭。现改为：圆形按钮提升到详情页之上（zIndex 50 > 10）始终可见可点，点击在「显示/隐藏详情页」间切换（toggle）；移除详情页的 xmark 关闭按钮；手动关闭详情页时保留进行中的任务，再次打开恢复显示；任务清空后再打开显示「没有进行中的下载」占位，不再空白
-- 修复游戏版本页加载器卡片无法取消选中：再点已选中的加载器卡片即可取消（不装加载器、下载纯原版），刷新/重新检测后保持取消状态不再被自动选回；此前点击只会切换选中，无法表达「不装加载器」。取消状态用空字符串表示，与「下载纯原版」的判定天然兼容
-- 修复游戏版本页点「下载」弹「下载失败: 游戏版本页无需下载」：此前的下载链路只在 mod/shader/resourcePack/modpack 四类页面实现了下载逻辑，游戏版本页（loaderSelector）只做了占位守卫，而下载按钮又对所有页面显示，一按就撞上守卫报错。已改为真正的版本下载安装（见上方新增条目），并保留兜底文案
-
-- 修复「下载游戏」页面所有分类显示为空：版本清单（version_manifest）拉取失败时不再缓存空结果（此前一次失败会导致 5 分钟内所有游戏版本分类全部为空），网络恢复后自动重试
-- 修复模组列表实时翻译导致界面卡死：翻译结果改为独立字典异步更新，不再逐条改写列表数组触发全列表重建
-- 修复实时翻译仅覆盖前 200 张卡片：本地全量目录（模组 7 万余条）中滚动到下方的卡片完全没有翻译，只有点进详情页才翻译简介。改为按需翻译——卡片进入可视区域时才发起翻译（滚动到哪翻译到哪），已翻译结果写入磁盘缓存
-- 修复翻译缓存未全量应用与未回写列表：此前列表只对前 200 项批量应用磁盘缓存，其余条目即使已在详情页翻译过也不会在列表显示。现在进入页面/返回列表时全量应用磁盘翻译缓存，详情页翻译过的简介返回列表后立即回写
-- 修复退出详情页后列表滚动位置回到最上方：进入详情页前记录当前浏览位置（视口顶部卡片锚点），返回列表后自动恢复原位，不再跳回顶部
-- 修复游戏版本清单分类缓存逻辑，避免缓存污染导致切分类后无内容
-- 修复 Forge 安装器与 GLFW 启动器使用 `/usr/bin/java` 的问题：改为优先使用用户选择的 Java，其次扫描系统最佳版本，最后才回退系统 Java
-- 修复解压任意 ZIP 时的路径穿越（ZIP Slip）漏洞：拒绝绝对路径与 `..` 跳出的条目
-- 修复下载进度语义：内容长度未知（-1）时不再导致进度累加为负数
-- 修复下载完成后句柄与临时文件未及时清理的问题
-- 修复崩溃日志清理误删共享临时目录的问题
-- 修复缓存读写并发死锁（`NSLock` → `NSRecursiveLock`）
-- 修复列表翻译缓存全量扫描触发海量磁盘 IO 导致的卡顿：此前进入页面/返回列表会对全部 7 万余条目录逐条执行磁盘检查，改为纯内存扫描；磁盘缓存命中的翻译由进入可视区域的卡片按需回读，滚动到哪显示到哪
-- 修复实时翻译无并发上限导致的请求堆积：全局翻译并发限制为最多 24 个同时进行，滚动浏览大量卡片时不再无限制创建后台网络任务
-- **修复创建世界 / 进入世界报错 `Internal Exception: io.netty.handler.codec.EncoderException: Failed to encode packet 'serverbound/minecraft:hello'`**：根因是离线用户名超过 16 字符——历史脏数据把输入框占位提示「SL启动器（最好使用英文及下划线）」存成了真实用户名（17 字符 > MC `hello` 包 `writeUtf(name,16)` 上限，编码直接抛 `String too big (was 17 characters, max 16)`）。本次完整移植 PCL2 离线登录逻辑：① 启动前 PCL2 风格校验用户名（非空 / 无英文引号 / ≤16 字符，对应 PCL2 `PageLoginLegacy.IsVaild`）；② 离线 UUID 改用 PCL2 `McLoginLegacyUuid` 算法（名字长度 + djb2-xor 哈希拼接，强制 version=3 / variant=9，替代此前「未哈希的 OfflinePlayer 原始字节」错误算法）；③ 离线 accessToken = UUID 本身（PCL2 `McLoginLegacyStart` 行为）；④ `user_type` 恢复 PCL2 行为统一传 `msa`（PCL2 issue #1221，废弃此前改传 `legacy` 的错误尝试）；⑤ 启动时自动清理已写入 UserDefaults 的占位符脏数据
-- **修复游戏关闭启动器检测不到**：`MinecraftLauncher.launch` 增加 `process.terminationHandler`，进程退出时主动在主线程触发 callback；同时用 `DispatchSemaphore` 替代 `process.waitUntilExit()`——一旦 Java 进程异常（卡死/死锁/僵尸），旧实现永久阻塞、UI 永远收不到 completion；现在 terminationHandler 必然触发一次 callback。catch 路径也 signal semaphore 防止 launch() 自身永久阻塞
-- 修复启动参数 `user_properties` 多转义引号的问题：此前传 `"\"{}\""` 让 Java 收到字面量 `"{}"`，改为与 PCL2 一致的 `{}`（Process.arguments 不经 shell，参数原样传递）；同时按 PCL2 行为补充 `auth_session` 启动参数（值与 accessToken 一致）
-- 启动链路防御性用户名校验：`PCLLaunchBridge` 对用户名 trim 后为空自动兜底为 `Player`，非法（含英文引号 / 超 16 字符）直接失败并返回明确错误；`MinecraftInstance.launch` 前置校验，非法用户名不再拖到进服时才抛 `EncoderException`
-- **修复离线自定义皮肤无效（26.2 实测）**：1.19.3+ 的默认皮肤实际加载路径为 `assets/minecraft/textures/entity/player/{slim|wide}/{9 个默认皮肤}.png`，此前向版本 JAR 顶层写入 `entity/steve.png` 等的替换方式游戏根本不读取。已按 PCL2（`ModLaunch.vb` 离线皮肤资源包逻辑）移植新方案：生成皮肤资源包 `resourcepacks/SL 皮肤.zip`（`pack.mcmeta` + wide/slim 双模型 × 9 个默认皮肤 + 旧版顶层 `entity/{steve,alex}.png`，全版本生效），并注入 `options.txt` 的 `resourcePacks`（追加 `"file/SL 皮肤.zip"`，列表末尾最高优先级）；选择皮肤时与每次启动前均幂等应用（按皮肤 SHA-1 判重，换皮肤自动重建资源包）
-- 修复点击空白处 / 按钮后用户名输入框高亮边框不消失：macOS 点击非焦点区域不会自动让输入框失焦，新增背景透明点击层（点击空白即失焦），并让「选择皮肤」「启动游戏」按钮主动释放焦点
-- 修复模组 / 加载器详情页每次进入都强制联网检测加载器支持导致 10+ 秒等待：加载器支持检测改为三级策略——内存缓存 → 磁盘缓存（`SL启动器/LoaderSupportCache.json`，7 天 TTL，原子写入）→ 联网检测（失败自动回退旧磁盘缓存），装过加载器后再次进入详情页秒开
-- **修复手动关闭游戏进程后启动器识别不到**：`process.terminationHandler` 此前在 `run()` 之后才设置——进程启动后立刻退出（秒退 / 崩溃 / 手动关闭恰在 run 之后）时 handler 可能永不触发，`launch()` 永久阻塞、UI 永远停留在「运行中」。改为在 `run()` 之前设置 handler，并将等待改为带超时轮询兜底：检测到进程不再运行就主动回调，确保「游戏已关闭」必然被识别并复位 UI
-- 修复启动按钮等待阶段无反馈：点击启动后约 1 秒（皮肤资源包应用等准备操作）按钮变灰却仍显示「启动游戏」，新增「准备中…」阶段文案，准备完成进入下载 / 启动阶段自动切换
-- **修复游戏版本页（加载器选择）显示与所点版本不一致**：进入详情页时默认选中的是「当前实例版本」而非用户点击的版本——例如点击 1.7.2 打开详情页，加载器卡片却显示当前实例 26.2 的检测结果（26.2 缓存命中 Fabric/Forge/NeoForged/Quilt 四张卡片，而 1.7.2 实际仅支持 Forge）。游戏版本页现改为默认选中用户点击的版本（`item.name`），加载器检测严格按所选版本执行
-- **修复加载器选择页 1.10 等版本仍显示 4 张卡片（上一修复后仍复现）**：根因是 `fetchManifestVersions` 完成回调此前**无条件**把 `selectedVersion` 覆盖为 `sortedVersions.first`，而版本列表排序会把当前实例版本（26.2）提到首位——点击 1.10 后 onAppear 按 `item.name` 设置的选择被清单拉取回调冲掉，`onChange` 再次触发 `fetchLoaderSupport("26.2")` 命中磁盘缓存（仅 26.2 有 4 加载器条目）显示四张卡。现改为回调内先保留现有选择（含用户手动选择），其次用户点击的 `item.name`，最后才回退到列表首位；`item.name` 不在本地版本列表时也不提前回退，等待清单就绪后决议
-- **优化加载器支持检测的首次等待**：① 404/410 等 4xx 状态码此前被当作瞬时故障重试 3 次（Quilt 双端点 × 3 次 = 6 次白等），现改为「4xx = 明确不支持」直接出结论，仅网络错误 / 5xx 才重试——实测 1.10 首次检测由数秒降至约 1 秒（四端点并发取最慢值）；② 「0 个加载器支持的版本」此前检测结果为空时不写缓存，导致每次进详情页都重新联网白等，现空结果同样写入缓存（区分「明确不支持」与「网络失败结果未知」，后者不写缓存、回退磁盘旧缓存，避免覆盖已有记录）；③ 缓存命中的版本（如 26.2）本来就秒开、不闪 loading
-- 修复下载 / 安装任务回调写 `self.isDownloading` 的 UAF 崩溃风险：回调可能晚于视图销毁，此时写 @State 会触发 `EXC_BAD_ACCESS`。改为不再在任务回调里写该状态，由 `.onChange(of: downloadDetail.isPresented)` 在详情页开关变化（dismiss / 手动关闭）时统一复位
-
-### 新增
-
-- 下载校验：客户端 jar、依赖库、原生库下载接入 SHA-1 校验
-- 本地 Modrinth 全量目录更新至 122,477 条目（模组 71,706 / 资源包 31,918 / 光影 781 / 整合包 18,072），覆盖更完整
-- JVM 启动参数动态补齐：按平台与 Java 主版本自动注入缺失参数（macOS 补 `-XstartOnFirstThread`、Java 8 及以下补 `-XX:+UseG1GC`、补 `-XX:+HeapDumpOnOutOfMemoryError` 与 `-Dfile.encoding=UTF-8`），全部先查重再追加，与版本清单自带参数不冲突
-- 借鉴 GitHub 开源项目 Swift-Craft-Launcher（AGPL-3.0，仅参考思路）进一步深化 JVM 参数优化：`-Xms` 堆初始大小动态补齐（默认 maxMemory 的一半、下限 256m，消除堆扩张停顿）；Java 9+ 且未显式指定 GC 时注入 G1 停顿调优（`-XX:+ParallelRefProcEnabled` / `-XX:MaxGCPauseMillis=200`）；补 `-XX:+OmitStackTraceInFastThrow` 与 `-XX:+OptimizeStringConcat` 零风险运行时优化，全部查重后追加
-- 离线用户名输入实时提示（PCL2 HintChinese 语义）：输入框下方动态显示校验提示——超过 16 字符提示「用户名不能超过 16 个字符」，包含英文数字下划线以外字符时提示 1.18+ 服务端可能拒绝；启动时对含非法字符的用户名弹窗警告「可能无法进入游戏」，支持「仍要启动」以兼容 1.18 之前的版本
-
-### 变更
-
-- 离线皮肤应用统一改走「皮肤资源包」方案（PCL2 移植，见修复条目）：不再修改版本 JAR——JAR 顶层贴图对 1.19.3+ 无效；资源包方案全版本生效，且不破坏 JAR 完整性
-- 下载按钮点击即时提示「下载开始」（此前仅下载完成才提示「下载完成」）
-- 用户名输入框横向宽度 190 → 150，更紧凑
-- 用户名校验提示文字由橙色改为白色（暗色主题下更协调）
-- **加载器支持检测下沉到 PCLCore 后端核心**：新增 `LoaderSupportChecker` 核心服务，UI 层（`ModDetailView`）不再直接联网 / 直接读写缓存文件，只消费结果——三级策略（内存 → 磁盘 7 天 TTL → 联网失败回退旧缓存）与并发检测、多端点重试全部在核心层实现；新增同步缓存查询接口（缓存命中时不闪烁 loading），内存警告时一并清理核心层内存缓存
-
-- 应用图标内容整体缩小至 0.85 倍（像素尺寸不变，内容居中），视觉上更紧凑
-- 空闲时静默后台：网速计速器改为惰性启动（有流量才跑，空闲 3 秒自停，不再常驻每秒唤醒）；游戏日志改为增量读取（不再全量重读文件）；窗口检测轮询由 1 秒降频至 2 秒——应用空闲时几乎不再产生 CPU 与内存占用
-- 翻译结果内存上限：实时翻译字典最多保留 2000 条，超限优先裁剪非活跃条目，磁盘缓存兜底恢复，长会话内存不再无限增长
-- Java 主版本探测合并为一次读取（`release` 文件解析），版本校验与参数过滤共用结果，减少重复磁盘 IO
-- 代码极致模块化：`GameViews.swift` 由 2776 行拆分为 4 个职责单一文件——`GameViews.swift`（1516 行，列表与分类视图）、`ModDetailView.swift`（详情页）、`ContentCard.swift`（内容卡片）、`GameCards.swift`（依赖卡/加载器选择卡/版本卡/网格卡），可读性与可维护性大幅提升
-- 修复 AppIcon 资源引用缺失导致的 32x32@2x 图标缺口
-- 在线列表缓存优先：进入页面/搜索时先读磁盘缓存（离线、弱网也能秒开上次内容），无缓存才请求网络；所有分类列表拉取成功后自动持久化到磁盘缓存
-- 下载详情页交互调整：移除右上角 X 关闭按钮，圆形下载按钮改为开关切换（`zIndex` 提升至详情页之上，详情页打开时按钮仍可见可点），再点一次即可回到刚才的页面，无需返回键
-- **互斥整页替换（对标 PCL.Mac `router.getLastView()` 语义，用户强烈要求）**：详情页与主内容从「ZStack 叠加」改为 if/else 互斥——动画完成后上一个页面真正卸载，彻底解决「几个页面叠在一起、动画完不卸载」的问题；全局弹窗/提示/圆按钮提升到页面切换层之外，不随页面卸载
-- **代码极致模块化（第二批）**：`GameViews.swift` 再拆出 `GameCategoryView.swift`（「我的世界」分类页：版本选择卡 + Java 选择卡，原 1243–1493 行），文件由 1493 行降至 1242 行；按「顶层视图一个文件」的粒度逐块拆分，每拆一步编译验证一次（BUILD SUCCEEDED）
-- **代码极致模块化（第三批）**：`ModDetailView.swift` 由 1188 行拆至 979 行，拆出 4 个职责单一文件——`DetailPageType.swift`（详情页类型枚举，ModDetailView/GameViews 共用）、`GameVersionHelper.swift`（版本比较/显示排序/愚人节版本判断共享工具，消除 ModDetailView 与 GameViews 中的重复私有实现）、`GameDirectoryScanner.swift`（本地已装版本/版本内加载器探测/光影文件夹检测扫描器）、`DownloadFileResolver.swift`（下载目标文件解析，静态方法保持闭包零 self 捕获的 UAF 防护语义不变）
-- **代码极致模块化（第四批）**：`GameViews.swift` 由 1242 行拆至 953 行，拆出 `GameVersionManifest.swift`（官方+未列出版本清单并发拉取合并，5 分钟内存缓存，ModDetailView 同步改用）与 `LocalModCatalog.swift`（本地 12 万条 Modrinth 全量目录：gzip 解析 + 磁盘缓存二次秒开 + 后台预热 + 翻译预取，`warmUp`/`items`/`isReady` 供 qwqApp 与视图调用）；GameViews 内的愚人节版本判断重复实现改用共享的 `GameVersionHelper.isAprilFoolVersion`
-- **代码极致模块化（第五批）**：`CategoryContentView.swift` 由 1001 行拆至 897 行，拆出 `GameSession.swift`（启动会话模型 + LaunchPhase + closeGameSession 通知）、`SessionLogCardView.swift`（启动日志卡片视图）、`SkinExtractor.swift`（从版本 JAR 提取 steve/alex 默认皮肤，unzip 临时目录提取）
-- **代码极致模块化（第六批）**：`JavaManager.swift` 由 593 行拆至 399 行，拆出 `JavaDownloader.swift`（Azul Zulu API 优先 + Microsoft JDK 17/21 回退的 JDK 下载解压）与 `JavaVersionParser.swift`（release 文件优先 + java -version 回退 + file 架构检测的版本解析）；JavaManager 的 `parseJavaVersion`/`downloadJava` 保留薄封装（缓存写入等副作用留在管理器，解析器保持无副作用）
-- **共享 scheme 更新至 Xcode 1.8 格式**：`qwq.xcscheme` 经 Xcode 重新保存后属性顺序重排、scheme 版本 1.7→1.8（Debug 的 Address Sanitizer 全套内存检测配置保持不变，仍处于启用状态）；`build_asan/`、`build_asan2/` ASan 构建产物目录（各约 290MB 派生数据）加入 `.gitignore`，与既有 `build/` 同理不再入库
-
-## [1.0.0] - 2026-08-07
-
-### 新增
-
-- SL 启动器基线：游戏版本下载 / 安装 / 启动、账户与游戏目录管理
-- Modrinth 全量目录爬虫（`crawl_modrinth.py`）与本地全量列表 / 搜索 / 实时翻译
-- 加载器检测缓存与重试、26.x 版本分类、详情页、版本卡片放大裁剪与图标映射
+SL 启动器基线：游戏版本下载 / 安装 / 启动、账户与游戏目录管理
+Modrinth 全量目录爬虫（crawl_modrinth.py）与本地全量列表 / 搜索 / 实时翻译
+加载器检测缓存与重试、26.x 版本分类、详情页、版本卡片放大裁剪与图标映射

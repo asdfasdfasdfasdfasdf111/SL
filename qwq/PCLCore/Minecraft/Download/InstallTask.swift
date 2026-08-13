@@ -17,6 +17,15 @@ public class InstallTask: ObservableObject, Identifiable, Hashable, Equatable {
     public let id: UUID = UUID()
     public var callback: (() -> Void)? = nil
     
+    /// 幂等完成标志：complete() 被调用多次时只真正清理一次。
+    /// 根治「重复 complete → 重复清理 / 重复 dismiss / 重复 resume continuation」类 UAF 前兆。
+    private var didComplete = false
+    /// 所属任务组（weak 防循环引用；由 InstallTasks.addTask/init 时设置）。
+    /// complete() 清全局 inprogressInstallTasks 前用它做归属校验：
+    /// 只有「全局仍是自己所属那一组」才清理，否则说明新任务已接管，绝不能动全局引用
+    /// —— 旧任务迟到回调清掉新任务引用 → 新任务失去强持有 → 下载中 UAF（崩溃 #4 根因）。
+    internal weak var containerTasks: InstallTasks?
+    
     public static func == (lhs: InstallTask, rhs: InstallTask) -> Bool {
         lhs.id == rhs.id
     }
@@ -45,12 +54,21 @@ public class InstallTask: ObservableObject, Identifiable, Hashable, Equatable {
     }
     
     public func complete() {
+        // 幂等：重复调用只保留第一次的效果（updateStage + 清理 + callback 只发一次）
+        guard !didComplete else { return }
+        didComplete = true
         log("下载任务结束")
         self.updateStage(.end)
         DispatchQueue.main.async {
-            DataManager.shared.inprogressInstallTasks = nil
-            if case .installing(_) = DataManager.shared.router.getLast() {
-                DataManager.shared.router.removeLast()
+            // 归属校验：仅当全局 inprogressInstallTasks 里仍包含本任务（== 未被新任务顶替）
+            // 才清理全局引用。旧任务 A 的迟到回调晚于新任务 B 的 start() 到达时，
+            // 全局已是 B 的任务组 → 含有的是 B 不是 A → A 一律不动 →
+            // 彻底消除「旧任务清理误清新任务引用 → 新任务失去强持有 → 下载中 UAF」竞态。
+            if DataManager.shared.inprogressInstallTasks?.tasks.values.contains(where: { $0 === self }) == true {
+                DataManager.shared.inprogressInstallTasks = nil
+                if case .installing(_) = DataManager.shared.router.getLast() {
+                    DataManager.shared.router.removeLast()
+                }
             }
             self.callback?()
         }
@@ -102,11 +120,13 @@ public class InstallTasks: ObservableObject, Identifiable, Hashable, Equatable {
     
     public func addTask(key: String, task: InstallTask) {
         tasks[key] = task
+        task.containerTasks = self
         subscribeToTask(task)
     }
     
     init(_ tasks: [String : InstallTask]) {
         self.tasks = tasks
+        tasks.values.forEach { $0.containerTasks = self }
         subscribeToTasks()
     }
     
@@ -162,7 +182,12 @@ public class MinecraftInstallTask: InstallTask {
                 err("无法安装 Minecraft: \(error.localizedDescription)")
                 await MainActor.run {
                     currentState = .failed
-                    DataManager.shared.inprogressInstallTasks = nil
+                    // 归属校验（与 complete() 同一套）：失败回调也可能迟到（晚于下一个下载的
+                    // start()），此时全局已是新任务组 → 绝不清空，避免旧任务清掉新任务引用
+                    // （跨任务交叉清理 UAF，崩溃 #4 根因）
+                    if DataManager.shared.inprogressInstallTasks?.tasks.values.contains(where: { $0 === self }) == true {
+                        DataManager.shared.inprogressInstallTasks = nil
+                    }
                     try? FileManager.default.removeItem(at: versionURL)
                 }
             }

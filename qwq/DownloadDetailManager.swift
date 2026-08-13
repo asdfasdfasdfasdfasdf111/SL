@@ -39,8 +39,12 @@ final class DownloadDetailManager: ObservableObject {
     /// 开始一个新下载任务并打开详情页
     /// 注意 key 必须在 InstallTasks.getTasks() 的固定顺序表内（minecraft/fabric/forge/neoforge/customFile），
     /// 否则 getTasks() 取不到任务（order 里没有的 key 会被过滤掉）
-    func start(_ task: InstallTask, key: String = "customFile") {
-        start(InstallTasks.single(task, key: key))
+    /// - Returns: 本次任务组 id（供完成回调归属校验：dismiss(ownerID:) 只允许自己清自己）
+    @discardableResult
+    func start(_ task: InstallTask, key: String = "customFile") -> UUID {
+        let tasks = InstallTasks.single(task, key: key)
+        start(tasks)
+        return tasks.id
     }
 
     /// 开始一组下载任务（如游戏版本安装：minecraft + fabric/forge/neoforge）并打开详情页
@@ -64,7 +68,12 @@ final class DownloadDetailManager: ObservableObject {
 
     /// 关闭详情页并清空任务（下载完成 / 失败后调用）
     /// 关闭带非线性动画，与打开对称；后台回调也走这里，动画自动在主线程播放
-    func dismiss() {
+    /// - Parameter ownerID: 发起关闭的任务组 id。当传入且与「当前展示的任务组」不一致时，
+    ///   说明旧任务迟到回调晚于新任务 start() 到达，此时绝不清空——否则会把新任务的
+    ///   InstallTasks 引用清掉（新任务失去强持有 → 下载中 UAF，崩溃 #4 根因）。
+    ///   传 nil 表示强制关闭（无任务组语义的调用方，如 toggle 关闭页）。
+    func dismiss(ownerID: UUID? = nil) {
+        if let ownerID, ownerID != tasks.id { return }
         withAnimation(.interpolatingSpring(stiffness: 190, damping: 16)) {
             isPresented = false
         }
