@@ -109,6 +109,12 @@ struct ContentView: View {
         }
         .frame(minWidth: 800, minHeight: 550)
         .environmentObject(settings)
+        // 切换分类时自动收起下载详情（下载与圆按钮保持，仅关闭覆盖层）
+        .onChange(of: selectedCategory) { _ in
+            if downloadDetail.isPresented {
+                downloadDetail.toggle()
+            }
+        }
         .alert("启动失败", isPresented: $settings.showLaunchAlert, presenting: settings.launchErrorMessage) { _ in
             Button("确定") { settings.launchErrorMessage = nil }
         } message: { error in
