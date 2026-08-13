@@ -211,6 +211,10 @@ public class MinecraftInstallTask: InstallTask {
     public let startTask: @MainActor (MinecraftInstallTask) async throws -> Void
     public let architecture: Architecture
     @Published private var currentState: InstallState = .inprogress
+    /// 安装失败原因（成功为 nil）。失败路径设置后调用 complete()，供 onComplete 回调区分成功/失败
+    /// —— 旧实现失败不 complete()：下载详情页任务永远挂着不 dismiss、不弹失败提示（用户反馈的
+    /// 「下载失败不会自动终止任务并报错」根因）。
+    public private(set) var failureReason: String?
     
     public init(minecraftVersion: MinecraftVersion, minecraftDirectory: MinecraftDirectory, name: String, architecture: Architecture = .system, startTask: @escaping @MainActor (MinecraftInstallTask) async throws -> Void) {
         self.minecraftVersion = minecraftVersion
@@ -230,13 +234,14 @@ public class MinecraftInstallTask: InstallTask {
                 err("无法安装 Minecraft: \(error.localizedDescription)")
                 await MainActor.run {
                     currentState = .failed
-                    // 归属校验（与 complete() 同一套）：失败回调也可能迟到（晚于下一个下载的
-                    // start()），此时全局已是新任务组 → 绝不清空，避免旧任务清掉新任务引用
-                    // （跨任务交叉清理 UAF，崩溃 #4 根因）
-                    if DataManager.shared.inprogressInstallTasks?.tasks.values.contains(where: { $0 === self }) == true {
-                        DataManager.shared.inprogressInstallTasks = nil
-                    }
+                    failureReason = error.localizedDescription
                     try? FileManager.default.removeItem(at: versionURL)
+                    // 失败也必须 complete()：触发 onComplete 回调 → 关闭下载详情页 + 弹失败提示。
+                    // complete() 幂等（didComplete）+ 归属校验：失败回调迟到（晚于下一个下载的
+                    // start()）时识别出全局任务组已被替换 → 拒绝清理，避免旧任务清掉新任务引用
+                    // （跨任务交叉清理 UAF，崩溃 #4 根因）。旧实现这里只清全局不调 complete()，
+                    // 导致详情页永远挂着、无失败回调。
+                    self.complete()
                 }
             }
         }
@@ -272,13 +277,15 @@ public class MinecraftInstallTask: InstallTask {
 public class FabricInstallTask: InstallTask {
     @Published private var state: InstallState
     private let loaderVersion: String
+    /// 安装失败原因（成功为 nil）；失败抛错让整条安装链终止并报错
+    public private(set) var failureReason: String?
     
     init(loaderVersion: String) {
         self.state = .waiting
         self.loaderVersion = loaderVersion
     }
     
-    public func install(_ task: MinecraftInstallTask) async {
+    public func install(_ task: MinecraftInstallTask) async throws {
         await MainActor.run {
             state = .inprogress
         }
@@ -289,6 +296,13 @@ public class FabricInstallTask: InstallTask {
         } catch {
             await PopupManager.shared.show(.init(.error, "无法安装 Fabric", "\(error.localizedDescription)\n若要反馈此问题，你可以进入设置 > 其它 > 打开日志，将选中的文件发给别人。", [.ok]))
             err("无法安装 Fabric: \(error.localizedDescription)")
+            await MainActor.run {
+                state = .failed
+                failureReason = error.localizedDescription
+            }
+            // 失败向上抛 → Minecraft 安装链中断 → 整体终止并报错（旧实现吞掉错误后
+            // state = .finished 且继续走后续步骤，最终弹「下载完成」——加载器失败被误报成功）
+            throw error
         }
         await MainActor.run {
             state = .finished
@@ -305,13 +319,15 @@ public class FabricInstallTask: InstallTask {
 public class ForgeInstallTask: InstallTask {
     @Published private var state: InstallState
     private let forgeVersion: String
+    /// 安装失败原因（成功为 nil）；失败抛错让整条安装链终止并报错
+    public private(set) var failureReason: String?
     
     init(forgeVersion: String) {
         self.state = .waiting
         self.forgeVersion = forgeVersion
     }
     
-    public func install(_ task: MinecraftInstallTask) async {
+    public func install(_ task: MinecraftInstallTask) async throws {
         await MainActor.run {
             state = .inprogress
         }
@@ -324,6 +340,11 @@ public class ForgeInstallTask: InstallTask {
         } catch {
             await PopupManager.shared.show(.init(.error, "无法安装 Forge", "\(error.localizedDescription)\n若要反馈此问题，你可以进入设置 > 其它 > 打开日志，将选中的文件发给别人。", [.ok]))
             err("无法安装 Forge: \(error.localizedDescription)")
+            await MainActor.run {
+                state = .failed
+                failureReason = error.localizedDescription
+            }
+            throw error
         }
         await MainActor.run {
             state = .finished
@@ -337,13 +358,15 @@ public class ForgeInstallTask: InstallTask {
 public class NeoforgeInstallTask: InstallTask {
     @Published private var state: InstallState
     private let neoforgeVersion: String
+    /// 安装失败原因（成功为 nil）；失败抛错让整条安装链终止并报错
+    public private(set) var failureReason: String?
     
     init(neoforgeVersion: String) {
         self.state = .waiting
         self.neoforgeVersion = neoforgeVersion
     }
     
-    public func install(_ task: MinecraftInstallTask) async {
+    public func install(_ task: MinecraftInstallTask) async throws {
         await MainActor.run {
             state = .inprogress
         }
@@ -356,6 +379,11 @@ public class NeoforgeInstallTask: InstallTask {
         } catch {
             await PopupManager.shared.show(.init(.error, "无法安装 NeoForge", "\(error.localizedDescription)\n若要反馈此问题，你可以进入设置 > 其它 > 打开日志，将选中的文件发给别人。", [.ok]))
             err("无法安装 NeoForge: \(error.localizedDescription)")
+            await MainActor.run {
+                state = .failed
+                failureReason = error.localizedDescription
+            }
+            throw error
         }
         await MainActor.run {
             state = .finished

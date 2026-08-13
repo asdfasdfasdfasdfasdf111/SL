@@ -180,35 +180,50 @@ struct ContentView: View {
                             DownloadDetailView()
                                 .transition(.move(edge: .trailing).combined(with: .opacity))
                         } else {
-                            CategoryContentView(category: categories[selectedIndex], searchText: searchText)
-                                .id(categories[selectedIndex].id)
-                                .frame(width: width)
-                                .transition(.asymmetric(
-                                    insertion: .move(edge: .trailing).combined(with: .opacity),
-                                    removal: .opacity
-                                ))
-                                .gesture(
-                                    DragGesture()
-                                        .onEnded { value in
-                                            let threshold = width * 0.25
-                                            var newIndex = selectedIndex
-                                            if value.translation.width < -threshold && selectedIndex < categories.count - 1 {
-                                                newIndex = selectedIndex + 1
-                                            } else if value.translation.width > threshold && selectedIndex > 0 {
-                                                newIndex = selectedIndex - 1
-                                            }
-                                            if newIndex != selectedIndex { selectedCategory = categories[newIndex] }
-                                        }
-                                )
+                            categoryCanvas(width: width)
                         }
                     }
                     .clipped()
-                    .animation(.spring(response: 0.6, dampingFraction: 0.65, blendDuration: 0.15), value: selectedIndex)
+                    .animation(.spring(response: 0.55, dampingFraction: 0.72, blendDuration: 0.12), value: selectedIndex)
                 }
                 .background(BlurView(material: .fullScreenUI, blendingMode: .behindWindow))
             }
         }
     }
+    /// 分类画布：所有分类页横向排布，offset 平移实现「1→5 经过中间页」的整页滑动动画。
+    /// 完整视图只实例化当前选中页（.id 强制重建）；其他位置渲染轻量占位（图标+名称），
+    /// 动画经过时只看到占位掠过，绝不触发其他页面的数据加载/视图体构建。
+    private func categoryCanvas(width: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            ForEach(Array(categories.enumerated()), id: \.element.id) { index, category in
+                Group {
+                    if index == selectedIndex {
+                        CategoryContentView(category: category, searchText: searchText)
+                            .id(category.id)
+                    } else {
+                        CategoryCanvasPlaceholder(category: category)
+                    }
+                }
+                .frame(width: width)
+                .clipped()
+            }
+        }
+        .offset(x: -CGFloat(selectedIndex) * width)
+        .gesture(
+            DragGesture()
+                .onEnded { value in
+                    let threshold = width * 0.25
+                    var newIndex = selectedIndex
+                    if value.translation.width < -threshold && selectedIndex < categories.count - 1 {
+                        newIndex = selectedIndex + 1
+                    } else if value.translation.width > threshold && selectedIndex > 0 {
+                        newIndex = selectedIndex - 1
+                    }
+                    if newIndex != selectedIndex { selectedCategory = categories[newIndex] }
+                }
+        )
+    }
+
     private func handleModDrop(url: URL) {
         let modName = url.deletingPathExtension().lastPathComponent
 

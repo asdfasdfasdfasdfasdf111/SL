@@ -73,13 +73,20 @@ enum GameVersionDownloadStarter {
                 // 捕获任务组 id 做归属校验：complete() 的迟到回调若晚于下一个下载的
                 // start() 到达，dismiss(ownerID:) 会识别出「全局任务组已被替换」并拒绝清理，
                 // 避免旧任务清掉新任务的 InstallTasks 引用（跨任务交叉清理 UAF，崩溃 #4 根因）
-                minecraftTask.onComplete { [settings, manager, completedName, ownerID] in
+                minecraftTask.onComplete { [settings, manager, completedName, ownerID, minecraftTask] in
                     Task { @MainActor in
                         // 回调只操作全局单例（DownloadDetailManager）与 settings，
                         // 不写视图 @State：后台回调晚于视图销毁时写 State storage 会 UAF
                         manager.dismiss(ownerID: ownerID)
-                        settings.javaPopupMessage = "\(completedName) 下载完成"
-                        settings.showJavaPopup = true
+                        if let reason = (minecraftTask as? MinecraftInstallTask)?.failureReason {
+                            // 失败：终止任务 + 明确报错（旧实现失败不 complete() → 不触发本回调，
+                            // 详情页永远挂着、既不终止也不报错）
+                            settings.launchErrorMessage = "\(completedName) 下载失败: \(reason)"
+                            settings.showLaunchAlert = true
+                        } else {
+                            settings.javaPopupMessage = "\(completedName) 下载完成"
+                            settings.showJavaPopup = true
+                        }
                     }
                 }
 

@@ -14,6 +14,14 @@ public protocol DownloadSource {
     func getAssetIndexURL(_ version: MinecraftVersion, _ manifest: ClientManifest) -> URL?
     func getClientJARURL(_ version: MinecraftVersion, _ manifest: ClientManifest) -> URL?
     func getLibraryURL(_ library: ClientManifest.Library) -> URL?
+    /// 散列资源文件（assets objects）下载 URL。默认不提供；官方源与镜像源各自实现。
+    /// 官方：https://resources.download.minecraft.net/<hash前2位>/<hash>
+    /// 镜像：https://bmclapi2.bangbang93.com/assets/<hash前2位>/<hash>（PCL2 同款规则）
+    func getAssetURL(hash: String) -> URL?
+}
+
+extension DownloadSource {
+    public func getAssetURL(hash: String) -> URL? { nil }
 }
 
 public class OfficialDownloadSource: DownloadSource {
@@ -44,6 +52,12 @@ public class OfficialDownloadSource: DownloadSource {
     public func getLibraryURL(_ library: ClientManifest.Library) -> URL? {
         return URL(string: library.artifact?.url ?? "")
     }
+    
+    public func getAssetURL(hash: String) -> URL? {
+        guard hash.count >= 2 else { return nil }
+        let prefix = String(hash.prefix(2))
+        return URL(string: "https://resources.download.minecraft.net/\(prefix)/\(hash)")
+    }
 }
 
 public class BMCLAPIDownloadSource: DownloadSource {
@@ -71,5 +85,12 @@ public class BMCLAPIDownloadSource: DownloadSource {
     
     public func getLibraryURL(_ library: ClientManifest.Library) -> URL? {
         return URL(string: "https://bmclapi2.bangbang93.com/maven")!.appending(path: Util.toPath(mavenCoordinate: library.name))
+    }
+    
+    public func getAssetURL(hash: String) -> URL? {
+        guard hash.count >= 2 else { return nil }
+        // PCL2 同款规则：resources.download.minecraft.net → bmclapi2.bangbang93.com/assets
+        let prefix = String(hash.prefix(2))
+        return URL(string: "https://bmclapi2.bangbang93.com/assets/\(prefix)/\(hash)")
     }
 }

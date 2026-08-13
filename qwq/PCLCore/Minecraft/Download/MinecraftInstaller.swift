@@ -36,10 +36,14 @@ public class MinecraftInstaller {
     // MARK: 下载客户端清单
     private static func downloadClientManifest(_ task: MinecraftInstallTask) async throws {
         task.updateStage(.clientJson)
-        let url = try DownloadSourceManager.shared.getClientManifestURL(task.minecraftVersion).unwrap("无法获取 \(task.minecraftVersion.displayName) 的 JSON 下载 URL。")
+        // 主源 + 镜像源双 URL：官方源失败自动切镜像（旧实现单 URL，失败即无源可用报错）
+        let urls = DownloadSourceManager.shared.downloadURLs { $0.getClientManifestURL(task.minecraftVersion) }
+        guard !urls.isEmpty else {
+            throw MyLocalizedError(reason: "无法获取 \(task.minecraftVersion.displayName) 的 JSON 下载 URL。")
+        }
         let destination = task.versionURL.appending(path: "\(task.name).json")
         
-        try await SingleFileDownloader.download(task: task, url: url, destination: destination, replaceMethod: .replace)
+        try await SingleFileDownloader.download(task: task, urls: urls, destination: destination, replaceMethod: .replace)
         
         if let manifest: ClientManifest = try .parse(url: destination, minecraftDirectory: nil) {
             task.manifest = manifest
@@ -54,13 +58,20 @@ public class MinecraftInstaller {
     private static func downloadClientJar(_ task: MinecraftInstallTask, parallel: Bool = false) async throws {
         if parallel { await task.beginParallelStage(.clientJar) }
         else { task.updateStage(.clientJar) }
-        let url = try DownloadSourceManager.shared.getClientJARURL(task.minecraftVersion, task.manifest!).unwrap("无法获取 \(task.minecraftVersion.displayName) 的客户端下载 URL。")
+        guard let manifest = task.manifest else {
+            throw MyLocalizedError(reason: "客户端清单为空，无法下载客户端本体。")
+        }
+        // 主源 + 镜像源双 URL（原版 jar 下载失败自动切换下载源——用户反馈的核心场景）
+        let urls = DownloadSourceManager.shared.downloadURLs { $0.getClientJARURL(task.minecraftVersion, manifest) }
+        guard !urls.isEmpty else {
+            throw MyLocalizedError(reason: "无法获取 \(task.minecraftVersion.displayName) 的客户端下载 URL。")
+        }
         
         try await SingleFileDownloader.download(
             task: task,
-            url: url,
+            urls: urls,
             destination: task.versionURL.appending(path: "\(task.name).jar"),
-            expectedSHA1: task.manifest?.clientDownload?.sha1,
+            expectedSHA1: manifest.clientDownload?.sha1,
             stage: parallel ? .clientJar : nil
         )
         if parallel { await task.finishParallelStage(.clientJar) }
@@ -77,9 +88,13 @@ public class MinecraftInstaller {
         
         task.updateStage(.clientIndex)
         
-        let url: URL = try DownloadSourceManager.shared.getAssetIndexURL(task.minecraftVersion, manifest).unwrap("无法获取 \(task.minecraftVersion.displayName) 的 assetIndex 下载 URL。")
+        // 主源 + 镜像源双 URL
+        let urls = DownloadSourceManager.shared.downloadURLs { $0.getAssetIndexURL(task.minecraftVersion, manifest) }
+        guard !urls.isEmpty else {
+            throw MyLocalizedError(reason: "无法获取 \(task.minecraftVersion.displayName) 的 assetIndex 下载 URL。")
+        }
         let destination: URL = task.minecraftDirectory.assetsURL.appending(component: "indexes").appending(component: "\(manifest.assetIndex!.id).json")
-        try await SingleFileDownloader.download(task: task, url: url, destination: destination, expectedSHA1: manifest.assetIndex?.sha1, stage: parallel ? .clientIndex : nil)
+        try await SingleFileDownloader.download(task: task, urls: urls, destination: destination, expectedSHA1: manifest.assetIndex?.sha1, stage: parallel ? .clientIndex : nil)
         do {
             let data = try Data(contentsOf: destination)
             task.assetIndex = try .parse(data)
@@ -99,9 +114,16 @@ public class MinecraftInstaller {
         var items: [DownloadItem] = []
         
         for object in objects {
-            let src = object.appendTo(URL(string: "https://resources.download.minecraft.net")!)
             let dest = object.appendTo(task.minecraftDirectory.assetsURL.appending(path: "objects"))
-            items.append(.init(src, dest, sha1: object.hash))
+            // 多源构造（主源 + 互补备用源）：官方失败自动切镜像，镜像失败自动切官方。
+            // 旧实现硬编码官方 CDN（resources.download.minecraft.net），官方不可用时全部失败。
+            // getAssetURL 仅在 hash 不足 2 字符时返回 nil，asset hash 恒为 40 位十六进制，! 安全
+            items.append(.init(
+                DownloadSourceManager.shared.getDownloadSource(),
+                { $0.getAssetURL(hash: object.hash)! },
+                destination: dest,
+                sha1: object.hash
+            ))
         }
         
         try await MultiFileDownloader(task: task, items: items, stage: parallel ? .clientResources : nil).start()
@@ -316,11 +338,11 @@ public class MinecraftInstaller {
             // Loader 安装依赖原版 jar；只等待 jar，散列资源继续后台下载。
             try await clientJar
             if let fabricTask = DataManager.shared.inprogressInstallTasks?.tasks["fabric"] as? FabricInstallTask {
-                await fabricTask.install(task)
+                try await fabricTask.install(task)
             } else if let forgeTask = DataManager.shared.inprogressInstallTasks?.tasks["forge"] as? ForgeInstallTask {
-                await forgeTask.install(task)
+                try await forgeTask.install(task)
             } else if let neoforgeTask = DataManager.shared.inprogressInstallTasks?.tasks["neoforge"] as? NeoforgeInstallTask {
-                await neoforgeTask.install(task)
+                try await neoforgeTask.install(task)
             }
 
             // Loader 会改写 task.manifest 并加入自己的依赖；必须在它完成后再解析依赖列表。

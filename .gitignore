@@ -11,6 +11,8 @@ build/
 /build_asan3/
 /build_fix_check/
 /build_verify/
+/build_canvas_anim/
+/build_fix3/
 *.o
 
 # 应用打包产物

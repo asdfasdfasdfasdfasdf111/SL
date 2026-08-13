@@ -19,7 +19,10 @@ public struct DownloadItem {
     
     public init(_ downloadSource: DownloadSource, _ urlProvider: @escaping (DownloadSource) -> URL, destination: URL, sha1: String? = nil) {
         self.url = urlProvider(downloadSource)
-        self.fallbackURLProvider = { urlProvider(OfficialDownloadSource.shared) }
+        // 备用源 = 与主源互补的源（官方↔镜像），而不是旧实现硬编码官方源：
+        // 旧实现主源=镜像时 fallback 仍=官方 → 镜像失败切官方，官方被墙再次失败 → 无可用源报错，
+        // 且「官方失败 → 切镜像」的路径永远不存在。现在任意方向失败都会切到另一个源。
+        self.fallbackURLProvider = { urlProvider(DownloadSourceManager.shared.alternateSource(of: downloadSource)) }
         self.destination = destination
         self.sha1 = sha1
     }

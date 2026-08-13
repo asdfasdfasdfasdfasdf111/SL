@@ -119,8 +119,10 @@ public class ModDownloader {
         var components = URLComponents(string: baseURL + "/project/\(modId)/version")!
         var queryItems: [URLQueryItem] = []
         if let loaders = loaders {
-            let loaderStr = loaders.map { $0.rawValue }.joined(separator: ",")
-            queryItems.append(URLQueryItem(name: "loaders", value: "[\"\(loaderStr)\"]"))
+            // 多值数组必须逐个用引号包裹：["fabric","forge"]；旧实现拼成 ["fabric,forge"]
+            // 会被 API 当成单个名为 "fabric,forge" 的 loader，永远查不到结果
+            let loaderStr = loaders.map { "\"\($0.rawValue)\"" }.joined(separator: ",")
+            queryItems.append(URLQueryItem(name: "loaders", value: "[\(loaderStr)]"))
         }
         if let gameVersions = gameVersions {
             let versionsStr = gameVersions.map { "\"\($0)\"" }.joined(separator: ",")
@@ -151,37 +153,73 @@ public class ModDownloader {
     }
     
     public func downloadLatestMod(modId: String, gameVersion: String, loader: ModLoader, destination: URL) async throws -> URL {
-        let versions = try await getVersions(modId: modId, loaders: [loader], gameVersions: [gameVersion])
-        guard let latest = versions.first else {
-            throw ModError.noCompatibleVersion
-        }
+        let latest = try await resolveLatestVersion(modId: modId, gameVersion: gameVersion, loader: loader)
         return try await downloadMod(version: latest, destination: destination)
     }
     
     /// 不带加载器过滤的版本下载：资源包/光影等项目的版本 loaders 字段通常是 ["minecraft"] 或空，
     /// 用 mod 加载器（如 fabric）过滤会得到空结果导致永远下载失败。
     public func downloadLatestMod(modId: String, gameVersion: String, destination: URL) async throws -> URL {
-        let versions = try await getVersions(modId: modId, gameVersions: [gameVersion])
-        guard let latest = versions.first else {
-            throw ModError.noCompatibleVersion
-        }
+        let latest = try await resolveLatestVersion(modId: modId, gameVersion: gameVersion, loader: nil)
         return try await downloadMod(version: latest, destination: destination)
+    }
+
+    /// 解析与目标游戏版本兼容的最新版本（多级降级匹配，对标 PCL2 的版本兼容策略）：
+    /// - L1：API 精确过滤（game_versions + loaders，最快路径）
+    /// - L2：去掉 game_versions 过滤 → 本地按「精确版本 + loader」筛选
+    ///       （应对 API 索引版本号与用户所选版本号细微差异：如 API 只登记 1.20，用户选了 1.20.1）
+    /// - L3：本地按「主版本前缀」匹配（1.20 ↔ 1.20.x，快照/预览版同前缀也算）
+    /// - L4：放弃 loader 过滤按主版本前缀匹配（加载器交给用户自行判断）
+    /// - L5：完全放弃过滤取最新版本（尽力而为，避免永远下载失败）
+    /// 全部失败才抛 ModError.noCompatibleVersion。
+    public func resolveLatestVersion(modId: String, gameVersion: String, loader: ModLoader? = nil) async throws -> ModrinthVersion {
+        // L1：API 精确过滤（返回结果本身就是精确匹配的，bestMatch 只是取最新的一个）
+        if let loader {
+            let versions = try await getVersions(modId: modId, loaders: [loader], gameVersions: [gameVersion])
+            if let match = Self.bestMatch(versions, gameVersion: gameVersion, loader: loader) { return match }
+        } else {
+            let versions = try await getVersions(modId: modId, gameVersions: [gameVersion])
+            if let match = Self.bestMatch(versions, gameVersion: gameVersion, loader: nil) { return match }
+        }
+
+        // L2 起：拉全量版本列表，逐级放宽本地筛选（API 不传过滤参数返回按日期降序）
+        let all = try await getVersions(modId: modId)
+        // L2 精确版本（带 loader）
+        if let match = Self.bestMatch(all, gameVersion: gameVersion, loader: loader) { return match }
+        // L3 主版本前缀（带 loader）
+        if let match = Self.bestMatch(all, gameVersion: gameVersion, loader: loader, prefixMatch: true) { return match }
+        // L4 主版本前缀（不带 loader）
+        if let match = Self.bestMatch(all, gameVersion: gameVersion, loader: nil, prefixMatch: true) { return match }
+        // L5 最新
+        if let first = all.first { return first }
+        throw ModError.noCompatibleVersion
+    }
+
+    /// 从版本列表（已按日期降序）中选「兼容目标游戏版本」的最新一个。
+    /// - Parameters:
+    ///   - prefixMatch: 主版本前缀匹配：目标 "1.20" 兼容 "1.20.1"，目标 "1.20.1" 兼容 "1.20"
+    private static func bestMatch(_ versions: [ModrinthVersion], gameVersion: String, loader: ModLoader?, prefixMatch: Bool = false) -> ModrinthVersion? {
+        versions.first { v in
+            if let loader, !v.loaders.contains(loader.rawValue) { return false }
+            if prefixMatch {
+                return v.game_versions.contains { gv in
+                    gv == gameVersion
+                        || gv.hasPrefix(gameVersion + ".")
+                        || (gameVersion.contains(".") && gameVersion.hasPrefix(gv + "."))
+                }
+            }
+            return v.game_versions.contains(gameVersion)
+        }
     }
 
     /// 解析最新版本的主文件下载地址与文件名（供下载详情页任务使用，不在本方法内下载）。
     /// - Parameters:
     ///   - loader: 传 nil 表示不做加载器过滤（资源包/光影等 loaders 字段为 ["minecraft"] 或空的项目）
     public func resolveLatestFile(modId: String, gameVersion: String, loader: ModLoader? = nil) async throws -> (url: URL, filename: String) {
-        let versions: [ModrinthVersion]
-        if let loader {
-            versions = try await getVersions(modId: modId, loaders: [loader], gameVersions: [gameVersion])
-        } else {
-            versions = try await getVersions(modId: modId, gameVersions: [gameVersion])
-        }
-        guard let latest = versions.first,
-              let primary = latest.files.first(where: { $0.primary }) ?? latest.files.first,
+        let latest = try await resolveLatestVersion(modId: modId, gameVersion: gameVersion, loader: loader)
+        guard let primary = latest.files.first(where: { $0.primary }) ?? latest.files.first,
               let url = URL(string: primary.url) else {
-            throw ModError.noCompatibleVersion
+            throw ModError.noDownloadableFile
         }
         return (url, primary.filename)
     }
@@ -202,21 +240,14 @@ public class ModDownloader {
         // mods 必须放在版本文件夹内才会被游戏加载
         let modsDir = URL(fileURLWithPath: gameRoot).appendingPathComponent("versions/\(gameVersion)/mods")
 
-        return try await withThrowingTaskGroup(of: URL?.self) { group in
-            for loader in ModLoader.allCases {
-                group.addTask {
-                    do {
-                        let versions = try await self.getVersions(modId: modId, loaders: [loader], gameVersions: [gameVersion])
-                        guard let latest = versions.first else { return nil }
-                        return try await self.downloadMod(version: latest, destination: modsDir)
-                    } catch { return nil }
-                }
-            }
-            for try await result in group {
-                if let url = result { group.cancelAll(); return url }
-            }
-            throw ModError.noCompatibleVersion
+        // 逐个加载器尝试（resolveLatestVersion 内部已有多级降级匹配），任一成功即返回
+        for loader in ModLoader.allCases {
+            do {
+                let latest = try await resolveLatestVersion(modId: modId, gameVersion: gameVersion, loader: loader)
+                return try await downloadMod(version: latest, destination: modsDir)
+            } catch { continue }
         }
+        throw ModError.noCompatibleVersion
     }
 
     public enum ModError: Error, LocalizedError {

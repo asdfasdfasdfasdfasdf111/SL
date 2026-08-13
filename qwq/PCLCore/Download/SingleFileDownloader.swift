@@ -9,9 +9,24 @@
 import Foundation
 
 public class SingleFileDownloader {
+    /// 单 URL 下载（保持旧接口）
     public static func download(
         task: InstallTask? = nil,
         url: URL,
+        destination: URL,
+        replaceMethod: ReplaceMethod = .skip,
+        expectedSHA1: String? = nil,
+        stage: InstallStage? = nil,
+        progress: ((Double) -> Void)? = nil
+    ) async throws {
+        try await download(task: task, urls: [url], destination: destination, replaceMethod: replaceMethod, expectedSHA1: expectedSHA1, stage: stage, progress: progress)
+    }
+
+    /// 多 URL 下载：PCLNetFile.urls 按顺序失败切换（如 [主源, 镜像源]），任一个成功即完成。
+    /// 旧实现单 URL → 源失败即无可用源报错；现在原版 jar/json/index 等单文件也具备自动切源能力。
+    public static func download(
+        task: InstallTask? = nil,
+        urls: [URL],
         destination: URL,
         replaceMethod: ReplaceMethod = .skip,
         expectedSHA1: String? = nil,
@@ -25,7 +40,7 @@ public class SingleFileDownloader {
         } else {
             checker = nil
         }
-        let file = PCLNetFile(urls: [url], destination: destination, checker: checker, replaceMethod: replaceMethod)
+        let file = PCLNetFile(urls: urls, destination: destination, checker: checker, replaceMethod: replaceMethod)
 
         try await NetManager.shared.download(file) { p in
             // NetManager 内部已在主线程回调
