@@ -49,7 +49,7 @@ struct DownloadDetailView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.top, 40)
                 } else {
-                    VStack(spacing: 12) {
+                    VStack(spacing: 8) {
                         ForEach(taskList) { task in
                             DownloadTaskCard(task: task) {
                                 entries(for: task)
