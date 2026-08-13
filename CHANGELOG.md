@@ -20,6 +20,7 @@
 代码极致模块化：全工程巨型文件按「一个文件一个顶层声明」拆分为 30+ 个单一职责模块（累计 39 批收官）
 优化build_asan3/ ASan 构建产物目录加入 .gitignore 忽略，与 build_asan/、build_asan2/ 同理不再入库
 
+修复下载页选中未列出版本后立即崩溃：下载页合并清单与旧安装器 DataManager 清单不同步，旧代码查不到版本仍强制解包触发 assertionFailure；现先查旧清单、未命中再查合并清单 URL 索引，最终缺失时返回 nil 进入可恢复错误提示，彻底移除该路径断言
 修复下载页游戏版本列表空白：官方 + 未列出两个清单源全部失败且无缓存时返回空数组；现增加 BMCLAPI 镜像自动回退（主源失败自动切换，不依赖设置二选一）+ CacheManager 磁盘缓存兜底（联网失败回退上次内容，弱网/被阻断时列表不再空白）
 修复游戏版本下载首个 await 返回时的 EXC_BAD_ACCESS：Swift 6.2 在 Swift 5 + Approachable Concurrency + 默认 MainActor 组合下会误编译存储 async 闭包的 ABI（swiftlang/swift#86332），现将闭包属性与初始化参数显式统一为 @MainActor，杜绝隐式 actor 参数错位与损坏地址跳转
 修复下载任务完成竞态导致的 UAF 风险：complete/dismiss 增加幂等与归属校验，杜绝旧任务迟到回调清掉新任务引用

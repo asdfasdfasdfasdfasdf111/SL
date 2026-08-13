@@ -24,7 +24,13 @@ public class OfficialDownloadSource: DownloadSource {
     }
     
     public func getClientManifestURL(_ version: MinecraftVersion) -> URL? {
-        return try? URL(string: DataManager.shared.versionManifest!.versions.find { $0.id == version.displayName }.unwrap().url)
+        // 先查旧安装链路持有的清单；未命中时查下载页「官方 + 未列出」合并清单。
+        // 不能 force unwrap：未列出版本只存在于合并清单，两套状态不同步时旧代码会 assertionFailure 崩溃。
+        if let urlString = DataManager.shared.versionManifest?.versions.first(where: { $0.id == version.displayName })?.url,
+           let url = URL(string: urlString) {
+            return url
+        }
+        return GameVersionManifest.cachedClientManifestURL(for: version.displayName)
     }
     
     public func getAssetIndexURL(_ version: MinecraftVersion, _ manifest: ClientManifest) -> URL? {

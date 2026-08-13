@@ -28,6 +28,15 @@ enum GameVersionManifest {
     private static var mergedManifestCache: [[String: Any]]?
     private static var mergedManifestFetchDate: Date?
 
+    /// 安装链路同步查询某版本的客户端 JSON URL。
+    /// 下载页使用的是本类型合并后的「官方 + 未列出」清单，而旧安装器只查
+    /// DataManager.versionManifest；两套清单不同步时旧代码会对缺失条目 unwrap 并崩溃。
+    static func cachedClientManifestURL(for versionID: String) -> URL? {
+        guard let entry = mergedManifestCache?.first(where: { ($0["id"] as? String) == versionID }),
+              let urlString = entry["url"] as? String else { return nil }
+        return URL(string: urlString)
+    }
+
     /// 并发拉取官方（主源失败回退镜像）+ 未列出版本清单并合并（按 releaseTime 降序；未列出版本 URL 重写到 alist 镜像）
     ///
     /// 三级策略（与加载器支持检测同款，根因：官方 + 未列出两个源全部失败且无缓存时返回空数组 → 下载页游戏列表空白）：
@@ -68,8 +77,7 @@ enum GameVersionManifest {
             if let disk = readDiskCache() { return disk }
             return mergedManifestCache ?? merged
         }
-        mergedManifestCache = merged
-        mergedManifestFetchDate = Date()
+        updateMemoryCache(merged)
         writeDiskCache(merged)
         return merged
     }
@@ -85,8 +93,17 @@ enum GameVersionManifest {
     private static func readDiskCache() -> [[String: Any]]? {
         guard let text = AppContext.shared.cacheManager.textGet(diskCacheKey),
               let data = text.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return json["versions"] as? [[String: Any]]
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let versions = json["versions"] as? [[String: Any]],
+              !versions.isEmpty else { return nil }
+        // 磁盘兜底命中后同步灌入内存索引，确保用户点下载时安装器能拿到同一条 URL
+        updateMemoryCache(versions)
+        return versions
+    }
+
+    private static func updateMemoryCache(_ versions: [[String: Any]]) {
+        mergedManifestCache = versions
+        mergedManifestFetchDate = Date()
     }
 
     private static func writeDiskCache(_ versions: [[String: Any]]) {
