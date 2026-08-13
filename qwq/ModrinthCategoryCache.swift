@@ -12,6 +12,12 @@ enum ModrinthCategoryCache {
     static var cachedGameVersions: [DownloadedItem]?
     static var lastGameSubCategory: GameSubCategory?
 
+    /// 先展示版本缓存，随后由 GameVersionManifest 后台刷新。
+    static func cachedGameVersions(for sub: GameSubCategory?) -> [DownloadedItem]? {
+        guard sub == lastGameSubCategory else { return nil }
+        return cachedGameVersions
+    }
+
     enum CacheKey: String {
         case mod = "modrinth_cache_mod"
         case resourcePack = "modrinth_cache_resourcepack"

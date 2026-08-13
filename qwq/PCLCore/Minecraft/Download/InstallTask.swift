@@ -13,6 +13,10 @@ public class InstallTask: ObservableObject, Identifiable, Hashable, Equatable {
     @Published public var remainingFiles: Int = -1
     @Published public var totalFiles: Int = -1
     @Published public var currentStagePercentage: Double = 0
+    /// 并发下载阶段的独立状态/进度。Minecraft 安装后半程会同时下载资源、依赖与 natives，
+    /// 不能再用单一 stage/currentStagePercentage 互相覆盖。
+    @Published private var parallelStageStates: [InstallStage: InstallState] = [:]
+    @Published private var parallelStageProgress: [InstallStage: Double] = [:]
     
     public let id: UUID = UUID()
     public var callback: (() -> Void)? = nil
@@ -49,8 +53,48 @@ public class InstallTask: ObservableObject, Identifiable, Hashable, Equatable {
         }
     }
     
+    /// 标记一个可并行阶段开始/结束，并维护各阶段独立进度。
+    public func beginParallelStage(_ stage: InstallStage) async {
+        await MainActor.run {
+            parallelStageStates[stage] = .inprogress
+            parallelStageProgress[stage] = 0
+        }
+    }
+
+    public func updateParallelStage(_ stage: InstallStage, progress: Double) {
+        let clamped = min(1, max(0, progress))
+        DispatchQueue.main.async {
+            self.parallelStageProgress[stage] = clamped
+        }
+    }
+
+    public func finishParallelStage(_ stage: InstallStage) async {
+        await MainActor.run {
+            parallelStageProgress[stage] = 1
+            parallelStageStates[stage] = .finished
+        }
+    }
+
+    public func failParallelStage(_ stage: InstallStage) async {
+        await MainActor.run {
+            parallelStageStates[stage] = .failed
+        }
+    }
+
+    public func stateForParallelStage(_ stage: InstallStage) -> InstallState? {
+        parallelStageStates[stage]
+    }
+
+    public func progressForStage(_ stage: InstallStage) -> Double {
+        parallelStageProgress[stage] ?? (self.stage == stage ? currentStagePercentage : 0)
+    }
+
     public func getProgress() -> Double {
-        Double(totalFiles - remainingFiles) / Double(totalFiles)
+        guard totalFiles > 0 else { return 0 }
+        // complete() 时 remainingFiles 会被完整置为 0；正常下载中保证 0 ≤ r ≤ total
+        let remaining = min(totalFiles, max(0, remainingFiles))
+        let p = Double(totalFiles - remaining) / Double(totalFiles)
+        return min(1, max(0, p))
     }
     
     public func complete() {
@@ -76,7 +120,8 @@ public class InstallTask: ObservableObject, Identifiable, Hashable, Equatable {
     
     public func completeOneFile() {
         DispatchQueue.main.async {
-            self.remainingFiles -= 1
+            // 下限保护：依赖数组枚举数可能与实际完成数略有出入，避免进度越界
+            self.remainingFiles = max(0, self.remainingFiles - 1)
         }
     }
 }
@@ -202,7 +247,11 @@ public class MinecraftInstallTask: InstallTask {
         var result: [InstallStage: InstallState] = [:]
         var foundCurrent = false
         for stage in allStages {
-            if foundCurrent {
+            // 并发阶段有独立状态，优先返回；多个阶段可同时为 inprogress
+            if let parallel = stateForParallelStage(stage) {
+                // 总任务失败时，还在「下载中」的并发阶段显示为失败（与串行语义一致）
+                result[stage] = currentState == .failed && parallel == .inprogress ? .failed : parallel
+            } else if foundCurrent {
                 result[stage] = .waiting
             } else if self.stage == stage {
                 result[stage] = currentState

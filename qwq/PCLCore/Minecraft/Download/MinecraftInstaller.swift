@@ -40,7 +40,6 @@ public class MinecraftInstaller {
         let destination = task.versionURL.appending(path: "\(task.name).json")
         
         try await SingleFileDownloader.download(task: task, url: url, destination: destination, replaceMethod: .replace)
-        task.completeOneFile()
         
         if let manifest: ClientManifest = try .parse(url: destination, minecraftDirectory: nil) {
             task.manifest = manifest
@@ -52,20 +51,24 @@ public class MinecraftInstaller {
     }
     
     // MARK: 下载客户端本体
-    private static func downloadClientJar(_ task: MinecraftInstallTask) async throws {
-        task.updateStage(.clientJar)
+    private static func downloadClientJar(_ task: MinecraftInstallTask, parallel: Bool = false) async throws {
+        if parallel { await task.beginParallelStage(.clientJar) }
+        else { task.updateStage(.clientJar) }
         let url = try DownloadSourceManager.shared.getClientJARURL(task.minecraftVersion, task.manifest!).unwrap("无法获取 \(task.minecraftVersion.displayName) 的客户端下载 URL。")
         
         try await SingleFileDownloader.download(
             task: task,
             url: url,
             destination: task.versionURL.appending(path: "\(task.name).jar"),
-            expectedSHA1: task.manifest?.clientDownload?.sha1
+            expectedSHA1: task.manifest?.clientDownload?.sha1,
+            stage: parallel ? .clientJar : nil
         )
+        if parallel { await task.finishParallelStage(.clientJar) }
     }
     
     // MARK: 下载资源索引
-    private static func downloadAssetIndex(_ task: MinecraftInstallTask) async throws {
+    private static func downloadAssetIndex(_ task: MinecraftInstallTask, parallel: Bool = false) async throws {
+        if parallel { await task.beginParallelStage(.clientIndex) }
         guard let manifest = task.manifest else {
             err("任务客户端清单为空值，停止下载资源索引")
             task.assetIndex = .init(objects: [])
@@ -76,18 +79,20 @@ public class MinecraftInstaller {
         
         let url: URL = try DownloadSourceManager.shared.getAssetIndexURL(task.minecraftVersion, manifest).unwrap("无法获取 \(task.minecraftVersion.displayName) 的 assetIndex 下载 URL。")
         let destination: URL = task.minecraftDirectory.assetsURL.appending(component: "indexes").appending(component: "\(manifest.assetIndex!.id).json")
-        try await SingleFileDownloader.download(task: task, url: url, destination: destination, expectedSHA1: manifest.assetIndex?.sha1)
+        try await SingleFileDownloader.download(task: task, url: url, destination: destination, expectedSHA1: manifest.assetIndex?.sha1, stage: parallel ? .clientIndex : nil)
         do {
             let data = try Data(contentsOf: destination)
             task.assetIndex = try .parse(data)
         } catch {
             err("在解析 JSON 时发生错误: \(error.localizedDescription)")
         }
+        if parallel { await task.finishParallelStage(.clientIndex) }
     }
     
     // MARK: 下载散列资源文件
-    private static func downloadHashResourcesFiles(_ task: MinecraftInstallTask) async throws {
-        task.updateStage(.clientResources)
+    private static func downloadHashResourcesFiles(_ task: MinecraftInstallTask, parallel: Bool = false) async throws {
+        if parallel { await task.beginParallelStage(.clientResources) }
+        else { task.updateStage(.clientResources) }
         let objects = task.assetIndex!.objects
         
         // asset 以 hash 命名，直接用 hash 作为校验：已存在且匹配 → 引擎内跳过，损坏 → 重下
@@ -99,12 +104,14 @@ public class MinecraftInstaller {
             items.append(.init(src, dest, sha1: object.hash))
         }
         
-        try await MultiFileDownloader(task: task, items: items, concurrentLimit: 256).start()
+        try await MultiFileDownloader(task: task, items: items, stage: parallel ? .clientResources : nil).start()
+        if parallel { await task.finishParallelStage(.clientResources) }
     }
     
     // MARK: 下载依赖项
-    private static func downloadLibraries(_ task: MinecraftInstallTask) async throws {
-        task.updateStage(.clientLibraries)
+    private static func downloadLibraries(_ task: MinecraftInstallTask, parallel: Bool = false) async throws {
+        if parallel { await task.beginParallelStage(.clientLibraries) }
+        else { task.updateStage(.clientLibraries) }
         
         var libraryNames: [String] = []
         var items: [DownloadItem] = []
@@ -126,18 +133,20 @@ public class MinecraftInstaller {
             }
         }
         
-        try await MultiFileDownloader(task: task, items: items).start()
+        try await MultiFileDownloader(task: task, items: items, stage: parallel ? .clientLibraries : nil).start()
         
         for library in task.manifest!.getNeededLibraries() {
             if libraryNames.contains(library.name) {
                 CacheStorage.default.add(name: library.name, path: task.minecraftDirectory.librariesURL.appending(path: library.artifact!.path))
             }
         }
+        if parallel { await task.finishParallelStage(.clientLibraries) }
     }
     
     // MARK: 下载本地库
-    private static func downloadNatives(_ task: MinecraftInstallTask) async throws {
-        task.updateStage(.natives)
+    private static func downloadNatives(_ task: MinecraftInstallTask, parallel: Bool = false) async throws {
+        if parallel { await task.beginParallelStage(.natives) }
+        else { task.updateStage(.natives) }
         
         var libraryNames: [String] = []
         var items: [DownloadItem] = []
@@ -158,13 +167,14 @@ public class MinecraftInstaller {
         }
         
         try? FileManager.default.createDirectory(at: task.versionURL.appending(path: "natives"), withIntermediateDirectories: true)
-        try await MultiFileDownloader(task: task, items: items).start()
+        try await MultiFileDownloader(task: task, items: items, stage: parallel ? .natives : nil).start()
         
         for (library, artifact) in task.manifest!.getNeededNatives() {
             if libraryNames.contains(library.name) {
                 CacheStorage.default.add(name: library.name, path: task.minecraftDirectory.librariesURL.appending(path: artifact.path))
             }
         }
+        if parallel { await task.finishParallelStage(.natives) }
     }
     
     // MARK: 解压本地库
@@ -280,9 +290,12 @@ public class MinecraftInstaller {
     // MARK: 获取进度
     public static func updateProgress(_ task: MinecraftInstallTask) {
         DispatchQueue.main.async {
-            task.totalFiles = 3 + task.assetIndex!.objects.count + task.manifest!.getNeededLibraries().count + task.manifest!.getNeededNatives().count
+            let components = 3 + task.assetIndex!.objects.count
+                + task.manifest!.getNeededLibraries().count + task.manifest!.getNeededNatives().count
+            task.totalFiles = components
             log("总文件数: \(task.totalFiles)")
-            task.remainingFiles = task.totalFiles - 2
+            // 前置阶段均已下载：clientJson 完成、clientIndex 完成、第二波开始前 jar 完成 = 3
+            task.remainingFiles = components - 3
         }
     }
     
@@ -292,9 +305,16 @@ public class MinecraftInstaller {
             try await downloadClientManifest(task)
             try await downloadAssetIndex(task)
             updateProgress(task)
-            try await downloadClientJar(task)
-            
-            // 安装 Mod Loader
+
+            // PCL2 风格并发下载：各文件组提交给 NetManager 的全局 16 分片调度器。
+            // 第一波原版 jar 与散列资源并发；每个文件仍支持分片/断点续传/多源切换，
+            // 全局上限统一限流，不会因多阶段并发而无限创建连接。
+            task.updateStage(.clientJar) // 结束「资源索引」阶段，之后由 parallelStageStates 独立显示
+            async let clientJar: Void = downloadClientJar(task, parallel: true)
+            async let resources: Void = downloadHashResourcesFiles(task, parallel: true)
+
+            // Loader 安装依赖原版 jar；只等待 jar，散列资源继续后台下载。
+            try await clientJar
             if let fabricTask = DataManager.shared.inprogressInstallTasks?.tasks["fabric"] as? FabricInstallTask {
                 await fabricTask.install(task)
             } else if let forgeTask = DataManager.shared.inprogressInstallTasks?.tasks["forge"] as? ForgeInstallTask {
@@ -302,11 +322,13 @@ public class MinecraftInstaller {
             } else if let neoforgeTask = DataManager.shared.inprogressInstallTasks?.tasks["neoforge"] as? NeoforgeInstallTask {
                 await neoforgeTask.install(task)
             }
-            
+
+            // Loader 会改写 task.manifest 并加入自己的依赖；必须在它完成后再解析依赖列表。
+            // 第二波依赖库与 natives 并发，同时第一波的散列资源可能仍在继续。
             modifyId(task)
-            try await downloadHashResourcesFiles(task)
-            try await downloadLibraries(task)
-            try await downloadNatives(task)
+            async let libraries: Void = downloadLibraries(task, parallel: true)
+            async let natives: Void = downloadNatives(task, parallel: true)
+            _ = try await (resources, libraries, natives)
             try unzipNatives(task)
             finalWork(task)
             callback?()

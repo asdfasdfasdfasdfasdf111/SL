@@ -103,7 +103,7 @@ struct ContentView: View {
                 ZStack {
                     Circle()
                         .fill(.ultraThinMaterial)
-                        .frame(width: 55, height: 55)
+                        .frame(width: 48, height: 48)
                         .overlay(
                             Circle()
                                 .stroke(.white.opacity(0.2), lineWidth: 1)
@@ -111,7 +111,7 @@ struct ContentView: View {
                         .shadow(color: .black.opacity(0.3), radius: 15, y: 6)
 
                     Image(systemName: "arrow.down.to.line")
-                        .font(.system(size: 22, weight: .medium))
+                        .font(.system(size: 19, weight: .medium))
                         .foregroundColor(.white)
                 }
                 .scaleEffect(downloadDetail.circleScale)

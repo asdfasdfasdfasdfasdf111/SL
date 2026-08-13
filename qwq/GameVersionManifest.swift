@@ -28,6 +28,13 @@ enum GameVersionManifest {
     private static var mergedManifestCache: [[String: Any]]?
     private static var mergedManifestFetchDate: Date?
 
+    /// 读取可立即展示的合并清单：优先内存，未命中时同步读取磁盘缓存。
+    /// 下载列表先用它首帧渲染，联网刷新由调用方在后台执行。
+    static func cachedMerged() -> [[String: Any]]? {
+        if let mergedManifestCache, !mergedManifestCache.isEmpty { return mergedManifestCache }
+        return readDiskCache()
+    }
+
     /// 安装链路同步查询某版本的客户端 JSON URL。
     /// 下载页使用的是本类型合并后的「官方 + 未列出」清单，而旧安装器只查
     /// DataManager.versionManifest；两套清单不同步时旧代码会对缺失条目 unwrap 并崩溃。
@@ -43,8 +50,8 @@ enum GameVersionManifest {
     /// 1. 内存缓存：5 分钟内直接返回，秒级
     /// 2. 磁盘缓存（CacheManager，联网全部失败时兜底，即使已过期也比列表空白强）
     /// 3. 联网：官方主源 + BMCLAPI 镜像并发（任意一个成功即用）、未列出源并发；成功即写内存 + 磁盘
-    static func fetchMerged() async -> [[String: Any]] {
-        if let cached = mergedManifestCache,
+    static func fetchMerged(forceRefresh: Bool = false) async -> [[String: Any]] {
+        if !forceRefresh, let cached = mergedManifestCache,
            let date = mergedManifestFetchDate,
            Date().timeIntervalSince(date) < 300 {
             return cached

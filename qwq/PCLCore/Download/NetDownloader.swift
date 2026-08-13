@@ -300,6 +300,7 @@ public actor NetManager {
             }
         }
         if pending.isEmpty {
+            // skip 分支已经逐项回调完成计数；这里只补发批次进度，避免重复扣减。
             await MainActor.run { overallProgress?(1.0, files.count) }
             return
         }

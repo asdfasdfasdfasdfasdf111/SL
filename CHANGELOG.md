@@ -10,6 +10,9 @@
 新增下载 SHA-1 校验（客户端 jar / 依赖库 / 原生库）
 新增 JVM 启动参数动态补齐与调优（-XstartOnFirstThread / G1GC / -Xms 等，查重后追加）
 新增离线用户名输入实时提示（PCL2 HintChinese 语义）
+新增游戏安装并发下载：原版 jar 与散列资源、依赖库与 natives 分波并行（PCL2 风格，全局 16 分片统一限流），加载器只等待 jar、散列资源后台继续
+新增下载阶段独立进度：InstallTask 并行阶段状态机（beginParallelStage/finishParallelStage），详情页各阶段进度互不覆盖
+新增版本列表缓存优先：磁盘缓存供首帧立即可展示（cachedMerged），联网刷新转后台执行，弱网/离线时列表不再长时间空白
 本地 Modrinth 全量目录更新至 122,477 条目
 
 优化加载器支持检测：三级缓存策略（内存 → 磁盘 7 天 TTL → 联网失败回退旧缓存），4xx 视为明确不支持，首次等待由数秒降至约 1 秒
@@ -39,6 +42,7 @@
 修复缓存读写并发死锁（NSLock → NSRecursiveLock）、崩溃日志误删共享目录、下载句柄未清理
 修复下载进度负数、下载卡片无动画、Java 刷新按钮动画不同步
 修复版本清单拉取失败缓存空结果、翻译缓存未全量应用等列表展示问题
+修复并发下载进度不准：详情页按 stage 取独立进度、MultiFileDownloader 批次进度重复归一化（downloadAll 的 p 已是 0...1 不再除以文件数）、getProgress 除零/越界与 completeOneFile 完成计数下限保护
 
 ## Beta 0.1.1 版本发布 🚀（2026-08-07）
 

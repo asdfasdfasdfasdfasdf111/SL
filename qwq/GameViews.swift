@@ -471,7 +471,20 @@ struct DownloadCategoryView: View {
             }
         }
 
-        if let cached = ModrinthCategoryCache.cache(for: selectedSection, sub: selectedSubCategory) {
+        // 游戏版本：磁盘/内存清单先立即渲染，联网刷新放后台，不再让首屏等待网络。
+        if selectedSection == .game,
+           let rawCached = GameVersionManifest.cachedMerged() {
+            let cached = makeMinecraftVersionItems(rawCached, subCategory: selectedSubCategory)
+            if !cached.isEmpty {
+                items = cached
+                filteredResults = cached
+                currentOffset = cached.count
+                hasMore = false
+                isLoading = false
+                ModrinthCategoryCache.cachedGameVersions = cached
+                ModrinthCategoryCache.lastGameSubCategory = selectedSubCategory
+            }
+        } else if let cached = ModrinthCategoryCache.cache(for: selectedSection, sub: selectedSubCategory) {
             items = cached
             currentOffset = cached.count
             hasMore = true
@@ -482,15 +495,15 @@ struct DownloadCategoryView: View {
             return
         }
 
-        isLoading = true
-        items = []
         let targetSection = selectedSection
+        if targetSection != .game || items.isEmpty { isLoading = true }
+        if targetSection != .game { items = [] }
         fetchTask = Task {
             let result: [DownloadedItem]
             var totalHits = 0
             switch targetSection {
             case .game:
-                result = await fetchMinecraftVersions(subCategory: selectedSubCategory)
+                result = await fetchMinecraftVersions(subCategory: selectedSubCategory, forceRefresh: true)
                 totalHits = result.count
             case .mod, .resourcePack, .shader, .modpack:
                 // 四类 Modrinth 分类统一走搜索 + 内存/磁盘缓存写回（type 由 ModrinthSectionType 映射）
@@ -527,21 +540,18 @@ struct DownloadCategoryView: View {
         LoaderSupportChecker.clearMemoryCache()
     }
 
-    private func fetchMinecraftVersions(subCategory: GameSubCategory?) async -> [DownloadedItem] {
-        if subCategory == ModrinthCategoryCache.lastGameSubCategory, let cached = ModrinthCategoryCache.cachedGameVersions {
+    private func fetchMinecraftVersions(subCategory: GameSubCategory?, forceRefresh: Bool = false) async -> [DownloadedItem] {
+        if !forceRefresh, subCategory == ModrinthCategoryCache.lastGameSubCategory, let cached = ModrinthCategoryCache.cachedGameVersions {
             return cached
         }
-        let versions = await GameVersionManifest.fetchMerged()
+        let versions = await GameVersionManifest.fetchMerged(forceRefresh: forceRefresh)
         guard !versions.isEmpty else { return ModrinthCategoryCache.cachedGameVersions ?? [] }
-        // 分类过滤逻辑在 GameVersionFilter（release/snapshot/远古，与详情页共享同一规则）
+        return makeMinecraftVersionItems(versions, subCategory: subCategory)
+    }
+
+    private func makeMinecraftVersionItems(_ versions: [[String: Any]], subCategory: GameSubCategory?) -> [DownloadedItem] {
         let result = GameVersionFilter.filteredIDs(versions, subCategory: subCategory).map { id in
-            DownloadedItem(
-                id: id,
-                name: id,
-                subtitle: displayTitle,
-                iconURL: nil,
-                tags: []
-            )
+            DownloadedItem(id: id, name: id, subtitle: displayTitle, iconURL: nil, tags: [])
         }
         ModrinthCategoryCache.cachedGameVersions = result
         ModrinthCategoryCache.lastGameSubCategory = subCategory

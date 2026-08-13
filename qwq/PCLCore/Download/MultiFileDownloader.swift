@@ -37,6 +37,7 @@ public class MultiFileDownloader {
     private let concurrentLimit: Int
     private let replaceMethod: ReplaceMethod
     private let progress: ((Double, Int) -> Void)?
+    private let stage: InstallStage?
     private let total: Int
     private var totalProgress: Double = 0
     private var finishedCount: Int = 0
@@ -47,6 +48,7 @@ public class MultiFileDownloader {
         destinations: [URL],
         concurrentLimit: Int = 16,
         replaceMethod: ReplaceMethod = .skip,
+        stage: InstallStage? = nil,
         progress: ((Double, Int) -> Void)? = nil
     ) {
         self.init(
@@ -54,6 +56,7 @@ public class MultiFileDownloader {
             items: (0..<urls.count).map { .init(urls[$0], destinations[$0]) },
             concurrentLimit: concurrentLimit,
             replaceMethod: replaceMethod,
+            stage: stage,
             progress: progress
         )
     }
@@ -63,12 +66,14 @@ public class MultiFileDownloader {
         items: [DownloadItem],
         concurrentLimit: Int = 16,
         replaceMethod: ReplaceMethod = .skip,
+        stage: InstallStage? = nil,
         progress: ((Double, Int) -> Void)? = nil
     ) {
         self.task = task
         self.items = items
         self.concurrentLimit = concurrentLimit
         self.replaceMethod = replaceMethod
+        self.stage = stage
         self.progress = progress
         self.total = items.count
     }
@@ -96,15 +101,24 @@ public class MultiFileDownloader {
                 self.totalProgress = p
                 self.finishedCount = count
                 self.progress?(p, count)
-                self.task?.currentStagePercentage = p
+                if let stage = self.stage {
+                    self.task?.updateParallelStage(stage, progress: p)
+                } else {
+                    self.task?.currentStagePercentage = p
+                }
             }
         }, onFileCompleted: {
             self.task?.completeOneFile()
         })
         
         await MainActor.run {
-            progress?(self.totalProgress / Double(self.total), self.finishedCount)
-            task?.currentStagePercentage = self.totalProgress / Double(self.total)
+            // downloadAll 的 p 已经是整个批次 0...1，不能再次除以文件总数。
+            progress?(self.totalProgress, self.finishedCount)
+            if let stage = self.stage {
+                task?.updateParallelStage(stage, progress: self.totalProgress)
+            } else {
+                task?.currentStagePercentage = self.totalProgress
+            }
         }
     }
 }

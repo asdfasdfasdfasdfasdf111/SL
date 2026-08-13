@@ -12,7 +12,7 @@ struct DownloadDetailView: View {
     @ObservedObject private var speedMeter = SpeedMeter.shared
 
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             // 左侧信息面板（对标 LeftTabView：总进度 / 下载速度 / 剩余文件）
             // 一张大的圆角矩形毛玻璃卡（用户要求：左侧栏变成圆角矩形）
             VStack(spacing: 14) {
@@ -31,7 +31,7 @@ struct DownloadDetailView: View {
                 Spacer()
             }
             .padding(.vertical, 10)
-            .frame(width: 200)
+            .frame(width: 176)
             .background(
                 RoundedRectangle(cornerRadius: 20)
                     .fill(.regularMaterial)
@@ -62,7 +62,7 @@ struct DownloadDetailView: View {
             }
             .frame(maxWidth: .infinity)
         }
-        .padding(16)
+        .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // 独立页面自带全屏毛玻璃背景（互斥整页替换后不再依赖宿主视图背景）
         .background(
@@ -83,7 +83,7 @@ struct DownloadDetailView: View {
                 let (stage, state) = pair
                 HStack(spacing: 10) {
                     if state == .inprogress {
-                        Text(String(format: "%.0f%%", task.currentStagePercentage * 100))
+                        Text(String(format: "%.0f%%", task.progressForStage(stage) * 100))
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundColor(ThemeManager.shared.accentColor)
                             .frame(minWidth: 44, alignment: .leading)
@@ -182,10 +182,10 @@ private struct DownloadTaskCard<Content: View>: View {
             }
             content()
         }
-        .padding(14)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 20)
+            RoundedRectangle(cornerRadius: 16)
                 .fill(.regularMaterial)
                 .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
         )

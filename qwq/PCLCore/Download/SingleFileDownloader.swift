@@ -15,6 +15,7 @@ public class SingleFileDownloader {
         destination: URL,
         replaceMethod: ReplaceMethod = .skip,
         expectedSHA1: String? = nil,
+        stage: InstallStage? = nil,
         progress: ((Double) -> Void)? = nil
     ) async throws {
         // 已存在且指定跳过：若存在且哈希匹配则直接完成（新引擎 FileChecker 内部处理）
@@ -28,7 +29,11 @@ public class SingleFileDownloader {
 
         try await NetManager.shared.download(file) { p in
             // NetManager 内部已在主线程回调
-            task?.currentStagePercentage = p
+            if let stage {
+                task?.updateParallelStage(stage, progress: p)
+            } else {
+                task?.currentStagePercentage = p
+            }
             progress?(p)
         }
         task?.completeOneFile()
