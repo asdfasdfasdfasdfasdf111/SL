@@ -169,6 +169,8 @@ enum LocalModCatalog {
 
     /// 解压 gzip 数据（系统 libz，windowBits=31 支持 gzip 格式）
     private static func inflateGzipData(_ input: Data) -> Data? {
+        // 空 Data 时 withUnsafeBytes 的 baseAddress 为 nil，下方强解包会崩溃（bundle 资源被截断/损坏为 0 字节时触发）
+        guard !input.isEmpty else { return nil }
         return input.withUnsafeBytes { (srcRaw: UnsafeRawBufferPointer) -> Data? in
             let src = srcRaw.bindMemory(to: UInt8.self)
             var stream = z_stream()

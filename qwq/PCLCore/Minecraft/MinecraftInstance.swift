@@ -191,7 +191,11 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
     }
     
     public func loadConfig() throws {
-        self.config = .init(try .init(data: try FileHandle(forReadingFrom: configPath).readToEnd()!))
+        // readToEnd 可能返回 nil（空/损坏配置文件），强解包会崩；失败时抛错让调用方用默认配置
+        guard let data = try FileHandle(forReadingFrom: configPath).readToEnd() else {
+            throw MyLocalizedError(reason: "配置文件为空: \(configPath.path)")
+        }
+        self.config = .init(try .init(data: data))
     }
     
     public func saveConfig() {
@@ -323,7 +327,13 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
                         let formatter = DateFormatter()
                         formatter.dateFormat = "yyyy-M-d_HH.mm.ss"
                         savePanel.nameFieldStringValue = "错误报告-\(formatter.string(from: .init()))"
-                        savePanel.beginSheetModal(for: NSApplication.shared.windows.first!) { [unowned self] result in
+                        // 窗口列表可能为空（极端时序），强解包会崩；失败回退到 keyWindow
+                        let sheetHost = NSApplication.shared.windows.first ?? NSApplication.shared.keyWindow
+                        guard let sheetHost else {
+                            err("无法找到窗口以显示错误报告导出面板")
+                            return
+                        }
+                        savePanel.beginSheetModal(for: sheetHost) { [unowned self] result in
                             if result == .OK {
                                 if let url = savePanel.url {
                                     MinecraftCrashHandler.exportErrorReport(self, launcher, to: url)
@@ -341,7 +351,11 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
         do {
             let manifestPath = runningDirectory.appending(path: runningDirectory.lastPathComponent + ".json")
             
-            let data = try FileHandle(forReadingFrom: manifestPath).readToEnd()!
+            // readToEnd 可能返回 nil（空/损坏清单文件），强解包会崩；失败按读取失败处理
+            guard let data = try FileHandle(forReadingFrom: manifestPath).readToEnd() else {
+                err("无法读取 \(manifestPath.lastPathComponent): 文件为空")
+                return false
+            }
             self.clientBrand = MinecraftInstance.getClientBrand(String(data: data, encoding: .utf8) ?? "")
             
             guard let manifest = try ClientManifest.parse(

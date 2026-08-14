@@ -40,8 +40,10 @@ public class VersionManifest: Codable {
             self.id = json["id"].stringValue.replacing(" Pre-Release ", with: "-pre")
             self.type = .init(rawValue: json["type"].stringValue) ?? .release
             self.url = json["url"].stringValue
-            self.time = formatter.date(from: json["time"].stringValue)!
-            self.releaseTime = formatter.date(from: json["releaseTime"].stringValue)!
+            // 第三方清单（unlisted 源等）的 time/releaseTime 可能缺失或格式异常，强解包会崩；
+            // 失败回退到 distantPast（排序时自然沉底），不中断版本列表加载
+            self.time = formatter.date(from: json["time"].stringValue) ?? .distantPast
+            self.releaseTime = formatter.date(from: json["releaseTime"].stringValue) ?? .distantPast
             
             if VersionManifest.isAprilFoolVersion(self) {
                 self.type = .aprilFool

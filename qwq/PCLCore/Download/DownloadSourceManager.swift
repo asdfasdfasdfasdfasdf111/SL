@@ -15,6 +15,17 @@ public class DownloadSourceManager: DownloadSource {
     
     private var lastTestDate: Date = .init(timeIntervalSince1970: 0)
     
+    /// 测速节流：与 sourceLock 共用同一把锁（getDownloadSource 与 testSpeed 不同时持有重锁），
+    /// 旧实现 lastTestDate 无锁读写 → 数据竞争（多线程并发调 getDownloadSource 时 Date 撕裂）。
+    private var shouldThrottleSpeedTest: Bool {
+        sourceLock.lock(); defer { sourceLock.unlock() }
+        if Date().timeIntervalSince(lastTestDate) > 1 * 60 {
+            lastTestDate = Date()
+            return false
+        }
+        return true
+    }
+    
     // MARK: 源状态（NSLock 保护：getDownloadSource 在任意线程读、testSpeed 在后台 Task 写，
     // 旧实现无保护 → 数据竞争；下载项构造时也不再能看到「写一半」的中间态）
     private let sourceLock = NSLock()
@@ -27,8 +38,7 @@ public class DownloadSourceManager: DownloadSource {
     
     public func getDownloadSource() -> DownloadSource {
         if AppSettings.shared.fileDownloadSource == .both {
-            if Date().timeIntervalSince(lastTestDate) > 1 * 60 {
-                lastTestDate = Date()
+            if !shouldThrottleSpeedTest {
                 Task {
                     log("正在进行官方源测速")
                     await testSpeed("https://libraries.minecraft.net/net/java/dev/jna/jna/5.15.0/jna-5.15.0.jar")

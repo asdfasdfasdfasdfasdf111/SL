@@ -93,8 +93,15 @@ public class MinecraftInstaller {
         guard !urls.isEmpty else {
             throw MyLocalizedError(reason: "无法获取 \(task.minecraftVersion.displayName) 的 assetIndex 下载 URL。")
         }
-        let destination: URL = task.minecraftDirectory.assetsURL.appending(component: "indexes").appending(component: "\(manifest.assetIndex!.id).json")
-        try await SingleFileDownloader.download(task: task, urls: urls, destination: destination, expectedSHA1: manifest.assetIndex?.sha1, stage: parallel ? .clientIndex : nil)
+        // 客户端清单可能缺少 assetIndex（旧版本如 1.5.2 及以下无独立资源索引）：
+        // 此时不下载索引，置空 objects，后续散列资源阶段随之跳过，避免强解包崩溃。
+        guard let assetIndex = manifest.assetIndex else {
+            err("客户端清单缺少资源索引字段（该版本可能无独立资产索引），跳过资源索引阶段")
+            task.assetIndex = .init(objects: [])
+            return
+        }
+        let destination: URL = task.minecraftDirectory.assetsURL.appending(component: "indexes").appending(component: "\(assetIndex.id).json")
+        try await SingleFileDownloader.download(task: task, urls: urls, destination: destination, expectedSHA1: assetIndex.sha1, stage: parallel ? .clientIndex : nil)
         do {
             let data = try Data(contentsOf: destination)
             task.assetIndex = try .parse(data)

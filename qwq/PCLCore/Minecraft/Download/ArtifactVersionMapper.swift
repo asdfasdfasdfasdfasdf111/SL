@@ -77,7 +77,9 @@ public struct ArtifactVersionMapper {
                 continue
             }
             
-            artifact.path = URL(string: artifact.url)!.path
+            // artifact.url 来自第三方清单的 groupId/artifactId/version 拼接，可能含空格等非法 URL 字符
+            // （非官方源损坏清单）→ URL(string:) 会返回 nil，回退保留原 path，避免强解包崩溃
+            artifact.path = URL(string: artifact.url)?.path ?? artifact.path
         }
     }
     

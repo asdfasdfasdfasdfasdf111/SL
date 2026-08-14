@@ -92,7 +92,10 @@ public class JavaVirtualMachine: Identifiable, Equatable {
                 let release = PropertiesParser.parse(fileURL: releaseURL)
                 if let javaVersion = release["JAVA_VERSION"] {
                     displayVersion = javaVersion
-                    version = Int(displayVersion.split(separator: ".")[displayVersion.starts(with: "1.") ? 1 : 0])!
+                    // release 文件可能损坏/含非数字段（如空段），强解包会崩；失败回退 0（按未知版本处理）
+                    let parts = displayVersion.split(separator: ".")
+                    let versionPart = parts.isEmpty ? "" : String(parts[displayVersion.starts(with: "1.") && parts.count > 1 ? 1 : 0])
+                    version = Int(versionPart) ?? 0
                 } else {
                     err("加载 \(executableURL.path()) 时出现错误: 未找到键 JAVA_VERSION 对应的值")
                 }

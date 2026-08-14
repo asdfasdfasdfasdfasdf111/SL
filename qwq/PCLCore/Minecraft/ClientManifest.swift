@@ -78,9 +78,10 @@ public class ClientManifest {
             }
         }
         private var split: [String]
-        public var groupId: String { split[0] }
-        public var artifactId: String { split[1] }
-        public var version: String { split[2] }
+        // 畸形库名（段数不足）时用空串兜底，杜绝数组越界崩溃（旧实现 split[0]/[1]/[2] 无保护）
+        public var groupId: String { split.count >= 1 ? split[0] : "" }
+        public var artifactId: String { split.count >= 2 ? split[1] : "" }
+        public var version: String { split.count >= 3 ? split[2] : "" }
         public var classifier: String? { split.count >= 4 ? split[3] : nil }
         public let rules: [Rule]
         public let natives: [String: String]
@@ -103,7 +104,7 @@ public class ClientManifest {
                     url: (URL(string: json["url"].stringValue) ?? URL(string: "https://bmclapi2.bangbang93.com/maven")!).appending(path: path).absoluteString
                 )
             } else {
-                if split[1] == "launchwrapper" {
+                if split.count >= 2 && split[1] == "launchwrapper" {
                     self.rules = []
                     self.natives = [:]
                     let path = Util.toPath(mavenCoordinate: name)

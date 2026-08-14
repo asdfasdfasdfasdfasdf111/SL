@@ -14,7 +14,8 @@ public class Util {
         do {
             let archive = try Archive(url: jarURL, accessMode: .read)
             let data = try ArchiveUtil.getEntryOrThrow(archive: archive, name: "META-INF/MANIFEST.MF")
-            let manifest = String(data: data, encoding: .utf8)!
+            // MANIFEST.MF 可能非 UTF-8（任意 forge jar 来源），强解包会崩；失败时按行解码兜底
+            let manifest = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
 
             let regex = try NSRegularExpression(pattern: "(?m)^Main-Class:\\s*([^\\r\\n]+)")
             if let match = regex.firstMatch(in: manifest, range: NSRange(manifest.startIndex..., in: manifest)),
@@ -47,19 +48,29 @@ public class Util {
     
     public static func parse(mavenCoordinate: String) -> MavenCoordinate {
         let pattern = #"^([^:]+):([^:]+):([^:@]+)(?::([^@]+))?(?:@(.+))?$"#
-        let r = mavenCoordinate.range(of: pattern, options: .regularExpression)!
+        // 旧实现强解包：外部 JSON（版本清单/Forge 安装配置）中任何畸形库名都会直接崩溃。
+        // 改为安全解析：匹配失败时把整串当 groupId 兜底返回，避免启动器崩溃。
+        guard let r = mavenCoordinate.range(of: pattern, options: .regularExpression) else {
+            err("无法解析 Maven 坐标: \(mavenCoordinate)")
+            return MavenCoordinate(mavenCoordinate, "", "", classifier: nil, packaging: nil)
+        }
         let match = String(mavenCoordinate[r])
-        let regex = try! NSRegularExpression(pattern: pattern)
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return MavenCoordinate(mavenCoordinate, "", "", classifier: nil, packaging: nil)
+        }
         let nsrange = NSRange(match.startIndex..<match.endIndex, in: match)
-        let result = regex.firstMatch(in: match, options: [], range: nsrange)!
+        guard let result = regex.firstMatch(in: match, options: [], range: nsrange) else {
+            return MavenCoordinate(mavenCoordinate, "", "", classifier: nil, packaging: nil)
+        }
         func group(_ i: Int) -> String? {
             guard let range = Range(result.range(at: i), in: match) else { return nil }
             return String(match[range])
         }
+        // 三组必需捕获（groupId/artifactId/version）缺失时用整串兜底，剩余分组可能为 nil
         return MavenCoordinate(
-            group(1)!,
-            group(2)!,
-            group(3)!,
+            group(1) ?? mavenCoordinate,
+            group(2) ?? mavenCoordinate,
+            group(3) ?? "",
             classifier: group(4),
             packaging: group(5)
         )
@@ -147,7 +158,9 @@ public class Util {
     }
     
     public static func replaceRoot(url: any URLConvertible, root: String, target: String) -> any URLConvertible {
-        return URL(string: url.url.absoluteString.replacingOccurrences(of: root, with: target))!
+        // 替换后字符串可能非法（URL 特殊字符），强解包会崩；失败时返回原始 URL
+        let replaced = url.url.absoluteString.replacingOccurrences(of: root, with: target)
+        return URL(string: replaced) ?? url
     }
 }
 

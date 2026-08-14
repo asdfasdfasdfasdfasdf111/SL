@@ -22,7 +22,12 @@ public class CacheStorage {
         let indexURL = rootURL.appending(path: "index.json")
         if FileManager.default.fileExists(atPath: indexURL.path) {
             do {
-                let data = try FileHandle(forReadingFrom: indexURL).readToEnd()!
+                // readToEnd 可能返回 nil（空/损坏文件），强解包会崩；失败走空索引重建
+                guard let data = try FileHandle(forReadingFrom: indexURL).readToEnd() else {
+                    err("index.json 读取为空，重建缓存索引")
+                    self.libraries = []
+                    return
+                }
                 let json = try JSON(data: data)
                 self.libraries = json["libraries"].arrayValue.map(Library.init)
             } catch {
