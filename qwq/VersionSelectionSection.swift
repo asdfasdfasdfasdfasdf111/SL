@@ -20,6 +20,11 @@ struct VersionSelectionSection: View {
     let localVersionLoaders: [String: ModLoader]
     let isLoadingModpackVersions: Bool
     let isLoadingLoaders: Bool
+    /// 加载器检测「结果未知」错误文案（网络失败/5xx/超时，区别于「明确不支持」）；
+    /// 为 nil 时按正常分支渲染
+    var loaderError: String? = nil
+    /// 错误态下的重试回调（由宿主提供，通常是重新发起加载器检测）
+    var onRetryLoaders: (() -> Void)? = nil
 
     @Binding var selectedVersion: String
     @Binding var selectedLoader: String
@@ -95,6 +100,22 @@ struct VersionSelectionSection: View {
                     Spacer()
                 }
                 .padding(.vertical, 20)
+            } else if let error = loaderError, !error.isEmpty {
+                // 结果未知（网络失败/5xx/超时）：明确提示可重试，绝不显示「没有加载器」误判
+                HStack(spacing: 10) {
+                    Text(error)
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                    if let onRetryLoaders {
+                        Button(action: onRetryLoaders) {
+                            Text("重试")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(theme.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 16)
             } else if availableLoaders.isEmpty {
                 Text("该版本暂无可用的加载器")
                     .font(.system(size: 13))

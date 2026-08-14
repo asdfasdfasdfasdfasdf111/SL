@@ -60,6 +60,10 @@ struct ModDetailView: View {
 
     @State private var availableLoaders: [String] = []
     @State private var isLoadingLoaders = false
+    // 加载器检测任务与错误态：任务持有引用以便切换版本/销毁视图时取消（UAF 防护），
+    // 错误态（结果未知：网络失败/5xx/超时）与「明确不支持」区分展示，不再误报「没有加载器」
+    @State private var loaderSupportTask: Task<Void, Never>?
+    @State private var loaderError: String?
 
     private func assetName(for loader: String) -> String {
         LoaderNameResolver.assetName(for: loader)
@@ -195,10 +199,11 @@ struct ModDetailView: View {
             }
         }
         .onDisappear {
-            // 视图销毁：取消延迟动画任务，防止其继续写已释放的 @State storage（UAF）；
+            // 视图销毁：取消延迟动画任务与加载器检测任务，防止其继续写已释放的 @State storage（UAF）；
             // 翻译 model 同步 deactivate，异步翻译回调不再写回
             bounceTask?.cancel()
             backNavTask?.cancel()
+            loaderSupportTask?.cancel()
             translationModel.deactivate()
         }
         // 下载中状态跟随详情页开关：详情页打开/关闭时驱动下载按钮布局变化（圆按钮出现时左移）
@@ -286,14 +291,34 @@ struct ModDetailView: View {
         guard !version.isEmpty else { return }
         // 1. 同步查缓存命中：直接展示，不闪烁 loading（核心层 cachedLoaders）
         if let cached = LoaderSupportChecker.cachedLoaders(for: version) {
+            loaderSupportTask?.cancel()   // 命中缓存时旧任务已无意义，取消防迟到回写
+            loaderError = nil
             applyLoaders(cached)
             return
         }
-        // 2. 未命中：核心层异步联网检测（含磁盘写入与失败回退）
+        // 2. 未命中：取消上一次检测任务（防止旧版本结果覆盖新版本 —— 「鬼畜」根因之一），
+        //    然后核心层异步联网检测（含磁盘写入/失败回退三态语义），
+        //    完成后校验任务未取消且版本未切换（归属校验）才允许写 UI 状态。
+        loaderSupportTask?.cancel()
+        loaderError = nil
         isLoadingLoaders = true
-        Task {
-            let supported = await LoaderSupportChecker.supportedLoaders(for: version)
-            await MainActor.run { applyLoaders(supported) }
+        let requested = version
+        loaderSupportTask = Task {
+            let result = await LoaderSupportChecker.supportedLoaders(for: requested)
+            await MainActor.run {
+                guard !Task.isCancelled, selectedVersion == requested else { return }
+                switch result {
+                case .supported(let loaders):
+                    loaderError = nil
+                    applyLoaders(loaders)
+                case .notSupported:
+                    loaderError = nil
+                    applyLoaders([])   // API 明确 404/410/空数组 → “该版本暂无可用的加载器”
+                case .unavailable:
+                    isLoadingLoaders = false
+                    loaderError = "加载器信息暂时无法获取，请点击重试"
+                }
+            }
         }
     }
 
@@ -481,6 +506,8 @@ struct ModDetailView: View {
                     localVersionLoaders: localVersionLoaders,
                     isLoadingModpackVersions: isLoadingModpackVersions,
                     isLoadingLoaders: isLoadingLoaders,
+                    loaderError: (pageTypeForIndex == .loaderSelector && isBasePage) ? loaderError : nil,
+                    onRetryLoaders: { fetchLoaderSupport(for: selectedVersion) },
                     selectedVersion: $selectedVersion,
                     selectedLoader: $selectedLoader,
                     selectedModpackVersionId: $selectedModpackVersionId

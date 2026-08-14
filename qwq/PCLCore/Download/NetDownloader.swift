@@ -146,7 +146,10 @@ public actor NetManager {
 
     public struct Config {
         public var maxSlices: Int = 16                       // 全局分片上限（NetTaskThreadLimit）
-        public var pieceLimit: Int64 = 256 * 1024            // 最小分割粒度（FilePieceLimit）
+        public var pieceLimit: Int64 = 1024 * 1024           // 最小分割粒度（FilePieceLimit）：1MB 起才值得再开一片
+        public var minMultiSliceSize: Int64 = 4 * 1024 * 1024 // 仅大于此大小的文件允许多分片：
+                                                             // 海量小文件（MC 库文件多为几十 KB~几 MB）单线程直下，
+                                                             // 避免抢占分片池导致大文件并发不足（整体吞吐反而更高）
         public var speedLimitLow: Int64 = 1024 * 1024        // 速度下限（NetTaskSpeedLimitLow）
         public var maxFailPerSource: Int = 3                 // 单源连续失败次数阈值
         public var tickIntervalNs: UInt64 = 40_000_000       // 调度周期 40ms
@@ -507,6 +510,9 @@ public actor NetManager {
         }
 
         // ④ 分割最大碎片：尾部 40% 处切开（PCL2：End - Undone * 0.4）
+        //    仅对 >4MB 的大文件分割：MC 版本的库文件数以千计且普遍偏小，
+        //    小文件多分片只会加剧连接池争抢，把分片让给真正的大文件收益更高。
+        guard record.fileSize >= config.minMultiSliceSize else { return false }
         let candidates = record.slices.filter { $0.state == .downloading || $0.state == .resumed }
         guard let maxSlice = candidates.max(by: { $0.undone(of: record) < $1.undone(of: record) }),
               maxSlice.undone(of: record) >= config.pieceLimit else { return false }
@@ -610,7 +616,7 @@ public actor NetManager {
         let handle = try FileHandle(forWritingTo: tempURL)
         defer { try? handle.close() }
 
-        var buffer = Data(capacity: 64 * 1024)
+        var buffer = Data(capacity: 256 * 1024)
         var counter = 0
         var bytesSinceCheck: Int64 = 0
         var lastCheckTime = Date()
@@ -636,7 +642,7 @@ public actor NetManager {
                 lastCheckTime = now
             }
 
-            if buffer.count >= 64 * 1024 {
+            if buffer.count >= 256 * 1024 {
                 let remaining = await manager.sliceUndone(fileID: fileID, sliceID: sliceID)
                 let toWrite: Int
                 if remaining < 0 {

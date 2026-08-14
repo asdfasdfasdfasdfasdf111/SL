@@ -62,7 +62,12 @@ extension URLSession {
         c.connectionProxyDictionary = [:]
         c.timeoutIntervalForRequest = 30
         c.timeoutIntervalForResource = 600
-        c.httpMaximumConnectionsPerHost = 8
+        // 与 NetManager.config.maxSlices(16) 对齐：分片池 16 路并发时不再被
+        // 每主机 8 连接卡住一半（此前 16 个分片只有 8 条连接可用，等效最大 8 路并发）。
+        // macOS 对 HTTP/1.1 实际连接数有系统上限，但 HTTP/2 多路复用与多主机场景下仍有收益。
+        c.httpMaximumConnectionsPerHost = 16
+        // HTTP/1.1 环境下对同主机请求启用管线化，减少连接往返等待（PCL2 同样启用）
+        c.httpShouldUsePipelining = true
         return URLSession(configuration: c)
     }()
 }
