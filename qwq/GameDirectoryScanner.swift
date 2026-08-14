@@ -14,6 +14,8 @@ enum GameDirectoryScanner {
     /// 模组兼容性过滤由 ModDetailView 结合 API 的 game_versions 求交集完成。
     static func localOwnedVersions(gameRoot: String) -> [String] {
         guard !gameRoot.isEmpty else { return [] }
+        // 与游戏分类列表一致：先规范化版本文件夹名（1.6.1 → 1.6.1-Forge），列表显示后缀
+        MinecraftVersionManager.normalizeVersionFolderNames(gameRoot: gameRoot)
         let versionsPath = gameRoot + "/versions"
         guard let versionDirs = try? FileManager.default.contentsOfDirectory(atPath: versionsPath) else { return [] }
         return versionDirs.filter { dir in

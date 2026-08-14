@@ -2,6 +2,10 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## Beta 0.1.6 版本发布 🚀（2026-08-14）
+
+新增已装版本列表加载器后缀显示：游戏分类版本列表直接读 versions/ 文件夹名，扫描时自动把「文件夹名是纯版本号、但实际装了加载器」的历史遗留版本目录重命名为「版本-加载器」（如 1.6.1 → 1.6.1-Forge），并同步改写 version.json 的 id 字段与 json 文件名；检测依据为 version.json 的 libraries 依赖（net.minecraftforge:forge / net.fabricmc:fabric-loader / net.neoforged / org.quiltmc）或 inheritsFrom 名称，无 json / 已带后缀 / 目标重名一律幂等跳过，绝不覆盖。新下载流程本已产出带后缀目录（GameVersionDownloadStarter 拼 name），本机制兜底历史遗留与第三方启动器装的版本；游戏分类与模组详情页本地版本列表统一生效
+
 ## Beta 0.1.5 版本发布 🚀（2026-08-14）
 
 修复下载报 SSL 错误：系统代理（如 Clash 127.0.0.1:12002）对 bmclapi2 / mojang 域名的 TLS 转发失败时，URLSession 报「An SSL error has occurred and a secure connection to the server cannot be made.」（同一 URL 用 curl 直连正常），Forge 安装器、原版 jar、依赖库等下载全部失败且每源重试 3 次共耗时约 45 秒；现启动器网络层统一禁用系统代理直连（connectionProxyDictionary = [:]），API 请求、分片下载、加载器支持检测、Java 运行时下载全部改走直连，官方源被墙时按既有双源机制自动切镜像，不再依赖用户代理软件出口

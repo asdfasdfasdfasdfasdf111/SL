@@ -37,7 +37,86 @@ private func normalizeVersion(_ version: String) -> String {
 
 struct MinecraftVersionManager {
     private static let cacheKey = "cachedGameRoots"
-    
+    private static let renameLock = NSLock()
+
+    /// 规范化版本文件夹名：把「文件夹名是纯版本号、但实际装了加载器」的版本目录
+    /// 重命名为「版本号-加载器名」（如 1.6.1 → 1.6.1-Forge）。
+    /// 原理（用户明确要求）：启动器列表直接读 versions/ 下的文件夹名展示，
+    /// 改文件夹名即改列表显示；新下载流程（GameVersionDownloadStarter 拼 name）
+    /// 已产出带后缀目录，本函数只兜底历史遗留/第三方启动器装的版本。
+    /// 检测依据：版本目录内 <名>.json 的 libraries 依赖或 inheritsFrom 名称。
+    /// 重命名时同步改写 version.json 的 id 字段（JSON 文件名也随目录改名）。
+    /// - Returns: 旧名 → 新名 映射（本次实际发生的重命名）。
+    @discardableResult
+    static func normalizeVersionFolderNames(gameRoot: String) -> [String: String] {
+        renameLock.lock()
+        defer { renameLock.unlock() }
+        let fm = FileManager.default
+        let versionsPath = gameRoot + "/versions"
+        guard let dirs = try? fm.contentsOfDirectory(atPath: versionsPath) else { return [:] }
+        var renames: [String: String] = [:]
+        for dir in dirs {
+            // 名字已含已知加载器特征（大小写不敏感，如 1.20.1-Forge / 1.6.1-forge8.9.0.753）→ 跳过
+            let lower = dir.lowercased()
+            if lower.contains("forge") || lower.contains("fabric") || lower.contains("neoforge") || lower.contains("quilt") {
+                continue
+            }
+            let dirPath = "\(versionsPath)/\(dir)"
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: dirPath, isDirectory: &isDir), isDir.boolValue else { continue }
+
+            // 读 <名>.json 检测加载器（无 json 无法确认，保守跳过）
+            let jsonPath = "\(versionsPath)/\(dir)/\(dir).json"
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: jsonPath)),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let loader = detectLoaderName(in: json) else { continue }
+
+            let newName = "\(dir)-\(loader)"
+            let newDirPath = "\(versionsPath)/\(newName)"
+            // 目标已存在则跳过，绝不覆盖
+            if fm.fileExists(atPath: newDirPath) { continue }
+
+            // ① 写入新名 json（id 同步改为新名），② 删旧 json，③ 重命名目录
+            var newJSON = json
+            newJSON["id"] = newName
+            guard let newData = try? JSONSerialization.data(withJSONObject: newJSON, options: [.prettyPrinted]),
+                  (try? newData.write(to: URL(fileURLWithPath: "\(versionsPath)/\(dir)/\(newName).json"))) != nil else { continue }
+            try? fm.removeItem(atPath: jsonPath)
+            do {
+                try fm.moveItem(atPath: dirPath, toPath: newDirPath)
+                renames[dir] = newName
+                log("版本文件夹重命名: \(dir) → \(newName)")
+            } catch {
+                // 重命名失败：恢复旧 json（否则目录内 json 名与目录名不一致，启动器无法识别）
+                try? fm.moveItem(atPath: "\(versionsPath)/\(dir)/\(newName).json", toPath: jsonPath)
+            }
+        }
+        return renames
+    }
+
+    /// 从版本 json 检测加载器名（返回展示名 Forge/Fabric/NeoForge/Quilt；检测不到返回 nil）。
+    private static func detectLoaderName(in json: [String: Any]) -> String? {
+        // ① libraries 依赖名（PCL2 同款识别：forge/fabric-loader/neoforge/quilt-loader）
+        if let libs = json["libraries"] as? [[String: Any]] {
+            for lib in libs {
+                guard let name = lib["name"] as? String else { continue }
+                let n = name.lowercased()
+                if n.contains("net.minecraftforge:forge") { return "Forge" }
+                if n.contains("net.fabricmc:fabric-loader") { return "Fabric" }
+                if n.contains("net.neoforged:neoforge") { return "NeoForge" }
+                if n.contains("org.quiltmc:quilt-loader") { return "Quilt" }
+            }
+        }
+        // ② inheritsFrom（如 "1.20.1-forge36.2.39"，加载器版通常继承原版）
+        if let inherits = (json["inheritsFrom"] as? String)?.lowercased() {
+            if inherits.contains("forge") { return "Forge" }
+            if inherits.contains("fabric") { return "Fabric" }
+            if inherits.contains("neoforge") { return "NeoForge" }
+            if inherits.contains("quilt") { return "Quilt" }
+        }
+        return nil
+    }
+
     static func findGameRootDirectories() -> [String] {
         if let cached = UserDefaults.standard.stringArray(forKey: cacheKey) {
             let valid = cached.filter { FileManager.default.fileExists(atPath: $0 + "/versions") }
@@ -71,6 +150,10 @@ struct MinecraftVersionManager {
     }
     
     static func getVersions(from gameRoot: String) -> [String] {
+        // 加载列表前先规范化文件夹名：历史遗留的「纯版本号但装了加载器」目录
+        // 重命名为「版本-加载器」（1.6.1 → 1.6.1-Forge），列表读目录名即显示后缀。
+        // 幂等：已带后缀 / 无加载器 / 重命名失败均自动跳过，重复调用无副作用。
+        normalizeVersionFolderNames(gameRoot: gameRoot)
         let versionsPath = gameRoot + "/versions"
         guard let versions = try? FileManager.default.contentsOfDirectory(atPath: versionsPath) else { return [] }
         return versions.filter { path in
