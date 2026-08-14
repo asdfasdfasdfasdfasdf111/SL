@@ -43,6 +43,18 @@ enum LoaderVersionResolver {
     // MARK: - 各加载器解析
 
     private static func fabricVersion(encoded: String, mcVersion: String) async throws -> String {
+        // 复用加载器支持检测阶段的响应数组（同会话免二次请求；检测与解析共用同一端点）
+        if let data = LoaderSupportChecker.cachedVersionList(loader: "fabric", mc: mcVersion),
+           let json = try? JSON(data: data) {
+            let array = json.arrayValue
+            if let stable = array.first(where: { $0["loader"]["stable"].boolValue }),
+               !stable["loader"]["version"].stringValue.isEmpty {
+                return stable["loader"]["version"].stringValue
+            }
+            if let first = array.first, !first["loader"]["version"].stringValue.isEmpty {
+                return first["loader"]["version"].stringValue
+            }
+        }
         let resp = await Requests.get("https://meta.fabricmc.net/v2/versions/loader/\(encoded)")
         let array = try resp.getJSONOrThrow().arrayValue
         // 优先最新稳定版（PCL.Mac 列表排序后用户可选稳定/测试版，这里交互省去选择 → 自动取稳定版）
@@ -57,6 +69,18 @@ enum LoaderVersionResolver {
     }
 
     private static func quiltVersion(encoded: String, mcVersion: String) async throws -> String {
+        // 复用加载器支持检测阶段的响应数组（检测与解析共用同一端点，同会话免二次请求）
+        if let data = LoaderSupportChecker.cachedVersionList(loader: "quilt", mc: mcVersion),
+           let json = try? JSON(data: data) {
+            let array = json.arrayValue
+            if let stable = array.first(where: { $0["loader"]["stable"].boolValue }),
+               !stable["loader"]["version"].stringValue.isEmpty {
+                return stable["loader"]["version"].stringValue
+            }
+            if let first = array.first, !first["loader"]["version"].stringValue.isEmpty {
+                return first["loader"]["version"].stringValue
+            }
+        }
         let resp = await Requests.get("https://meta.quiltmc.org/v3/versions/loader/\(encoded)")
         let array = try resp.getJSONOrThrow().arrayValue
         if let stable = array.first(where: { $0["loader"]["stable"].boolValue }),
@@ -71,6 +95,14 @@ enum LoaderVersionResolver {
 
     /// Forge：BMCLAPI 数组主源；请求成功但空数组 = 明确不支持；仅网络失败切入官方 index JSON（promos）
     private static func forgeVersion(encoded: String, mcVersion: String) async throws -> String {
+        // 复用加载器支持检测阶段的响应数组（同会话免二次请求）
+        if let data = LoaderSupportChecker.cachedVersionList(loader: "forge", mc: mcVersion),
+           let json = try? JSON(data: data) {
+            let array = json.arrayValue
+            if let first = array.first, !first["version"].stringValue.isEmpty {
+                return first["version"].stringValue
+            }
+        }
         let primary = await Requests.get("https://bmclapi2.bangbang93.com/forge/minecraft/\(encoded)")
         if primary.error == nil, let data = primary.data, !data.isEmpty, let json = try? JSON(data: data) {
             let array = json.arrayValue
@@ -97,6 +129,14 @@ enum LoaderVersionResolver {
 
     /// NeoForge：BMCLAPI list 主源；仅网络失败切入官方 Maven metadata.xml（按 MC→版本前缀过滤取最新）
     private static func neoforgeVersion(encoded: String, mcVersion: String) async throws -> String {
+        // 复用加载器支持检测阶段的响应数组（同会话免二次请求）
+        if let data = LoaderSupportChecker.cachedVersionList(loader: "neoforge", mc: mcVersion),
+           let json = try? JSON(data: data) {
+            let array = json.arrayValue
+            if let first = array.first, !first["version"].stringValue.isEmpty {
+                return first["version"].stringValue
+            }
+        }
         let primary = await Requests.get("https://bmclapi2.bangbang93.com/neoforge/list/\(encoded)")
         if primary.error == nil, let data = primary.data, !data.isEmpty, let json = try? JSON(data: data) {
             let array = json.arrayValue

@@ -64,6 +64,8 @@ struct ModDetailView: View {
     // 错误态（结果未知：网络失败/5xx/超时）与「明确不支持」区分展示，不再误报「没有加载器」
     @State private var loaderSupportTask: Task<Void, Never>?
     @State private var loaderError: String?
+    // 逐加载器检测状态（流式：完成一个显示一个，不再等全部结束才出卡片）
+    @State private var loaderStates: [String: LoaderState] = [:]
 
     private func assetName(for loader: String) -> String {
         LoaderNameResolver.assetName(for: loader)
@@ -289,50 +291,55 @@ struct ModDetailView: View {
 
     private func fetchLoaderSupport(for version: String) {
         guard !version.isEmpty else { return }
-        // 1. 同步查缓存命中：直接展示，不闪烁 loading（核心层 cachedLoaders）
-        if let cached = LoaderSupportChecker.cachedLoaders(for: version) {
-            loaderSupportTask?.cancel()   // 命中缓存时旧任务已无意义，取消防迟到回写
-            loaderError = nil
-            applyLoaders(cached)
-            return
-        }
-        // 2. 未命中：取消上一次检测任务（防止旧版本结果覆盖新版本 —— 「鬼畜」根因之一），
-        //    然后核心层异步联网检测（含磁盘写入/失败回退三态语义），
-        //    完成后校验任务未取消且版本未切换（归属校验）才允许写 UI 状态。
+        // 1. 取消上一次检测任务（防止旧版本结果覆盖新版本 —— 「鬼畜」根因之一；归属校验详见下方）
         loaderSupportTask?.cancel()
         loaderError = nil
-        isLoadingLoaders = true
-        // 立即清空上一版本的加载器列表：加载中/失败时底部下载按钮的 loaderSupported 判定
-        // 不会误用旧版本数据（否则可能把旧版本支持的加载器错误装到新版本上）
-        availableLoaders = []
         let requested = version
+        // 2. 立即以「缓存已定论项 + 未定论项 checking」初始化：首帧直接出已定论卡片，
+        //    未缓存项显示转圈，不闪烁、不空白等待
+        var initial = LoaderSupportChecker.cachedLoaderStates(for: version) ?? [:]
+        for name in LoaderSupportChecker.candidateDisplayNames(for: version) where initial[name] == nil {
+            initial[name] = .checking
+        }
+        loaderStates = initial
+        applyLoaderStates(initial, version: version)
+        // 3. 全部定论（无 missing）→ 直接结束，绝不联网
+        if LoaderSupportChecker.isFullyResolved(initial, for: version) { return }
+        // 4. 流式联网：每个加载器检测完成立即逐项写 UI（完成一个显示一个）；
+        //    写回前做归属校验（任务未取消且版本未切换），迟到的旧结果一律丢弃
         loaderSupportTask = Task {
-            let result = await LoaderSupportChecker.supportedLoaders(for: requested)
-            await MainActor.run {
-                guard !Task.isCancelled, selectedVersion == requested else { return }
-                switch result {
-                case .supported(let loaders):
-                    loaderError = nil
-                    applyLoaders(loaders)
-                case .notSupported:
-                    loaderError = nil
-                    applyLoaders([])   // API 明确 404/410/空数组 → “该版本暂无可用的加载器”
-                case .unavailable:
-                    // 统一走 applyLoaders 清空旧列表并停止 loading，只展示错误态
-                    applyLoaders([])
-                    loaderError = "加载器信息暂时无法获取，请点击重试"
+            let stream = LoaderSupportChecker.streamLoaderStates(for: requested)
+            for await (loader, state) in stream {
+                await MainActor.run {
+                    guard !Task.isCancelled, selectedVersion == requested else { return }
+                    var states = loaderStates
+                    states[loader] = state
+                    loaderStates = states
+                    applyLoaderStates(states, version: requested)
                 }
             }
         }
+        // 5. 预加载：顺带静默预取相邻版本（切版本最常看相邻；in-flight 合并保证不重复联网）
+        prefetchNearbyLoaders(for: requested)
     }
 
-    /// 应用加载器列表到 UI（主线程调用）
-    private func applyLoaders(_ loaders: [String]) {
-        availableLoaders = loaders
-        isLoadingLoaders = false
+    /// 预取当前版本相邻的加载器状态（仅 1 个候选；详情页打开 / 切换版本时调用）
+    private func prefetchNearbyLoaders(for version: String) {
+        guard pageType == .loaderSelector, sortedVersions.count > 1,
+              let idx = sortedVersions.firstIndex(of: version) else { return }
+        if idx > 0 { LoaderSupportChecker.prefetchForVersion(sortedVersions[idx - 1]) }
+        if idx < sortedVersions.count - 1 { LoaderSupportChecker.prefetchForVersion(sortedVersions[idx + 1]) }
+    }
+
+    /// 应用逐加载器状态到 UI 派生状态（主线程调用）
+    private func applyLoaderStates(_ states: [String: LoaderState], version: String) {
+        availableLoaders = LoaderSupportChecker.loaderOrder.filter { states[$0] == .supported }
+        isLoadingLoaders = states.values.contains { $0 == .checking }
+        let hasUnknown = states.values.contains { $0 == .unavailable }
+        loaderError = hasUnknown ? "部分加载器信息暂时无法获取，点击卡片可重试" : nil
         // 仅当用户未主动取消选择（非空）且当前选择不在可用列表时才自动选中第一个；
         // 空字符串 = 用户点了已选中卡片主动取消（下载纯原版），刷新后保持不选
-        if !selectedLoader.isEmpty, !loaders.contains(selectedLoader), let first = loaders.first {
+        if !selectedLoader.isEmpty, !availableLoaders.contains(selectedLoader), let first = availableLoaders.first {
             selectedLoader = first
         }
     }
@@ -510,6 +517,7 @@ struct ModDetailView: View {
                     localVersionLoaders: localVersionLoaders,
                     isLoadingModpackVersions: isLoadingModpackVersions,
                     isLoadingLoaders: isLoadingLoaders,
+                    loaderStates: loaderStates,
                     loaderError: (pageTypeForIndex == .loaderSelector && isBasePage) ? loaderError : nil,
                     onRetryLoaders: { fetchLoaderSupport(for: selectedVersion) },
                     selectedVersion: $selectedVersion,

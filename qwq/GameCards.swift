@@ -63,21 +63,39 @@ struct PrerequisiteModCard: View {
 struct LoaderSelectorCard: View {
     let loader: String
     let isSelected: Bool
+    /// 检测状态：supported 可选中 / checking 转圈 / notSupported 置灰不可点 / unavailable 点击重试
+    var state: LoaderState = .supported
+    /// 结果未知时点击卡片触发整版重试
+    var onRetry: (() -> Void)? = nil
     let action: () -> Void
     @State private var scale: CGFloat = 1.0
     @ObservedObject var theme = ThemeManager.shared
 
     var body: some View {
         VStack(spacing: 8) {
+            if state == .checking {
+                ProgressView()
+                    .scaleEffect(0.7)
+                    .frame(height: 32)
+                    .frame(maxWidth: .infinity)
+            } else {
+                Image(mapLoaderAsset(loader))
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(height: 32)
+                    .cornerRadius(6)
+                    .shadow(color: .black.opacity(0.12), radius: 2, x: 0, y: 1)
+                    .opacity(state == .notSupported ? 0.25 : 1)
+            }
             Text(loader)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(.primary)
-            Image(mapLoaderAsset(loader))
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(height: 32)
-                .cornerRadius(6)
-                .shadow(color: .black.opacity(0.12), radius: 2, x: 0, y: 1)
+                .opacity(state == .notSupported ? 0.4 : 1)
+            if state == .unavailable {
+                Text("重试")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+            }
         }
         .padding(14)
         .background(
@@ -89,12 +107,20 @@ struct LoaderSelectorCard: View {
                 .stroke(isSelected ? theme.accentColor : Color.clear, lineWidth: 2)
         )
         .scaleEffect(scale)
+        .opacity(state == .notSupported ? 0.55 : 1)
         .contentShape(Rectangle())
         .onTapGesture {
-            withAnimation(.punchySpring) { scale = 1.08 }
-            action()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-                withAnimation(.punchySpring) { scale = 1.0 }
+            switch state {
+            case .supported:
+                withAnimation(.punchySpring) { scale = 1.08 }
+                action()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                    withAnimation(.punchySpring) { scale = 1.0 }
+                }
+            case .unavailable:
+                onRetry?()
+            case .checking, .notSupported:
+                break
             }
         }
     }

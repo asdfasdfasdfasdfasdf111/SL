@@ -20,6 +20,8 @@ struct VersionSelectionSection: View {
     let localVersionLoaders: [String: ModLoader]
     let isLoadingModpackVersions: Bool
     let isLoadingLoaders: Bool
+    /// 逐加载器检测状态（流式渲染：checking 转圈 / supported 可选 / notSupported 置灰 / unavailable 可点重试）
+    let loaderStates: [String: LoaderState]
     /// 加载器检测「结果未知」错误文案（网络失败/5xx/超时，区别于「明确不支持」）；
     /// 为 nil 时按正常分支渲染
     var loaderError: String? = nil
@@ -92,19 +94,13 @@ struct VersionSelectionSection: View {
     // MARK: - 加载器选择卡片（游戏版本页）
 
     private var loaderSelectorList: some View {
-        Group {
-            if isLoadingLoaders {
-                HStack {
-                    Spacer()
-                    ProgressView().scaleEffect(0.8)
-                    Spacer()
-                }
-                .padding(.vertical, 20)
-            } else if let error = loaderError, !error.isEmpty {
-                // 结果未知（网络失败/5xx/超时）：明确提示可重试，绝不显示「没有加载器」误判
+        VStack(alignment: .leading, spacing: 8) {
+            loaderCardArea
+            if let error = loaderError, !error.isEmpty, !availableLoaders.isEmpty || isLoadingLoaders {
+                // 部分加载器结果未知：有可用卡片时在下方补一行错误提示 + 重试（不整块替换）
                 HStack(spacing: 10) {
                     Text(error)
-                        .font(.system(size: 13))
+                        .font(.system(size: 12))
                         .foregroundColor(.secondary)
                     if let onRetryLoaders {
                         Button(action: onRetryLoaders) {
@@ -115,33 +111,67 @@ struct VersionSelectionSection: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.vertical, 16)
-            } else if availableLoaders.isEmpty {
-                Text("该版本暂无可用的加载器")
-                    .font(.system(size: 13))
-                    .foregroundColor(.secondary)
-                    .padding(.vertical, 16)
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(availableLoaders, id: \.self) { loader in
-                            LoaderSelectorCard(
-                                loader: loader,
-                                isSelected: selectedLoader == loader
-                            ) {
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
-                                    // 再点已选中的卡片 = 取消选中（不装加载器，下载纯原版）
-                                    selectedLoader = (selectedLoader == loader) ? "" : loader
+                .padding(.vertical, 6)
+            }
+        }
+    }
+
+    /// 卡片区：有 checking/supported 项 → 逐卡片状态网格；全部定论且无支持 → 空态文案
+    private var loaderCardArea: some View {
+        let hasSupported = loaderStates.values.contains { $0 == .supported }
+        let hasChecking = loaderStates.values.contains { $0 == .checking }
+        if !hasSupported && !hasChecking {
+            return AnyView(
+                Group {
+                    if let error = loaderError, !error.isEmpty, !hasSupported, !hasChecking, loaderStates.values.contains(where: { $0 == .unavailable }) {
+                        // 全部结果未知：明确提示可重试，绝不显示「没有加载器」误判
+                        HStack(spacing: 10) {
+                            Text(error)
+                                .font(.system(size: 13))
+                                .foregroundColor(.secondary)
+                            if let onRetryLoaders {
+                                Button(action: onRetryLoaders) {
+                                    Text("重试")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundColor(theme.accentColor)
                                 }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.vertical, 16)
+                    } else {
+                        Text("该版本暂无可用的加载器")
+                            .font(.system(size: 13))
+                            .foregroundColor(.secondary)
+                            .padding(.vertical, 16)
+                    }
+                }
+            )
+        }
+        let order = ["Fabric", "Forge", "NeoForged", "Quilt"]
+        let present = order.filter { loaderStates[$0] != nil }
+        return AnyView(
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(present, id: \.self) { loader in
+                        LoaderSelectorCard(
+                            loader: loader,
+                            isSelected: selectedLoader == loader,
+                            state: loaderStates[loader] ?? .supported,
+                            onRetry: onRetryLoaders
+                        ) {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
+                                // 再点已选中的卡片 = 取消选中（不装加载器，下载纯原版）
+                                selectedLoader = (selectedLoader == loader) ? "" : loader
                             }
                         }
                     }
-                    // 水平方向预留放大动画空间（scaleEffect 1.08 放大时最左/最右卡片不被裁剪）
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 10)
                 }
+                // 水平方向预留放大动画空间（scaleEffect 1.08 放大时最左/最右卡片不被裁剪）
+                .padding(.horizontal, 10)
+                .padding(.vertical, 10)
             }
-        }
+        )
     }
 
     // MARK: - 普通版本卡片列表（模组/光影/资源包）
