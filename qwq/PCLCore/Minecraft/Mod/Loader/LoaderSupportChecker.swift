@@ -247,43 +247,37 @@ public enum LoaderSupportChecker {
 
     // MARK: - 对外异步查询（流式 / 聚合 / 预加载）
 
-    /// 流式检测：先 yield 缓存已定论项（秒回），随后每个加载器检测完成立即 yield（完成一个显示一个）。
-    /// 同版本并发调用复用同一个 in-flight 检测任务。
+    /// 流式检测：先 yield 缓存已定论项（秒回），随后 TaskGroup 每完成一个加载器就立刻广播一个结果。
+    /// 同版本的前台/预加载调用共享一个 in-flight 任务；每个流订阅者单独登记、终止时单独移除。
     public static func streamLoaderStates(for version: String) -> AsyncStream<(loader: String, state: LoaderState)> {
         AsyncStream { continuation in
             if let cached = cachedLoaderStates(for: version) {
                 for (loader, state) in cached { continuation.yield((loader, state)) }
             }
+
+            let subscriberID = UUID()
+            let snapshot = subscribeInflight(version: version, subscriberID: subscriberID, continuation: continuation)
+            continuation.onTermination = { _ in
+                unsubscribeInflight(version: version, ownerID: snapshot.id, subscriberID: subscriberID)
+            }
             Task {
-                let states = await checkLoaderStates(for: version)
-                for (loader, state) in states {
-                    continuation.yield((loader, state))
-                }
+                let finalStates = await snapshot.task.value
+                // 覆盖「读取缓存 → 登记订阅」之间极小窗口内可能漏掉的广播；重复 yield 幂等。
+                for (loader, state) in finalStates { continuation.yield((loader, state)) }
                 continuation.finish()
+                unsubscribeInflight(version: version, ownerID: snapshot.id, subscriberID: subscriberID)
+                dismissInflight(version: version, ownerID: snapshot.id)
             }
         }
     }
 
     /// 检测某版本全部候选加载器（已定论项直接取缓存；仅未定论项联网并发检测，单请求 4s 超时）。
-    /// 同版本 in-flight 合并：并发调用方共享同一检测任务，不重复联网。
+    /// 同版本 in-flight 合并：查询/创建/登记均在同一锁区间内，杜绝两个调用同时创建两组请求。
     public static func checkLoaderStates(for version: String) async -> [String: LoaderState] {
-        inflightLock.lock()
-        let existing = inflight[version]
-        inflightLock.unlock()
-        if let existing {
-            return await existing.value
-        }
-
-        let task = Task { await detectAndMergeStates(for: version) }
-        inflightLock.lock()
-        inflight[version] = task
-        inflightLock.unlock()
-
-        let result = await task.value
-
-        inflightLock.lock()
-        inflight[version] = nil
-        inflightLock.unlock()
+        let snapshot = getOrCreateInflight(for: version)
+        let result = await snapshot.task.value
+        // 归属校验：只有创建本任务的 ownerID 仍属于该版本时才清理，旧任务绝不清掉新任务。
+        dismissInflight(version: version, ownerID: snapshot.id)
         return result
     }
 
@@ -332,8 +326,11 @@ public enum LoaderSupportChecker {
         diskCache = nil
         cacheLock.unlock()
         inflightLock.lock()
+        let runningTasks = inflight.values.map(\.task)
         inflight = [:]
         inflightLock.unlock()
+        // 先摘除归属再取消：迟到回调无法找到条目，更不可能清理后续新任务。
+        for task in runningTasks { task.cancel() }
         versionListLock.lock()
         versionListCache = [:]
         versionListLock.unlock()
@@ -382,10 +379,84 @@ public enum LoaderSupportChecker {
         }
     }
 
-    // MARK: - in-flight 合并
+    // MARK: - in-flight 合并（原子创建 + ownerID 归属保护 + 多订阅者广播）
+
+    private struct InflightEntry {
+        let id: UUID
+        let task: Task<[String: LoaderState], Never>
+        var subscribers: [UUID: AsyncStream<(loader: String, state: LoaderState)>.Continuation] = [:]
+    }
+
+    private struct InflightSnapshot {
+        let id: UUID
+        let task: Task<[String: LoaderState], Never>
+    }
 
     private static let inflightLock = NSLock()
-    private static var inflight: [String: Task<[String: LoaderState], Never>] = [:]
+    private static var inflight: [String: InflightEntry] = [:]
+
+    /// 查询或创建任务必须在同一锁区间内完成，杜绝并发调用同时创建两组网络请求。
+    private static func getOrCreateInflight(for version: String) -> InflightSnapshot {
+        inflightLock.lock()
+        defer { inflightLock.unlock() }
+        if let existing = inflight[version] {
+            return InflightSnapshot(id: existing.id, task: existing.task)
+        }
+        let id = UUID()
+        let task = Task { await detectAndMergeStates(for: version) }
+        inflight[version] = InflightEntry(id: id, task: task)
+        return InflightSnapshot(id: id, task: task)
+    }
+
+    /// 注册流订阅者；查询/创建/登记在同一锁区间内，避免错过新任务归属。
+    private static func subscribeInflight(
+        version: String,
+        subscriberID: UUID,
+        continuation: AsyncStream<(loader: String, state: LoaderState)>.Continuation
+    ) -> InflightSnapshot {
+        inflightLock.lock()
+        defer { inflightLock.unlock() }
+        if var existing = inflight[version] {
+            existing.subscribers[subscriberID] = continuation
+            inflight[version] = existing
+            return InflightSnapshot(id: existing.id, task: existing.task)
+        }
+        let id = UUID()
+        let task = Task { await detectAndMergeStates(for: version) }
+        var entry = InflightEntry(id: id, task: task)
+        entry.subscribers[subscriberID] = continuation
+        inflight[version] = entry
+        return InflightSnapshot(id: id, task: task)
+    }
+
+    /// TaskGroup 单项完成后立刻广播；复制 continuation 后解锁再 yield，避免回调重入锁。
+    private static func publishInflight(version: String, loader: String, state: LoaderState) {
+        inflightLock.lock()
+        let subscribers: [AsyncStream<(loader: String, state: LoaderState)>.Continuation]
+        if let entry = inflight[version] {
+            subscribers = Array(entry.subscribers.values)
+        } else {
+            subscribers = []
+        }
+        inflightLock.unlock()
+        for continuation in subscribers { continuation.yield((loader, state)) }
+    }
+
+    private static func unsubscribeInflight(version: String, ownerID: UUID, subscriberID: UUID) {
+        inflightLock.lock()
+        defer { inflightLock.unlock() }
+        guard var entry = inflight[version], entry.id == ownerID else { return }
+        entry.subscribers.removeValue(forKey: subscriberID)
+        inflight[version] = entry
+    }
+
+    /// 归属校验清理：旧任务迟到完成时 ownerID 不匹配，绝不会清掉新任务。
+    private static func dismissInflight(version: String, ownerID: UUID) {
+        inflightLock.lock()
+        defer { inflightLock.unlock() }
+        guard inflight[version]?.id == ownerID else { return }
+        inflight[version] = nil
+    }
 
     // MARK: - 网络检测
 
@@ -423,6 +494,10 @@ public enum LoaderSupportChecker {
                 case .failed:
                     states[name] = .unavailable
                     // 不写缓存：下次只重查该未定论项
+                }
+                // 真流式：TaskGroup 每完成一个加载器就立即广播，不等其余端点结束。
+                if let state = states[name] {
+                    publishInflight(version: version, loader: name, state: state)
                 }
             }
         }
@@ -481,12 +556,11 @@ public enum LoaderSupportChecker {
                 guard !Task.isCancelled else { return .failed }
                 return await requestOnce(url: urls[1].0, authoritativeEmpty: urls[1].1, key: key, version: version)
             }
-            var sawFailed = false
             for await result in group {
                 switch result {
                 case .supported: return .supported
                 case .notSupported: return .notSupported
-                case .failed: sawFailed = true
+                case .failed: break
                 }
             }
             return .failed
@@ -502,7 +576,9 @@ public enum LoaderSupportChecker {
         do {
             let (data, resp) = try await metaSession.data(for: req)
             if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-                if (400...499).contains(http.statusCode), authoritativeEmpty {
+                // 仅 404/410 = 权威「不存在」；401/403/408/429 等均是鉴权、超时或限流，
+                // 必须视为 unavailable，绝不能缓存成「不支持」。
+                if (http.statusCode == 404 || http.statusCode == 410), authoritativeEmpty {
                     return isSnapshotVersion(version) ? .failed : .notSupported
                 }
                 return .failed

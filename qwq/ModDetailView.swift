@@ -303,9 +303,11 @@ struct ModDetailView: View {
         }
         loaderStates = initial
         applyLoaderStates(initial, version: version)
-        // 3. 全部定论（无 missing）→ 直接结束，绝不联网
+        // 3. 无论当前版本是否命中缓存，都预加载相邻版本；缓存全命中正是后台预取的最佳时机。
+        prefetchNearbyLoaders(for: requested)
+        // 4. 全部定论（无 missing）→ 直接结束，绝不联网当前版本
         if LoaderSupportChecker.isFullyResolved(initial, for: version) { return }
-        // 4. 流式联网：每个加载器检测完成立即逐项写 UI（完成一个显示一个）；
+        // 5. 流式联网：每个加载器检测完成立即逐项写 UI（完成一个显示一个）；
         //    写回前做归属校验（任务未取消且版本未切换），迟到的旧结果一律丢弃
         loaderSupportTask = Task {
             let stream = LoaderSupportChecker.streamLoaderStates(for: requested)
@@ -319,8 +321,6 @@ struct ModDetailView: View {
                 }
             }
         }
-        // 5. 预加载：顺带静默预取相邻版本（切版本最常看相邻；in-flight 合并保证不重复联网）
-        prefetchNearbyLoaders(for: requested)
     }
 
     /// 预取当前版本相邻的加载器状态（仅 1 个候选；详情页打开 / 切换版本时调用）
