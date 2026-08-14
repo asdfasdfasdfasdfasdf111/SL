@@ -50,12 +50,16 @@ public class DownloadSourceManager: DownloadSource {
     /// 取「主源 URL + 备用源 URL」去重数组，供单文件多源下载（PCLNetFile.urls 顺序失败切换）。
     /// 单文件（json/index/jar）旧实现只有 1 个 URL → 失败即无源可用；现在两个源都进数组，
     /// NetManager 按顺序自动切换，任一个成功即完成。
+    /// 仅「自动切换（both）」模式追加互补源；用户手动限定单源（仅官方/仅镜像）时只返回该源的 URL，
+    /// 不做悄悄跨源兜底——否则「仅官方」也会请求镜像站域名，破坏设置语义。
     public func downloadURLs(_ provider: (DownloadSource) -> URL?) -> [URL] {
         let primary = getDownloadSource()
         var urls: [URL] = []
         if let u = provider(primary) { urls.append(u) }
-        let backup = alternateSource(of: primary)
-        if let u = provider(backup), !urls.contains(u) { urls.append(u) }
+        if AppSettings.shared.fileDownloadSource == .both {
+            let backup = alternateSource(of: primary)
+            if let u = provider(backup), !urls.contains(u) { urls.append(u) }
+        }
         return urls
     }
     

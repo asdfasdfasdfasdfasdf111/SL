@@ -169,9 +169,9 @@ public class ModDownloader {
     /// - L2：去掉 game_versions 过滤 → 本地按「精确版本 + loader」筛选
     ///       （应对 API 索引版本号与用户所选版本号细微差异：如 API 只登记 1.20，用户选了 1.20.1）
     /// - L3：本地按「主版本前缀」匹配（1.20 ↔ 1.20.x，快照/预览版同前缀也算）
-    /// - L4：放弃 loader 过滤按主版本前缀匹配（加载器交给用户自行判断）
-    /// - L5：完全放弃过滤取最新版本（尽力而为，避免永远下载失败）
     /// 全部失败才抛 ModError.noCompatibleVersion。
+    /// 注意：不再继续放宽到「放弃 loader」「取最新」——那会把实际不兼容的文件
+    /// （错误加载器 / 错误游戏版本）下载进游戏目录，破坏安装，宁可明确报错。
     public func resolveLatestVersion(modId: String, gameVersion: String, loader: ModLoader? = nil) async throws -> ModrinthVersion {
         // L1：API 精确过滤（返回结果本身就是精确匹配的，bestMatch 只是取最新的一个）
         if let loader {
@@ -186,12 +186,11 @@ public class ModDownloader {
         let all = try await getVersions(modId: modId)
         // L2 精确版本（带 loader）
         if let match = Self.bestMatch(all, gameVersion: gameVersion, loader: loader) { return match }
-        // L3 主版本前缀（带 loader）
+        // L3 主版本前缀（带 loader）：PCL2 语义——1.20 声明兼容 1.20.x 不算不兼容
+        // （例：Fabric API 的 1.20 版本通常声明兼容整个 1.20.x 系列）
         if let match = Self.bestMatch(all, gameVersion: gameVersion, loader: loader, prefixMatch: true) { return match }
-        // L4 主版本前缀（不带 loader）
-        if let match = Self.bestMatch(all, gameVersion: gameVersion, loader: nil, prefixMatch: true) { return match }
-        // L5 最新
-        if let first = all.first { return first }
+        // 不再放宽（历史 L4/L5）：放弃 loader / 取最新会下载实际不兼容的文件，
+        // 错误加载器（如 Forge 装的 fabric 版）或错误游戏版本（如 1.18 用 1.20 的 mod）直接进目录
         throw ModError.noCompatibleVersion
     }
 
