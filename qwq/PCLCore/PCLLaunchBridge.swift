@@ -240,6 +240,18 @@ private func pclLaunchInternal(
 
     let logURL = launcher.logURL
 
+    // 窗口出现（正常路径）与退出兜底（exitCode==0）都会触发 launchSuccess，
+    // 用一次性门控保证 UI 复位逻辑只执行一次。
+    let successGate = NSLock()
+    var successFired = false
+    let reportLaunchSuccess = {
+        successGate.lock()
+        let shouldFire = !successFired
+        successFired = true
+        successGate.unlock()
+        if shouldFire { launchSuccess() }
+    }
+
     // 后台监听日志文件，新行回传给 UI
     // 增量读取：FileHandle 维护读偏移，只读新增字节（原实现每 150ms 全量 Data(contentsOf:) 重读整个文件）
     // 无新数据时休眠 400ms；UTF-8 字符跨 chunk 截断通过「仅按 \n 边界切行 + 缓冲尾部」保证完整
@@ -275,7 +287,7 @@ private func pclLaunchInternal(
                     for info in windowInfoList {
                         if let windowPID = info["kCGWindowOwnerPID"] as? Int32,
                            windowPID == process.processIdentifier {
-                            launchSuccess()
+                            reportLaunchSuccess()
                             fired = true
                             break
                         }
@@ -291,8 +303,8 @@ private func pclLaunchInternal(
         launcher.launch(options) { exitCode in
             logTask.cancel()
             windowTask.cancel()
-            // launchSuccess 已由窗口检测任务触发；此处兜底
-            if exitCode == 0 { launchSuccess() }
+            // 窗口检测任务已触发则为幂等跳过；此处兜底保证正常退出也能复位 UI
+            if exitCode == 0 { reportLaunchSuccess() }
             completion(launcher, .success(exitCode))
         }
     }

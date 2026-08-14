@@ -10,6 +10,19 @@ import Cocoa
 import Combine
 import SwiftyJSON
 
+private final class LaunchCompletionGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didComplete = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !didComplete else { return false }
+        didComplete = true
+        return true
+    }
+}
+
 public class MinecraftLauncher {
     public let instance: MinecraftInstance
     private let id = UUID()
@@ -45,16 +58,25 @@ public class MinecraftLauncher {
         
         instance.process = process
         self.currentProcess = process
-        // terminationSemaphore 提到 do 外：catch 路径也需 signal，避免 launch() 永久阻塞
+        // 正常 terminationHandler、轮询兜底和 run() 抛错共享一次性门控，避免重复复位 UI。
         let terminationSemaphore = DispatchSemaphore(value: 0)
+        let completionGate = LaunchCompletionGate()
+        let reportCompletion: (Int32) -> Void = { status in
+            guard completionGate.claim() else { return }
+            DispatchQueue.main.async { callback(status) }
+        }
         do {
             let pipe = Pipe()
             process.standardOutput = pipe
             process.standardError = pipe
 
             let logHandle = try FileHandle(forWritingTo: logURL)
+            // 管道字节可能含非法 UTF-8（Java/模组输出非 UTF-8 编码时不崩溃）；解码失败行丢弃。
             pipe.fileHandleForReading.readabilityHandler = { handle in
-                for line in String(data: handle.availableData, encoding: .utf8)!.split(separator: "\n") {
+                let data = handle.availableData
+                guard !data.isEmpty else { return }
+                let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+                for line in text.split(separator: "\n") {
                     raw(line.replacing("\t", with: "    "))
                     try? logHandle.write(contentsOf: (line + "\n").data(using: .utf8)!)
                     logHandle.seekToEndOfFile()
@@ -63,12 +85,11 @@ public class MinecraftLauncher {
 
             // terminationHandler 在 run() 之前设置（消除竞态）：若进程启动后立刻退出
             // （秒退/崩溃/手动关闭恰好在 run 之后），后置的 handler 可能永远不触发，
-            // 导致启动器识别不到「游戏已关闭」。前置设置保证任何退出都能回调。
+            // 导致启动器识别不到「游戏已关闭」。前置设置保证任何退出都能回调；
+            // 回调经一次性门控（与下方轮询兜底互斥），只落一次到 UI。
             process.terminationHandler = { proc in
-                DispatchQueue.main.async {
-                    callback(proc.terminationStatus)
-                }
                 terminationSemaphore.signal()
+                reportCompletion(proc.terminationStatus)
             }
 
             try process.run()
@@ -96,7 +117,7 @@ public class MinecraftLauncher {
             while terminationSemaphore.wait(timeout: .now() + 1) == .timedOut {
                 if !process.isRunning {
                     log("兜底检测到进程已退出（terminationHandler 未触发）")
-                    DispatchQueue.main.async { callback(process.terminationStatus) }
+                    reportCompletion(process.terminationStatus)
                     break
                 }
             }
@@ -108,7 +129,11 @@ public class MinecraftLauncher {
             instance.process = nil
         } catch {
             err(error.localizedDescription)
-            terminationSemaphore.signal()  // 异常路径也要 signal，防止 launch() 永久阻塞
+            // 启动失败也走一次性门控回调（exitCode 非 0），UI 才能复位「启动中」状态；
+            // terminationHandler 在 run() 前已设置，若 run 抛错则其绝不会触发。
+            instance.process = nil
+            self.currentProcess = nil
+            reportCompletion(Int32(1))
         }
     }
     

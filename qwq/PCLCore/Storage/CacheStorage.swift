@@ -96,18 +96,19 @@ public class CacheStorage {
             return
         }
         let dest = getLibraryPath(hash)
-        if FileManager.default.fileExists(atPath: dest.path) { return }
-        
-        do {
-            try? FileManager.default.createDirectory(at: dest.parent(), withIntermediateDirectories: true)
-            try FileManager.default.copyItem(at: path, to: dest)
-            save()
-        } catch {
-            err("无法复制文件: \(error.localizedDescription)")
-            return
+        let destExists = FileManager.default.fileExists(atPath: dest.path)
+        if !destExists {
+            do {
+                try? FileManager.default.createDirectory(at: dest.parent(), withIntermediateDirectories: true)
+                try FileManager.default.copyItem(at: path, to: dest)
+            } catch {
+                err("无法复制文件: \(error.localizedDescription)")
+                return
+            }
         }
-        
+
         libraries.append(.init(name: name, hash: hash, type: "jar"))
+        save()  // 必须先 append 再 save，否则磁盘索引缺少本次条目，重启后索引查询不到该库
     }
     
     private struct Library: Codable {

@@ -391,6 +391,11 @@ public actor NetManager {
 
     private func tickerStopped() {
         tickTask = nil
+        // ticker 判断无任务到真正清空引用之间，可能有新下载入队；此时入队方看到旧
+        // tickTask 尚在会跳过启动。清空后在 actor 内原子重检，避免新任务永久停在 waiting。
+        if hasActiveWork() {
+            startTickerIfNeeded()
+        }
     }
 
     private func hasActiveWork() -> Bool {
