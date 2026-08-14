@@ -128,7 +128,13 @@ public enum LoaderSupportChecker {
         // 联网并发检测：区分「明确不支持」与「网络失败（结果未知）」
         let (detected, hasUnknown) = await detectLoaders(for: version)
         if !detected.isEmpty {
-            // 检测到加载器：写入内存 + 磁盘缓存
+            if hasUnknown {
+                // 部分加载器已定论 + 部分结果未知（网络故障）：只临时返回已确认列表，绝不写缓存——
+                // 否则残缺列表会被缓存 7 天，超时的那几个加载器在 UI 上「永久消失」。
+                // 不写缓存 = 下次进入详情页重新检测，代价仅是少数版本多一次联网。
+                return .supported(detected)
+            }
+            // 全部加载器均已定论：写入内存 + 磁盘缓存
             writeCache(version: version, loaders: detected)
             return .supported(detected)
         }
@@ -252,7 +258,9 @@ public enum LoaderSupportChecker {
         var urls: [URL] = []
         switch key {
         case "fabric":
-            // 官方 Fabric Meta 优先，BMCLAPI 镜像兜底（检测与下载解析统一双源，避免「列表显示支持、下载解析失败」）
+            // 官方 Fabric Meta 优先：4xx/空数组 = 官方权威结论（该版本无此加载器），直接返回；
+            // 仅当官方网络失败（超时/5xx）才切 BMCLAPI 镜像兜底——与 LoaderVersionResolver 下载解析
+            // 的双源语义一致（避免「列表显示支持、下载解析失败」），避免镜像 404 误伤定论
             urls = [
                 URL(string: "https://meta.fabricmc.net/v2/versions/loader/\(encoded)"),
                 URL(string: "https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader/\(encoded)")

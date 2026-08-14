@@ -302,6 +302,9 @@ struct ModDetailView: View {
         loaderSupportTask?.cancel()
         loaderError = nil
         isLoadingLoaders = true
+        // 立即清空上一版本的加载器列表：加载中/失败时底部下载按钮的 loaderSupported 判定
+        // 不会误用旧版本数据（否则可能把旧版本支持的加载器错误装到新版本上）
+        availableLoaders = []
         let requested = version
         loaderSupportTask = Task {
             let result = await LoaderSupportChecker.supportedLoaders(for: requested)
@@ -315,7 +318,8 @@ struct ModDetailView: View {
                     loaderError = nil
                     applyLoaders([])   // API 明确 404/410/空数组 → “该版本暂无可用的加载器”
                 case .unavailable:
-                    isLoadingLoaders = false
+                    // 统一走 applyLoaders 清空旧列表并停止 loading，只展示错误态
+                    applyLoaders([])
                     loaderError = "加载器信息暂时无法获取，请点击重试"
                 }
             }
