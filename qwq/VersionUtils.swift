@@ -118,9 +118,19 @@ struct MinecraftVersionManager {
     }
 
     static func findGameRootDirectories() -> [String] {
-        if let cached = UserDefaults.standard.stringArray(forKey: cacheKey) {
+        let cache = AppContext.shared.cacheManager
+        // 统一缓存（内存 LRU + 磁盘，避免 UserDefaults 膨胀）；迁移期回退 UserDefaults 旧缓存一次后即清除
+        if let cached = cache.object([String].self, forKey: cacheKey) {
             let valid = cached.filter { FileManager.default.fileExists(atPath: $0 + "/versions") }
             if !valid.isEmpty { return valid }
+            cache.removeObject(forKey: cacheKey)
+        } else if let legacy = UserDefaults.standard.stringArray(forKey: cacheKey) {
+            let valid = legacy.filter { FileManager.default.fileExists(atPath: $0 + "/versions") }
+            if !valid.isEmpty {
+                cache.setObject(valid, forKey: cacheKey)
+                UserDefaults.standard.removeObject(forKey: cacheKey)
+                return valid
+            }
         }
         let home = NSHomeDirectory()
         let candidatePaths = [
@@ -145,7 +155,7 @@ struct MinecraftVersionManager {
                 }
             }
         }
-        UserDefaults.standard.set(roots, forKey: cacheKey)
+        cache.setObject(roots, forKey: cacheKey)
         return roots
     }
     

@@ -2,6 +2,10 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## Beta 0.1.9 版本发布 🚀（2026-08-14）
+
+优化缓存统一（缓存治理第一步）：游戏根目录列表缓存由 UserDefaults.stringArray 迁入统一 CacheManager（内存 LRU 32MB + 磁盘按 key 分文件、两层散列目录），避免 UserDefaults 存大数组膨胀；迁移期自动回退读取 UserDefaults 旧缓存一次后写入新缓存并清除旧值，老用户无感切换。读取链路（锁内查内存 → 锁外读盘 → 回写内存）与翻译/版本清单缓存同构，缓存命中不再触发 UserDefaults 全量 plist 编解码
+
 ## Beta 0.1.8 版本发布 🚀（2026-08-14）
 
 修复启动器打开时名称框自动聚焦并全选：`.defaultFocus(false)` 只约束 SwiftUI 的默认焦点，AppKit 仍会把窗口第一个可聚焦控件（用户名 TextField）自动置为 firstResponder，表现为打开即进入编辑态并全选。现启动页挂载一个 0×0 占位 NSView，在页面加入窗口、布局完成后再主动 `makeFirstResponder(nil)` 清空焦点（双次派发确保在 AppKit 自动聚焦完成后执行），用户主动点击或按 Tab 才聚焦
