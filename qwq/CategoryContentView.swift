@@ -24,8 +24,8 @@ struct CategoryContentView: View {
             let buttonWidth = cardWidth * 0.7
             let avatarSize = buttonWidth * 0.7
             let logCardHeight = geometry.size.height * 0.32
-            // 启动卡片按内容定高，避免 GeometryReader 把两个 Spacer 拉伸成整屏长矩形。
-            let cardHeight = min(410, max(380, geometry.size.height - 56))
+            // 卡片随内容区动态高度：上下各留 20pt 空隙，底部不贴边但始终延伸到底部附近。
+            let cardHeight = max(0, geometry.size.height - 40)
             launchContent(cardWidth: cardWidth, buttonWidth: buttonWidth, avatarSize: avatarSize, logCardHeight: logCardHeight, cardHeight: cardHeight)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
