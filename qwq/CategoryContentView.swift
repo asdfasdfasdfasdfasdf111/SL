@@ -24,7 +24,9 @@ struct CategoryContentView: View {
             let buttonWidth = cardWidth * 0.7
             let avatarSize = buttonWidth * 0.7
             let logCardHeight = geometry.size.height * 0.32
-            launchContent(cardWidth: cardWidth, buttonWidth: buttonWidth, avatarSize: avatarSize, logCardHeight: logCardHeight)
+            // 启动卡片按内容定高，避免 GeometryReader 把两个 Spacer 拉伸成整屏长矩形。
+            let cardHeight = min(410, max(380, geometry.size.height - 56))
+            launchContent(cardWidth: cardWidth, buttonWidth: buttonWidth, avatarSize: avatarSize, logCardHeight: logCardHeight, cardHeight: cardHeight)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
@@ -43,7 +45,7 @@ struct CategoryContentView: View {
         }
     }
 
-    private func launchContent(cardWidth: CGFloat, buttonWidth: CGFloat, avatarSize: CGFloat, logCardHeight: CGFloat) -> some View {
+    private func launchContent(cardWidth: CGFloat, buttonWidth: CGFloat, avatarSize: CGFloat, logCardHeight: CGFloat, cardHeight: CGFloat) -> some View {
         ZStack {
             // 透明点击层（最底层）：点击任意空白处让用户名输入框失焦（macOS 点击非焦点区不自动失焦）
             Color.clear
@@ -51,6 +53,7 @@ struct CategoryContentView: View {
                 .onTapGesture { isUsernameFocused = false }
             HStack(alignment: .top, spacing: 20) {
                 leftCard(cardWidth: cardWidth, avatarSize: avatarSize, buttonWidth: buttonWidth)
+                    .frame(height: cardHeight, alignment: .top)
                     .zIndex(1)
                 logPanel(logCardHeight: logCardHeight)
                 Spacer(minLength: 0)
