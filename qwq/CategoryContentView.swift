@@ -14,10 +14,9 @@ struct CategoryContentView: View {
     @State private var usernameFieldScale: CGFloat = 1.0
     @FocusState private var isUsernameFocused: Bool
     @State private var skinButtonScale: CGFloat = 1.0
-    // 头像首帧缓存：视图创建时同步预载持久化头像（avatarImageURL 默认即内置头像，永不为空），
-    // 首帧直接渲染，杜绝「先空白 0.x 秒再出现」；JAR/皮肤提取结果经 onChange 后台刷新
-    @State private var avatarImage: NSImage? = CategoryContentView.preloadedAvatar()
-    @State private var avatarLoadTask: Task<Void, Never>?
+    // 头像皮肤数据首帧缓存：视图创建时同步从本地（持久化皮肤 → UUID 皮肤磁盘缓存 → 内置 Steve）预载，
+    // 双层渲染（头+帽）拿到数据后立即裁剪显示，首帧不再空白等待 JAR 提取
+    @State private var avatarSkinData: Data? = CategoryContentView.preloadedSkinData()
 
     private var launchView: some View {
         GeometryReader { geometry in
@@ -101,19 +100,12 @@ struct CategoryContentView: View {
     }
 
     private func avatarView(avatarSize: CGFloat) -> some View {
-        // 头部显示尺寸与旧 SkinLayerView 一致（8 * 5.4 / 58 * avatarSize），避免换图后视觉变化
-        let headSize = 8 * 5.4 / 58 * avatarSize
-        return ZStack {
-            if let avatarImage {
-                Image(nsImage: avatarImage)
-                    .resizable()
-                    .interpolation(.none)
-                    .frame(width: headSize, height: headSize)
-            } else {
-                // 兜底占位（理论上不会出现：avatarImageURL 默认指向内置头像）
-                Circle()
-                    .fill(theme.accentColor.opacity(0.25))
-                    .frame(width: headSize, height: headSize)
+        ZStack {
+            // 双层渲染（还原：头 + 帽层叠加消除半透明），数据来自首帧预载缓存
+            if let data = avatarSkinData {
+                SkinLayerView(imageData: data, startX: 8, startY: 16, width: 8 * 5.4 / 58 * avatarSize, height: 8 * 5.4 / 58 * avatarSize)
+                    .shadow(color: Color.black.opacity(0.2), radius: 1)
+                SkinLayerView(imageData: data, startX: 40, startY: 16, width: 7.99 * 6.1 / 58 * avatarSize, height: 7.99 * 6.1 / 58 * avatarSize)
             }
         }
         .frame(width: avatarSize, height: avatarSize)
@@ -123,44 +115,39 @@ struct CategoryContentView: View {
             // 延迟到渲染事务外：onAppear 同步写 @Published 会触发
             // "Modifying state during view update"（UAF 崩溃前兆）
             DispatchQueue.main.async {
-                // ① 后台补全头像（JAR 提取/皮肤缓存 → avatarImageURL 更新 → onChange 触发重载）
-                OfflineSkinService.loadAvatarFromGameOrBundle(isLaunching: sessionManager.isLaunching, settings: settings)
-                // ② 确保 skinImageURL 存在（启动进游戏时皮肤包方案需要）
+                // 确保 skinImageURL 存在（启动进游戏时皮肤包方案需要），完成后 onChange 刷新缓存
                 loadSkinImageIfNeeded()
             }
         }
-        .onChange(of: settings.avatarImageURL) { _ in
-            reloadAvatarImage()
-        }
         .onChange(of: settings.skinImageURL) { _ in
-            reloadAvatarImage()
+            refreshSkinData()
         }
     }
 
-    /// 后台加载头像并缓存到 @State（避免 body 内同步 Data(contentsOf:) 每次重绘都解图）
-    private func reloadAvatarImage() {
-        avatarLoadTask?.cancel()
-        let candidates = [settings.avatarImageURL, settings.skinImageURL].compactMap { $0 }
-        guard !candidates.isEmpty else { return }
-        avatarLoadTask = Task.detached(priority: .userInitiated) {
-            for url in candidates where FileManager.default.fileExists(atPath: url.path) {
-                if let image = NSImage(contentsOf: url) {
-                    await MainActor.run { self.avatarImage = image }
-                    return
-                }
+    /// 皮肤数据变更后刷新首帧缓存（后台读文件，避免主线程 IO）
+    private func refreshSkinData() {
+        guard let url = settings.skinImageURL, FileManager.default.fileExists(atPath: url.path) else { return }
+        Task.detached(priority: .userInitiated) {
+            if let data = try? Data(contentsOf: url) {
+                await MainActor.run { self.avatarSkinData = data }
             }
         }
     }
 
-    /// 视图创建时同步预载头像：优先持久化头像 → 皮肤原图 → 内置头像（个位数毫秒级小图）
-    private static func preloadedAvatar() -> NSImage? {
+    /// 视图创建时同步预载皮肤数据：持久化皮肤原图 → 离线 UUID 皮肤磁盘缓存 → 内置 Steve。
+    /// 均为本地小文件（几 KB~几十 KB），个位数毫秒级，首帧双层裁剪立即有图
+    private static func preloadedSkinData() -> Data? {
         let settings = LauncherSettings.shared
-        let candidates = [settings.avatarImageURL, settings.skinImageURL].compactMap { $0 }
-        for url in candidates where FileManager.default.fileExists(atPath: url.path) {
-            if let image = NSImage(contentsOf: url) { return image }
+        if let url = settings.skinImageURL, FileManager.default.fileExists(atPath: url.path),
+           let data = try? Data(contentsOf: url) {
+            return data
+        }
+        let offlineUUID = settings.fixedOfflineUUID.components(separatedBy: "-").joined().lowercased()
+        if let data = MinecraftSkinManager.shared.getSkinData(forUUID: offlineUUID) {
+            return data
         }
         if let builtin = Bundle.main.url(forResource: "stf", withExtension: "png") {
-            return NSImage(contentsOf: builtin)
+            return try? Data(contentsOf: builtin)
         }
         return nil
     }
