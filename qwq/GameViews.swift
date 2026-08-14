@@ -26,6 +26,10 @@ struct DownloadCategoryView: View {
     @State private var contentOpacity: Double = 1
     @State private var contentOffset: CGFloat = 0
     @State private var fetchTask: Task<Void, Never>?
+    /// 请求归属令牌：每次 fetchItems 递增，迟到任务写回前校验 token 不一致即丢弃。
+    /// 仅靠 cancel()+isCancelled 存在竞态窗口（旧任务已通过 isCancelled 检查、新任务已启动），
+    /// 归属校验保证旧结果绝不覆盖新列表（崩溃 #4 教训的通用化）
+    @State private var fetchToken = 0
     // 卡片副标题翻译状态与调度已下沉到 CardTranslationModel（与详情页共享同一套
     // 「内存→磁盘→网络」按需翻译流程；视图销毁后 model 不再写回，UAF 防护）
     @StateObject private var translationModel = CardTranslationModel()
@@ -444,6 +448,8 @@ struct DownloadCategoryView: View {
 
     private func fetchItems() {
         fetchTask?.cancel()
+        fetchToken &+= 1
+        let token = fetchToken
 
         // 本地全量目录模式：mod/resourcepack/shader/modpack 直接加载全量（不翻译）
         // 仅当后台已解析完成时走本地目录，主线程绝不触碰磁盘/解压 12 万条目录
@@ -456,7 +462,10 @@ struct DownloadCategoryView: View {
                 fetchTask = Task {
                     let result = LocalModCatalog.items(for: selectedSection)
                     if Task.isCancelled { return }
+                    var shouldPrefetch = false
                     await MainActor.run {
+                        // 归属校验：期间已发起新请求（切换分类/刷新）则丢弃本次结果
+                        guard token == fetchToken else { return }
                         items = result
                         currentOffset = result.count
                         hasMore = false
@@ -464,8 +473,11 @@ struct DownloadCategoryView: View {
                         filteredResults = result
                         displayLimit = 120
                         searchPopInIds = []
+                        shouldPrefetch = true
                     }
-                    translationModel.prefetch(result, service: TranslationService.shared)
+                    if shouldPrefetch {
+                        translationModel.prefetch(result, service: TranslationService.shared)
+                    }
                 }
                 return
             }
@@ -518,13 +530,17 @@ struct DownloadCategoryView: View {
                 }
             }
             if Task.isCancelled { return }
+            var shouldPrefetch = false
             await MainActor.run {
+                // 归属校验：期间已发起新请求（切换分类/刷新）则丢弃本次结果
+                guard token == fetchToken else { return }
                 items = result
                 currentOffset = result.count
                 hasMore = totalHits > result.count
                 isLoading = false
+                shouldPrefetch = targetSection != .game
             }
-            if targetSection != .game {
+            if shouldPrefetch {
                 translationModel.prefetch(result, service: TranslationService.shared)
             }
         }
