@@ -72,11 +72,17 @@ public class MinecraftLauncher {
 
             let logHandle = try FileHandle(forWritingTo: logURL)
             // 管道字节可能含非法 UTF-8（Java/模组输出非 UTF-8 编码时不崩溃）；解码失败行丢弃。
+            // readabilityHandler 在 FileHandle 专用串行队列回调，缓冲区无需加锁；
+            // 跨回调保留尾部字节，避免多字节 UTF-8 字符/长日志行被 availableData 边界截断产生乱码或拆行。
+            var logBuffer = Data()
             pipe.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
                 guard !data.isEmpty else { return }
-                let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
-                for line in text.split(separator: "\n") {
+                logBuffer.append(data)
+                while let nl = logBuffer.firstIndex(of: 0x0A) {
+                    let lineData = logBuffer.prefix(upTo: nl)
+                    logBuffer.removeSubrange(0...nl)
+                    guard let line = String(data: lineData, encoding: .utf8) else { continue }
                     raw(line.replacing("\t", with: "    "))
                     try? logHandle.write(contentsOf: (line + "\n").data(using: .utf8)!)
                     logHandle.seekToEndOfFile()
@@ -126,13 +132,21 @@ public class MinecraftLauncher {
                 debug("检测到退出代码为 0，已删除日志")
                 try? FileManager.default.removeItem(at: self.logURL)
             }
-            instance.process = nil
+            // 归属校验：回调已异步提交主队列，旧 launch 线程可能晚于「回调内快速重启新游戏」执行到这里，
+            // 无条件置 nil 会清掉新启动进程的引用。仅当引用仍是本进程时才清理（崩溃 #4 教训）。
+            if instance.process === process {
+                instance.process = nil
+            }
         } catch {
             err(error.localizedDescription)
             // 启动失败也走一次性门控回调（exitCode 非 0），UI 才能复位「启动中」状态；
             // terminationHandler 在 run() 前已设置，若 run 抛错则其绝不会触发。
-            instance.process = nil
-            self.currentProcess = nil
+            if instance.process === process {
+                instance.process = nil
+            }
+            if self.currentProcess === process {
+                self.currentProcess = nil
+            }
             reportCompletion(Int32(1))
         }
     }
