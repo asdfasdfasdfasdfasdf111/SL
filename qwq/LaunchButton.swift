@@ -68,7 +68,7 @@ struct LaunchButton: View {
                             .frame(width: buttonWidth, height: 50, alignment: .center)
                     }
                     if launchPhase == .downloading {
-                        Text("Java 下载中")
+                        Text("正在检查游戏完整性")
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(.primary)
                             .frame(width: buttonWidth, height: 50, alignment: .center)
