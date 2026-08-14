@@ -9,10 +9,9 @@ struct ContentView: View {
     private let categories = Category.all
     private var selectedIndex: Int { categories.firstIndex(of: selectedCategory) ?? 0 }
 
-    // 画布切换动画起点：切换瞬间仍完整渲染旧分类页（见 categoryCanvas），
-    // spring 动画播放结束后再释放为占位页（见 onChange 的延时清理）
-    @State private var animatingFromIndex: Int? = nil
-    @State private var previousIndex: Int = 0
+    // 旧版导航切换动画：所有分类页横向完整排布，dragOffset 提供拖拽实时跟手，
+    // 点击分类与拖拽结束统一使用旧版 spring 参数平滑滑动。
+    @State private var dragOffset: CGFloat = 0
 
     @State private var showModInstallSheet = false
     @State private var showModpackInstallSheet = false
@@ -119,15 +118,6 @@ struct ContentView: View {
             if downloadDetail.isPresented {
                 downloadDetail.toggle()
             }
-            // 记录画布动画起点分类：切换瞬间旧分类页仍完整渲染滑出（而不是「内容闪没 + 占位掠过」），
-            // spring(response: 0.55, dampingFraction: 0.72) 视觉完成约 0.9s，之后释放为占位页。
-            // 延时清理带归属校验：动画中途再次切换时，旧计时器不得清掉新起点。
-            animatingFromIndex = previousIndex
-            previousIndex = selectedIndex
-            let captured = previousIndex
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
-                if animatingFromIndex == captured { animatingFromIndex = nil }
-            }
         }
         .alert("启动失败", isPresented: $settings.showLaunchAlert, presenting: settings.launchErrorMessage) { _ in
             Button("确定") { settings.launchErrorMessage = nil }
@@ -198,35 +188,27 @@ struct ContentView: View {
                         }
                     }
                     .clipped()
-                    .animation(.spring(response: 0.55, dampingFraction: 0.72, blendDuration: 0.12), value: selectedIndex)
                 }
                 .background(BlurView(material: .fullScreenUI, blendingMode: .behindWindow))
             }
         }
     }
-    /// 分类画布：所有分类页横向排布，offset 平移实现「1→5 经过中间页」的整页滑动动画。
-    /// 完整视图只实例化当前选中页 + 动画起点页（.id 强制重建）；其他位置渲染轻量占位
-    /// （图标+名称），动画经过时只看到占位掠过，绝不触发其他页面的数据加载/视图体构建。
-    /// 起点页在动画结束后由 onChange 的延时清理释放为占位——避免旧实现
-    /// 「selectedIndex 一变化旧页立即变占位 → 内容闪没 + 空占位滑出」的视觉跳变。
+    /// 旧版分类画布：所有分类页完整横向排布，点击导航或拖拽时整页连续滑动；
+    /// 从第 1 项跳到第 5 项会真实经过中间页面，拖拽中内容实时跟手。
     private func categoryCanvas(width: CGFloat) -> some View {
         HStack(spacing: 0) {
-            ForEach(Array(categories.enumerated()), id: \.element.id) { index, category in
-                Group {
-                    if index == selectedIndex || index == animatingFromIndex {
-                        CategoryContentView(category: category, searchText: searchText)
-                            .id(category.id)
-                    } else {
-                        CategoryCanvasPlaceholder(category: category)
-                    }
-                }
-                .frame(width: width)
-                .clipped()
+            ForEach(categories) { category in
+                CategoryContentView(category: category, searchText: searchText)
+                    .frame(width: width)
             }
         }
-        .offset(x: -CGFloat(selectedIndex) * width)
+        .offset(x: -CGFloat(selectedIndex) * width + dragOffset)
+        .animation(.spring(response: 0.6, dampingFraction: 0.65, blendDuration: 0.15), value: selectedIndex)
         .gesture(
             DragGesture()
+                .onChanged { value in
+                    dragOffset = value.translation.width
+                }
                 .onEnded { value in
                     let threshold = width * 0.25
                     var newIndex = selectedIndex
@@ -235,7 +217,10 @@ struct ContentView: View {
                     } else if value.translation.width > threshold && selectedIndex > 0 {
                         newIndex = selectedIndex - 1
                     }
-                    if newIndex != selectedIndex { selectedCategory = categories[newIndex] }
+                    withAnimation(.spring(response: 0.6, dampingFraction: 0.65, blendDuration: 0.15)) {
+                        selectedCategory = categories[newIndex]
+                        dragOffset = 0
+                    }
                 }
         )
     }
