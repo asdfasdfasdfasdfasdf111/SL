@@ -25,7 +25,7 @@ public class DownloadSourceManager: DownloadSource {
         }
         return true
     }
-    
+
     // MARK: 源状态（NSLock 保护：getDownloadSource 在任意线程读、testSpeed 在后台 Task 写，
     // 旧实现无保护 → 数据竞争；下载项构造时也不再能看到「写一半」的中间态）
     private let sourceLock = NSLock()
