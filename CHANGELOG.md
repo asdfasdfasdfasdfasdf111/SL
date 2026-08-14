@@ -2,6 +2,8 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+优化将 build_audit/（303MB ASan 审计构建产物目录）加入 .gitignore 忽略，与 build_asan/、build_asan2/、build_asan3/ 等同系列构建目录统一不再入库
+
 修复游戏进程退出回调竞态（GPT 交叉复核采纳）：完成回调虽经一次性门控只落一次 UI，但不保证「回调先于进程引用清理」——回调内快速重启游戏时，旧 launch 线程晚到执行 `instance.process = nil` 会清掉新启动进程的引用；现正常退出与启动失败两条清理路径均做进程身份归属校验（`instance.process === process` / `currentProcess === process` 才置 nil），沿用崩溃 #4 归属保护规则
 优化游戏日志管道解码：readabilityHandler 的 availableData 边界不是 UTF-8 字符/日志行边界，逐块解码会让多字节中文/emoji 跨块变乱码、长行被拆成两行；改为跨回调保留尾部字节的缓冲区，仅在遇到换行符才解码整行（与 PCLLaunchBridge 增量日志读取同款方案），非法 UTF-8 行丢弃、不再产生替换乱码
 
