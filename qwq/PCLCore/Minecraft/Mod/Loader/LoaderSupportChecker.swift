@@ -209,6 +209,9 @@ public enum LoaderSupportChecker {
                 cfg.timeoutIntervalForRequest = 30
                 cfg.timeoutIntervalForResource = 45
                 cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+                // 检测目标均为 bmclapi2 / quilt 官方 meta（国内直连可达）：
+                // 空字典禁系统代理，避免代理出口 TLS 转发失败误判「加载器不支持」（与 Requests.swift 统一直连会话一致）
+                cfg.connectionProxyDictionary = [:]
                 let session = URLSession(configuration: cfg)
                 do {
                     let (data, resp) = try await session.data(for: req)

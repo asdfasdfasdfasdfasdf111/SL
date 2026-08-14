@@ -8,9 +8,12 @@ final class AppContext {
 
     // MARK: - 共享网络层
 
-    /// 通用下载（30s 请求超时，10min 资源超时，8 并发）
+    /// 通用下载（30s 请求超时，10min 资源超时，8 并发）。
+    /// 禁用系统代理直连：下载目标为微软 JDK / Azul CDN（国内直连可达），
+    /// 系统代理出口 TLS 转发失败会报 SecureConnectionFailed（与 Requests.swift 统一直连会话一致）
     let downloadSession: URLSession = {
         let c = URLSessionConfiguration.default
+        c.connectionProxyDictionary = [:]
         c.timeoutIntervalForRequest = 30
         c.timeoutIntervalForResource = 600
         c.httpMaximumConnectionsPerHost = 8

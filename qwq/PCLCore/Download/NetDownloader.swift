@@ -570,7 +570,10 @@ public actor NetManager {
         let failCount = await manager.sourceFailCount(fileID: fileID, sourceIndex: sourceIndex)
         request.timeoutInterval = min(30, 6 * Double(1 + failCount))
 
-        let (stream, response) = try await URLSession.shared.bytes(for: request)
+        // 统一直连会话（绕过系统代理）：系统代理对 bmclapi2 / mojang 的 TLS 转发失败时，
+        // URLSession 会报 SecureConnectionFailed（curl 直连正常），这里改用 URLSession.direct
+        // 直连，官方源被墙时由 pickSource 自动切镜像源。（详见 Requests.swift URLSession.direct）
+        let (stream, response) = try await URLSession.direct.bytes(for: request)
         guard let http = response as? HTTPURLResponse else {
             throw NetDownloadError.fileFailed("无效的响应")
         }
@@ -694,10 +697,34 @@ public actor NetManager {
         slice.state = .failed
         record.failCount += 1
         record.sourceFails[slice.sourceIndex, default: 0] += 1
+        // 连接层错误（SSL 握手失败 / 无法连接 / DNS / 连接中断）说明该源当前不可达，
+        // 同源重试只会浪费时间（实测 SecureConnectionFailed 每源重试 3 次共耗 45s），
+        // 直接把失败计数拉满，让 pickSource 立即跳过该源换下一个。
+        if Self.isConnectionLevelError(error) {
+            record.sourceFails[slice.sourceIndex] = config.maxFailPerSource
+            record.failReason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
         if record.isAllSourcesFailed(config.maxFailPerSource) {
             record.state = .failed
             record.failReason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             cleanupTemps(record)
+        }
+    }
+
+    /// 连接层错误判定：此类错误下同源重试无意义（PCL2 的源失败计数用于瞬时错误，这里单独提速）
+    private static func isConnectionLevelError(_ error: Error) -> Bool {
+        guard let urlError = error as? URLError else { return false }
+        switch urlError.code {
+        case .secureConnectionFailed,          // SSL/TLS 握手失败
+             .cannotConnectToHost,             // 无法连接主机
+             .cannotFindHost,                  // 主机名解析失败
+             .dnsLookupFailed,                 // DNS 失败
+             .networkConnectionLost,           // 连接中断
+             .notConnectedToInternet,          // 无网络
+             .timedOut:                        // 连接/请求超时
+            return true
+        default:
+            return false
         }
     }
 

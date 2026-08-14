@@ -21,7 +21,7 @@ enum JavaDownloader {
             return
         }
 
-        URLSession.shared.dataTask(with: url) { data, response, error in
+        URLSession.direct.dataTask(with: url) { data, response, error in
             if let error = error { completion(.failure(error)); return }
             guard let data = data else { completion(.failure(NSError(domain: "JavaManager", code: -2))); return }
 
@@ -35,7 +35,7 @@ enum JavaDownloader {
                 return
             }
 
-            let downloadTask = URLSession.shared.downloadTask(with: downloadURL) { tempURL, _, error in
+            let downloadTask = URLSession.direct.downloadTask(with: downloadURL) { tempURL, _, error in
                 if let error = error { completion(.failure(error)); return }
                 guard let tempURL = tempURL else { completion(.failure(NSError(domain: "JavaManager", code: -3))); return }
 
@@ -83,7 +83,7 @@ enum JavaDownloader {
             completion(.failure(NSError(domain: "JavaManager", code: -2)))
             return
         }
-        let downloadTask = URLSession.shared.downloadTask(with: url) { tempURL, _, error in
+        let downloadTask = URLSession.direct.downloadTask(with: url) { tempURL, _, error in
             if let error = error { completion(.failure(error)); return }
             guard let tempURL = tempURL else { completion(.failure(NSError(domain: "JavaManager", code: -3))); return }
             let targetDir = basePath.appendingPathComponent("jdk-\(version)")

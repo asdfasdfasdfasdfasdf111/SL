@@ -31,6 +31,8 @@ public struct Response {
     public let error: Error?
     
     public func getDataOrThrow() throws -> Data {
+        // 注意：不能写成 `guard let self.data else` —— SE-0345 简写仅支持简单标识符，
+        // 属性路径（self.data）会编译报错 "unwrap condition requires a valid identifier"
         guard let data = self.data else {
             throw self.error ?? NSError(domain: "data 为空", code: -1)
         }
@@ -41,6 +43,28 @@ public struct Response {
     public func getJSONOrThrow() throws -> JSON {
         return try JSON(data: getDataOrThrow())
     }
+}
+
+// MARK: - 统一直连会话
+
+extension URLSession {
+    /// 启动器统一直连会话（禁用系统/环境代理）：
+    /// macOS 的 URLSession 默认走系统代理（如 Clash 127.0.0.1:12002）。实测系统代理对
+    /// bmclapi2 / mojang 域名的 TLS 转发失败时，同一 URL 用 curl 直连正常，而 URLSession
+    /// 报 "An SSL error has occurred and a secure connection to the server cannot be made."
+    /// （NSURLErrorSecureConnectionFailed），且 NetManager 对同一源重试 3 次共耗时 45s 才失败。
+    /// 启动器所有下载目标（Mojang 官方 + BMCLAPI 镜像）都支持直连：官方被墙时自动切镜像
+    /// （downloadURLs 双源 / DownloadItem fallback），镜像直连国内可达——不依赖用户代理软件，
+    /// 代理出口故障不再导致下载 SSL 失败。
+    static let direct: URLSession = {
+        let c = URLSessionConfiguration.default
+        // 空字典 = 不使用任何代理（nil 才是「走系统默认代理」）
+        c.connectionProxyDictionary = [:]
+        c.timeoutIntervalForRequest = 30
+        c.timeoutIntervalForResource = 600
+        c.httpMaximumConnectionsPerHost = 8
+        return URLSession(configuration: c)
+    }()
 }
 
 public class Requests {
@@ -80,7 +104,7 @@ public class Requests {
                 }
             }
             
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.direct.data(for: request)
             if let response = response as? HTTPURLResponse, response.statusCode != 200 && !ignoredFailureStatusCodes.contains(response.statusCode) {
                 debug("\(url.absoluteString) 返回了 \(response.statusCode): \(String(data: data, encoding: .utf8) ?? "(empty)")")
             }

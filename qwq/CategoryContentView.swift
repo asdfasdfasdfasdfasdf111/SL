@@ -25,6 +25,10 @@ struct CategoryContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
+        // 关闭「窗口/页面首次出现时自动选中名称框」：macOS 上绑定了 .focused 的 TextField
+        // 是窗口中第一个可聚焦控件时，AppKit 会在成为 key window 时自动将其置为 firstResponder。
+        // 显式声明默认焦点为 false，让用户主动点击/按 Tab 才聚焦，而不是打开启动器就被选中。
+        .defaultFocus($isUsernameFocused, false)
         .onReceive(NotificationCenter.default.publisher(for: .closeGameSession)) { note in
             if let session = note.object as? GameSession {
                 LaunchCoordinator.closeSession(session, sessionManager: sessionManager)

@@ -115,6 +115,8 @@ struct VersionSelectionSection: View {
                             }
                         }
                     }
+                    // 水平方向预留放大动画空间（scaleEffect 1.08 放大时最左/最右卡片不被裁剪）
+                    .padding(.horizontal, 10)
                     .padding(.vertical, 10)
                 }
             }
