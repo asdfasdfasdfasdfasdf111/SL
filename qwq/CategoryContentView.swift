@@ -14,6 +14,10 @@ struct CategoryContentView: View {
     @State private var usernameFieldScale: CGFloat = 1.0
     @FocusState private var isUsernameFocused: Bool
     @State private var skinButtonScale: CGFloat = 1.0
+    // 头像首帧缓存：视图创建时同步预载持久化头像（avatarImageURL 默认即内置头像，永不为空），
+    // 首帧直接渲染，杜绝「先空白 0.x 秒再出现」；JAR/皮肤提取结果经 onChange 后台刷新
+    @State private var avatarImage: NSImage? = CategoryContentView.preloadedAvatar()
+    @State private var avatarLoadTask: Task<Void, Never>?
 
     private var launchView: some View {
         GeometryReader { geometry in
@@ -29,6 +33,10 @@ struct CategoryContentView: View {
         // 是窗口中第一个可聚焦控件时，AppKit 会在成为 key window 时自动将其置为 firstResponder。
         // 显式声明默认焦点为 false，让用户主动点击/按 Tab 才聚焦，而不是打开启动器就被选中。
         .defaultFocus($isUsernameFocused, false)
+        // ⚠️ .defaultFocus(false) 只约束 SwiftUI 默认焦点，AppKit 仍会把窗口首个 TextField
+        // 自动置为 firstResponder（表现为打开即聚焦/全选）。此处挂一个占位 NSView，
+        // 在页面加入窗口、布局完成后主动 makeFirstResponder(nil) 清掉焦点，仅启动生效
+        .background(FirstResponderReset())
         .onReceive(NotificationCenter.default.publisher(for: .closeGameSession)) { note in
             if let session = note.object as? GameSession {
                 LaunchCoordinator.closeSession(session, sessionManager: sessionManager)
@@ -93,12 +101,19 @@ struct CategoryContentView: View {
     }
 
     private func avatarView(avatarSize: CGFloat) -> some View {
-        ZStack {
-            if let skinURL = settings.skinImageURL,
-               let data = try? Data(contentsOf: skinURL) {
-                SkinLayerView(imageData: data, startX: 8, startY: 16, width: 8 * 5.4 / 58 * avatarSize, height: 8 * 5.4 / 58 * avatarSize)
-                    .shadow(color: Color.black.opacity(0.2), radius: 1)
-                SkinLayerView(imageData: data, startX: 40, startY: 16, width: 7.99 * 6.1 / 58 * avatarSize, height: 7.99 * 6.1 / 58 * avatarSize)
+        // 头部显示尺寸与旧 SkinLayerView 一致（8 * 5.4 / 58 * avatarSize），避免换图后视觉变化
+        let headSize = 8 * 5.4 / 58 * avatarSize
+        return ZStack {
+            if let avatarImage {
+                Image(nsImage: avatarImage)
+                    .resizable()
+                    .interpolation(.none)
+                    .frame(width: headSize, height: headSize)
+            } else {
+                // 兜底占位（理论上不会出现：avatarImageURL 默认指向内置头像）
+                Circle()
+                    .fill(theme.accentColor.opacity(0.25))
+                    .frame(width: headSize, height: headSize)
             }
         }
         .frame(width: avatarSize, height: avatarSize)
@@ -108,9 +123,46 @@ struct CategoryContentView: View {
             // 延迟到渲染事务外：onAppear 同步写 @Published 会触发
             // "Modifying state during view update"（UAF 崩溃前兆）
             DispatchQueue.main.async {
+                // ① 后台补全头像（JAR 提取/皮肤缓存 → avatarImageURL 更新 → onChange 触发重载）
+                OfflineSkinService.loadAvatarFromGameOrBundle(isLaunching: sessionManager.isLaunching, settings: settings)
+                // ② 确保 skinImageURL 存在（启动进游戏时皮肤包方案需要）
                 loadSkinImageIfNeeded()
             }
         }
+        .onChange(of: settings.avatarImageURL) { _ in
+            reloadAvatarImage()
+        }
+        .onChange(of: settings.skinImageURL) { _ in
+            reloadAvatarImage()
+        }
+    }
+
+    /// 后台加载头像并缓存到 @State（避免 body 内同步 Data(contentsOf:) 每次重绘都解图）
+    private func reloadAvatarImage() {
+        avatarLoadTask?.cancel()
+        let candidates = [settings.avatarImageURL, settings.skinImageURL].compactMap { $0 }
+        guard !candidates.isEmpty else { return }
+        avatarLoadTask = Task.detached(priority: .userInitiated) {
+            for url in candidates where FileManager.default.fileExists(atPath: url.path) {
+                if let image = NSImage(contentsOf: url) {
+                    await MainActor.run { self.avatarImage = image }
+                    return
+                }
+            }
+        }
+    }
+
+    /// 视图创建时同步预载头像：优先持久化头像 → 皮肤原图 → 内置头像（个位数毫秒级小图）
+    private static func preloadedAvatar() -> NSImage? {
+        let settings = LauncherSettings.shared
+        let candidates = [settings.avatarImageURL, settings.skinImageURL].compactMap { $0 }
+        for url in candidates where FileManager.default.fileExists(atPath: url.path) {
+            if let image = NSImage(contentsOf: url) { return image }
+        }
+        if let builtin = Bundle.main.url(forResource: "stf", withExtension: "png") {
+            return NSImage(contentsOf: builtin)
+        }
+        return nil
     }
 
     /// 确保 skinImageURL 存在，不存在则从缓存/JAR/内置皮肤加载
@@ -320,4 +372,20 @@ struct CategoryContentView: View {
     private func startLaunch() {
         LaunchCoordinator.start(settings: settings, sessionManager: sessionManager)
     }
+}
+
+/// 首次挂载时清空窗口 first responder（占用 0×0，不可见）：
+/// macOS 会把窗口第一个可聚焦控件（此处为用户名 TextField）自动置为 firstResponder，
+/// SwiftUI 的 .defaultFocus(false) 约束不住该行为。双次派发确保在 AppKit 完成自动聚焦后再清。
+private struct FirstResponderReset: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            DispatchQueue.main.async {
+                _ = view.window?.makeFirstResponder(nil)
+            }
+        }
+        return view
+    }
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
