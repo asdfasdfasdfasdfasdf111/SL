@@ -7,6 +7,8 @@
 修复启动器打开时名称框自动聚焦并全选：`.defaultFocus(false)` 只约束 SwiftUI 的默认焦点，AppKit 仍会把窗口第一个可聚焦控件（用户名 TextField）自动置为 firstResponder，表现为打开即进入编辑态并全选。现启动页挂载一个 0×0 占位 NSView，在页面加入窗口、布局完成后再主动 `makeFirstResponder(nil)` 清空焦点（双次派发确保在 AppKit 自动聚焦完成后执行），用户主动点击或按 Tab 才聚焦
 修复启动页头像延迟约 0.x 秒才出现：原实现在 SwiftUI body 内同步读 skinImageURL 且依赖 onAppear 异步加载两个图层裁剪，首帧头像为空、等 JAR 提取/磁盘写入完成才显示。现保留双层渲染（头 + 帽层叠加），但皮肤数据在视图创建时从本地预载（持久化皮肤原图 → 离线 UUID 皮肤磁盘缓存 → 内置 Steve，均为毫秒级小文件）供首帧直接裁剪显示；后续换版/JAR 提取结果经 onChange 后台刷新数据缓存，body 内不再每次重绘重复读盘
 修复头像改动引发的第二层（帽）图层丢失：初版方案改为直接展示预裁剪头像 avatarImageURL，但未选装自定义皮肤时该路径回退到内置 Steve 头部（无帽层），导致头像只剩头层；已回退为既有双层 SkinLayerView 渲染，仅预载数据提速
+修复启动首帧名称框仍被选中：上一版 FirstResponderReset 用双次派发清焦点，但执行时窗口可能尚未成为 key、AppKit 的自动聚焦在其之后才发生，表现为「先全选、约 1 秒内恢复」。现改为可接收焦点的占位 FocusSinkView 抢占窗口 initialFirstResponder，并监听 didBecomeKeyNotification 在窗口成为 key（AppKit 完成自动聚焦）后再抢一次，仅启动头 2 秒生效、不干扰后续手动聚焦
+修复启动首帧头像仍空白约 0.x 秒：皮肤数据虽已预载，但 SkinLayerView 内部仍在 onAppear 异步裁剪（首帧渲染 Color.clear 透明占位）。现改为在 init 同步裁剪 8×8 区域（毫秒级）作为 @State 初始值，body 直接渲染成品；双层视图按数据加 .id(data)，皮肤数据变更时强制重建重新裁剪，消除「先空白后出现」的闪烁
 
 ## Beta 0.1.7 版本发布 🚀（2026-08-14）
 

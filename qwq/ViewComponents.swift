@@ -20,7 +20,18 @@ struct SkinLayerView: View {
     let startY: CGFloat
     let width: CGFloat
     let height: CGFloat
+    /// 初始化时同步裁出的成品，首帧即有图，不再依赖 onAppear 异步裁剪（消除首帧空白闪烁）
     @State private var image: NSImage?
+
+    init(imageData: Data, startX: CGFloat, startY: CGFloat, width: CGFloat, height: CGFloat) {
+        self.imageData = imageData
+        self.startX = startX
+        self.startY = startY
+        self.width = width
+        self.height = height
+        // 同步裁剪：CIImage 裁 8×8 区域毫秒级，直接作为 @State 初始值
+        _image = State(initialValue: SkinLayerView.cropped(imageData: imageData, startX: startX, startY: startY))
+    }
 
     var body: some View {
         Group {
@@ -30,24 +41,21 @@ struct SkinLayerView: View {
                     .resizable()
                     .frame(width: width, height: height)
             } else {
+                // 数据无效时兜底透明，不阻塞布局
                 Color.clear
             }
         }
-        .onAppear {
-            // ⚠️ self.image 是 @State：onAppear 处于视图更新事务中，同步写会触发
-            // "Modifying state during view update"（UAF 前兆）。本组件正属皮肤头像裁剪链
-            // （0x26fffc2cb 崩溃地址内容为 ARGB 像素值），必须延迟到渲染事务外写
-            DispatchQueue.main.async {
-                if var ciImage = CIImage(data: imageData) {
-                    let yOffset: CGFloat = ciImage.extent.height == 32 ? 0 : 32
-                    ciImage = ciImage.cropped(to: CGRect(x: startX, y: startY + yOffset, width: 8, height: 8))
-                    let context = CIContext(options: nil)
-                    let extent = ciImage.extent
-                    guard let cgImage = context.createCGImage(ciImage, from: extent) else { return }
-                    self.image = NSImage(cgImage: cgImage, size: ciImage.extent.size)
-                }
-            }
-        }
+    }
+
+    /// 静态同步裁剪：yOffset 兼容 64 高（带帽层）与 32 高（旧版无帽）两种贴图
+    private static func cropped(imageData: Data, startX: CGFloat, startY: CGFloat) -> NSImage? {
+        guard var ciImage = CIImage(data: imageData) else { return nil }
+        let yOffset: CGFloat = ciImage.extent.height == 32 ? 0 : 32
+        ciImage = ciImage.cropped(to: CGRect(x: startX, y: startY + yOffset, width: 8, height: 8))
+        let context = CIContext(options: nil)
+        let extent = ciImage.extent
+        guard let cgImage = context.createCGImage(ciImage, from: extent) else { return nil }
+        return NSImage(cgImage: cgImage, size: extent.size)
     }
 }
 

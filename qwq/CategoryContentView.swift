@@ -101,11 +101,14 @@ struct CategoryContentView: View {
 
     private func avatarView(avatarSize: CGFloat) -> some View {
         ZStack {
-            // 双层渲染（还原：头 + 帽层叠加消除半透明），数据来自首帧预载缓存
+            // 双层渲染（还原：头 + 帽层叠加消除半透明），数据来自首帧预载缓存。
+            // .id(data)：@State 初始值仅在首次出现生效，皮肤数据变化时靠 id 变化强制重建并重新裁剪
             if let data = avatarSkinData {
                 SkinLayerView(imageData: data, startX: 8, startY: 16, width: 8 * 5.4 / 58 * avatarSize, height: 8 * 5.4 / 58 * avatarSize)
+                    .id(data)
                     .shadow(color: Color.black.opacity(0.2), radius: 1)
                 SkinLayerView(imageData: data, startX: 40, startY: 16, width: 7.99 * 6.1 / 58 * avatarSize, height: 7.99 * 6.1 / 58 * avatarSize)
+                    .id(data)
             }
         }
         .frame(width: avatarSize, height: avatarSize)
@@ -361,18 +364,53 @@ struct CategoryContentView: View {
     }
 }
 
-/// 首次挂载时清空窗口 first responder（占用 0×0，不可见）：
-/// macOS 会把窗口第一个可聚焦控件（此处为用户名 TextField）自动置为 firstResponder，
-/// SwiftUI 的 .defaultFocus(false) 约束不住该行为。双次派发确保在 AppKit 完成自动聚焦后再清。
+/// 占用首帧焦点（0×0 不可见）：可接收焦点的占位 NSView 抢占 initialFirstResponder，
+/// 并在窗口成为 key 时再次抢占，杜绝用户名输入框被 AppKit 自动置为 firstResponder（打开即全选）。
+/// 仅启动头 2 秒内抢（didBecomeKey 兜底），之后让用户正常 Tab/点击聚焦，不干扰输入。
 private struct FirstResponderReset: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
-        let view = NSView(frame: .zero)
-        DispatchQueue.main.async {
-            DispatchQueue.main.async {
-                _ = view.window?.makeFirstResponder(nil)
-            }
-        }
-        return view
+        FocusSinkView(frame: .zero)
     }
     func updateNSView(_ nsView: NSView, context: Context) {}
+}
+
+private final class FocusSinkView: NSView {
+    /// NSView 默认不可聚焦，覆写为 true 才能作为 first responder 候选抢占
+    override var acceptsFirstResponder: Bool { true }
+    /// 仅启动头 2 秒内允许抢占（didBecomeKey 可能多次触发，避免长期偷焦点）
+    private var guardUntil: Date?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard let window = window else { return }
+        guardUntil = Date().addingTimeInterval(2)
+        window.initialFirstResponder = self
+        // 立即抢一次 + 监听 becomeKey 兜底（窗口首次 key 时 AppKit 才做自动聚焦，此时未必已布局）
+        tryGrab(window)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(windowDidBecomeKey(_:)),
+            name: NSWindow.didBecomeKeyNotification, object: window
+        )
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if let window = window {
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didBecomeKeyNotification, object: window)
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    @objc private func windowDidBecomeKey(_ note: Notification) {
+        guard let window = note.object as? NSWindow else { return }
+        guard let until = guardUntil, Date() < until else { return }
+        // 延迟到 AppKit 完成自动聚焦之后再抢，保证压过 TextField 成为 firstResponder
+        tryGrab(window)
+    }
+
+    private func tryGrab(_ window: NSWindow) {
+        DispatchQueue.main.async {
+            window.initialFirstResponder = self
+            _ = window.makeFirstResponder(self)
+        }
+    }
 }
