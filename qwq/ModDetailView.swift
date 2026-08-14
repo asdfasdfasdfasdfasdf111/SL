@@ -196,7 +196,8 @@ struct ModDetailView: View {
                 .buttonStyle(.plain)
                 .scaleEffect(bounceScale)
                 .padding(.trailing, downloadDetail.showCircleButton ? 88 : 12)
-                .padding(.bottom, 12)
+                // 详情页底部有外层裁剪，12pt 会让按钮贴底并被圆角裁掉；上移到安全区内。
+                .padding(.bottom, 36)
                 .animation(.interpolatingSpring(stiffness: 170, damping: 14), value: downloadDetail.showCircleButton)
             }
         }
@@ -551,7 +552,8 @@ struct ModDetailView: View {
             }
             // 内容距左侧 28pt：仅内容（返回、标题、正文）右移，
             // 页面背景仍从左侧分类栏边界铺满渲染（间距由内容层 padding 提供）。
-            .padding(.leading, 28)
+            // 版本标题/返回箭头与下方加载器卡片统一内容起点，避免标题贴分类栏过左。
+            .padding(.leading, 56)
             .padding(.vertical, 8)
         }
         .padding(.bottom, 90)
