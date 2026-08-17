@@ -18,6 +18,9 @@ struct CategoryResultsGrid: View {
     @Binding var displayLimit: Int
     let onOpen: (DownloadedItem) -> Void
     let onRequestTranslation: (DownloadedItem) async -> Void
+    /// 触底回调：本地条目已全部展示（displayLimit ≥ results.count）且滚到最后一条时触发，
+    /// 由外部接网络分页 loadMore()。本地全量目录模式没有更多数据，回调内 guard hasMore 直接空转。
+    var onReachEnd: () -> Void = {}
 
     /// 滚动锚点：仅用于返回列表时恢复位置，无需触发视图重渲染，故不用 @State
     /// （快速滑动时每次 onAppear 写 @State 都会让整个列表 body 重算，是快速滑动卡顿的元凶之一）
@@ -56,6 +59,12 @@ struct CategoryResultsGrid: View {
                                     DispatchQueue.main.async {
                                         displayLimit = newLimit
                                     }
+                                }
+                            } else if let last = results.last, last.id == item.id {
+                                // 网络分页：已加载条目全部展示完仍滚到底 → 请求下一页
+                                //（loadMore 内部 hasMore/isLoadingMore 双守卫，重复触发安全）
+                                DispatchQueue.main.async {
+                                    onReachEnd()
                                 }
                             }
                         }

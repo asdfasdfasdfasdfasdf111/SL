@@ -383,7 +383,8 @@ struct DownloadCategoryView: View {
                 columns: columns,
                 displayLimit: $displayLimit,
                 onOpen: { openDetail($0) },
-                onRequestTranslation: { await translationModel.requestTranslation(for: $0, service: TranslationService.shared) }
+                onRequestTranslation: { await translationModel.requestTranslation(for: $0, service: TranslationService.shared) },
+                onReachEnd: { loadMore() }
             )
         }
     }
