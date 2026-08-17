@@ -95,23 +95,6 @@ struct JavaPickerView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(isRefreshing)
-                .onChange(of: isRefreshing) { newValue in
-                    // ⚠️ onChange 处于视图更新事务中，withAnimation 内同步写 @State 会触发
-                    // "Modifying state during view update"（UAF 前兆），延迟到渲染事务外
-                    DispatchQueue.main.async {
-                        if newValue {
-                            // 点击后持续旋转直到刷新完成（repeatForever 非线性平滑旋转）
-                            withAnimation(.linear(duration: 1.0).repeatForever(autoreverses: false)) {
-                                refreshRotation += 360
-                            }
-                        } else {
-                            // 刷新完成：平滑回正停止
-                            withAnimation(.easeOut(duration: 0.35)) {
-                                refreshRotation = 0
-                            }
-                        }
-                    }
-                }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -214,6 +197,11 @@ struct JavaPickerView: View {
     private func startRefresh() {
         guard !isRefreshing else { return }
         isRefreshing = true
+        // 恢复原始非线性旋转（bca7f9e 曾改为 linear 匀速）：ease-out 贝塞尔 720° 双圈，
+        // 转完即停在原朝向（720 mod 360 = 0），无需回正动画；结束时机由扫描 completion 驱动
+        withAnimation(Animation.timingCurve(0.25, 0.1, 0.25, 1.0, duration: 0.8)) {
+            refreshRotation += 720
+        }
         JavaManager.shared.refreshAvailableJavaList {
             self.isRefreshing = false
         }
