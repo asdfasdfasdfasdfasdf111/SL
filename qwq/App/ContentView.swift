@@ -129,11 +129,9 @@ struct ContentView: View {
                 window.titlebarAppearsTransparent = true
                 window.styleMask.insert(.fullSizeContentView)
                 window.minSize = NSSize(width: 800, height: 550)
-                var frame = window.frame
-                if frame.size.height > window.minSize.height {
-                    frame.size.height = window.minSize.height
-                    window.setFrame(frame, display: true, animate: true)
-                }
+                // 不在启动时用动画压缩窗口高度：动画期间 GeometryReader 拿到的是压缩前的
+                // 旧高度，左侧卡片按旧高度布局后底部溢出窗口可视区，启动按钮被裁掉。
+                // 窗口尺寸交给系统记忆，minSize 已兜底。
             }
             JavaManager.shared.preScanJavaAsync()
         }
