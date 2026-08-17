@@ -53,7 +53,7 @@ struct CategoryContentView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { isUsernameFocused = false }
             HStack(alignment: .top, spacing: 20) {
-                leftCard(cardWidth: cardWidth, avatarSize: avatarSize, buttonWidth: buttonWidth, cardHeight: cardHeight)
+                leftCard(cardWidth: cardWidth, avatarSize: avatarSize, buttonWidth: buttonWidth)
                     .frame(height: cardHeight, alignment: .top)
                     .zIndex(1)
                 logPanel(logCardHeight: logCardHeight)
@@ -68,7 +68,7 @@ struct CategoryContentView: View {
             )
         }
     }
-    private func leftCard(cardWidth: CGFloat, avatarSize: CGFloat, buttonWidth: CGFloat, cardHeight: CGFloat) -> some View {
+    private func leftCard(cardWidth: CGFloat, avatarSize: CGFloat, buttonWidth: CGFloat) -> some View {
         VStack(spacing: 16) {
             if !settings.selectedMinecraftVersion.isEmpty {
                 Text("当前版本: \(settings.selectedMinecraftVersion)")
@@ -80,12 +80,7 @@ struct CategoryContentView: View {
             avatarView(avatarSize: avatarSize)
             usernameField
             skinButton
-            // 给底部固定按钮留占位，避免卡片太矮时内容与按钮重叠
-            Color.clear.frame(height: 80)
-        }
-        .frame(width: cardWidth)
-        .background(RoundedRectangle(cornerRadius: 24).fill(.regularMaterial).shadow(radius: 12))
-        .overlay(alignment: .bottom) {
+            Spacer()
             LaunchButton(
                 buttonWidth: buttonWidth,
                 isLaunching: sessionManager.isLaunching,
@@ -103,9 +98,9 @@ struct CategoryContentView: View {
                     startLaunch()
                 }
             )
-            .padding(.bottom, 30)
         }
-        .frame(height: cardHeight, alignment: .top)
+        .frame(width: cardWidth)
+        .background(RoundedRectangle(cornerRadius: 24).fill(.regularMaterial).shadow(radius: 12))
     }
 
     private func avatarView(avatarSize: CGFloat) -> some View {
@@ -113,6 +108,8 @@ struct CategoryContentView: View {
             // 双层渲染（还原：头 + 帽层叠加消除半透明），数据来自首帧预载缓存。
             // .id(data)：@State 初始值仅在首次出现生效，皮肤数据变化时靠 id 变化强制重建并重新裁剪
             if let data = avatarSkinData {
+                // 头层：Minecraft 皮肤贴图 (8,8) 起始；帽层：(40,8) 起始。
+                // 新版皮肤可能头层透明、帽层含脸/头发，两层叠加与官方渲染一致。
                 SkinLayerView(imageData: data, startX: 8, startY: 8, width: 8 * 5.4 / 58 * avatarSize, height: 8 * 5.4 / 58 * avatarSize)
                     .id(data)
                     .shadow(color: Color.black.opacity(0.2), radius: 1)
