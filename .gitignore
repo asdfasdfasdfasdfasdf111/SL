@@ -6,15 +6,8 @@ xcuserdata/
 xcuserdatad/
 *.xcuserstate
 build/
-/build_asan/
-/build_asan2/
-/build_asan3/
-/build_audit/
-/build_scan/
-/build_fix_check/
-/build_verify/
-/build_canvas_anim/
-/build_fix3/
+# 本地各种临时构建目录（asan/审计/校验等）
+/build_*/
 *.o
 
 # 应用打包产物

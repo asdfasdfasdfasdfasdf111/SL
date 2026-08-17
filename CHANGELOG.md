@@ -2,6 +2,14 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 仓库规范整理（2026-08-17）
+
+- 新增 `README.md`（项目介绍、功能状态清单、构建说明、PCL2/PCLMac 致谢与引用说明）与 `LICENSE`（GPL-3.0），修复公开仓库无许可证即默认保留所有权利的问题
+- 修复 Bundle ID：`-23.qwq`（横杠开头，不合法）→ `io.github.asdfasdfasdfasdfasdf111.SL`（按 GitHub 用户名反向域名约定）
+- 源码目录重组：`qwq/` 下 88 个平铺的 Swift 文件按功能归入 `App/`、`Features/`（Launch / Game / Download / ModBrowser / Translation / Skin / Java / Settings）、`Services/`、`UI/`，与既有的 `PCLCore/`、`Models/` 结构统一；纯磁盘移动，未改动任何代码
+- 根目录清理：删除空的 `build_and_run.sh`；`crawl_modrinth.py`、`slice_merge.swift`、`test_catalog.swift` 移入 `scripts/`
+- `.gitignore`：本地构建目录合并为 `/build_*/` 通配
+
 ## Beta 0.1.10 版本发布 🚀（2026-08-14）
 
 新增全项目深度扫描校准（覆盖 40+ 文件：启动/下载/安装/资源/皮肤/Java/目录扫描全部核心模块；模式：外部数据强解包崩溃、无锁共享状态、任务归属）：客户端清单缺 assetIndex 字段（1.5.2 及以下旧版本无独立资源索引）不再强解包崩溃，改为置空 objects 跳过散列资源阶段；ArtifactVersionMapper 用第三方清单拼出的 URL 含空格等非法字符时回退保留原 path；LocalModCatalog 解压 bundle 目录资源为空 Data 时提前返回；Util.mavenCoordinate 解析/主类读取/目录替换、JavaVM 损坏 release 文件、CacheStorage 空 index.json、MinecraftInstance 配置与清单读取、VersionManifest 异常日期、ClientManifest 库坐标越界、DownloadSourceManager 测速节流 Date 数据竞争等全部回退兜底或加锁

@@ -471,4 +471,4 @@ public enum ClientBrand: String, Codable, Hashable {
     }
 }
 
-extension QualityOfService: Codable { }
+extension QualityOfService: @retroactive Codable { }

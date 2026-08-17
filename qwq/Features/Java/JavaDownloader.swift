@@ -29,7 +29,7 @@ enum JavaDownloader {
                   let pkg = json.first,
                   let downloadURLStr = pkg["download_url"] as? String,
                   let downloadURL = URL(string: downloadURLStr),
-                  let pkgName = pkg["name"] as? String else {
+                  pkg["name"] is String else {
                 // Azul API 失败，回退到 Microsoft JDK
                 downloadMicrosoftJDK(version: version, arch: currentArch, basePath: basePath, progressHandler: progressHandler, completion: completion)
                 return

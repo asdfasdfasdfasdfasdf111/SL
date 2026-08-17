@@ -35,7 +35,7 @@ enum OfflineSkinService {
                     let avatarDir = appSupport.appendingPathComponent("SL启动器/Avatars")
                     try FileManager.default.createDirectory(at: avatarDir, withIntermediateDirectories: true)
                     let avatarDestURL = avatarDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("png")
-                    if let pngData = avatarImage.pngData() {
+                    if avatarImage.pngData() != nil {
                         DispatchQueue.main.async {
                             settings.avatarImageURL = avatarDestURL
                             settings.skinImageURL = skinDestURL

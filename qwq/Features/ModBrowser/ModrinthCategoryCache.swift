@@ -73,7 +73,6 @@ enum ModrinthCategoryCache {
     /// 启动时从磁盘读一次，填充内存缓存
     static func loadFromDisk() {
         let cache = AppContext.shared.cacheManager
-        let decoder = JSONDecoder()
         for key in [CacheKey.mod, .resourcePack, .shader, .modpack] {
             guard let items: [DownloadedItem] = cache.object([DownloadedItem].self, forKey: key.rawValue) else { continue }
             switch key {
