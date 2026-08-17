@@ -53,7 +53,7 @@ struct CategoryContentView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { isUsernameFocused = false }
             HStack(alignment: .top, spacing: 20) {
-                leftCard(cardWidth: cardWidth, avatarSize: avatarSize, buttonWidth: buttonWidth)
+                leftCard(cardWidth: cardWidth, avatarSize: avatarSize, buttonWidth: buttonWidth, cardHeight: cardHeight)
                     .frame(height: cardHeight, alignment: .top)
                     .zIndex(1)
                 logPanel(logCardHeight: logCardHeight)
@@ -68,7 +68,7 @@ struct CategoryContentView: View {
             )
         }
     }
-    private func leftCard(cardWidth: CGFloat, avatarSize: CGFloat, buttonWidth: CGFloat) -> some View {
+    private func leftCard(cardWidth: CGFloat, avatarSize: CGFloat, buttonWidth: CGFloat, cardHeight: CGFloat) -> some View {
         VStack(spacing: 16) {
             if !settings.selectedMinecraftVersion.isEmpty {
                 Text("当前版本: \(settings.selectedMinecraftVersion)")
@@ -80,7 +80,12 @@ struct CategoryContentView: View {
             avatarView(avatarSize: avatarSize)
             usernameField
             skinButton
-            Spacer()
+            // 给底部固定按钮留占位，避免卡片太矮时内容与按钮重叠
+            Color.clear.frame(height: 80)
+        }
+        .frame(width: cardWidth)
+        .background(RoundedRectangle(cornerRadius: 24).fill(.regularMaterial).shadow(radius: 12))
+        .overlay(alignment: .bottom) {
             LaunchButton(
                 buttonWidth: buttonWidth,
                 isLaunching: sessionManager.isLaunching,
@@ -98,9 +103,9 @@ struct CategoryContentView: View {
                     startLaunch()
                 }
             )
+            .padding(.bottom, 30)
         }
-        .frame(width: cardWidth)
-        .background(RoundedRectangle(cornerRadius: 24).fill(.regularMaterial).shadow(radius: 12))
+        .frame(height: cardHeight, alignment: .top)
     }
 
     private func avatarView(avatarSize: CGFloat) -> some View {
