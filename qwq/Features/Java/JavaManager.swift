@@ -10,7 +10,6 @@ class JavaManager {
     private var cachedJavaList: [JavaInfo]?
     private var isScanning = false
     private let scanLock = NSLock()
-    private let scanCondition = NSCondition()
 
     private init() {
         let paths = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
@@ -64,29 +63,16 @@ class JavaManager {
     // MARK: - Java 扫描（参考 PCL.Mac：读 release 文件，不跑 java -version）
 
     func scanInstalledJava(useCache: Bool = true) -> [JavaInfo] {
-        // 首次进入：内存缓存命中直接返回
         scanLock.lock()
         if useCache, let cached = cachedJavaList {
             scanLock.unlock()
             return cached
         }
-        // 已有扫描在跑：等待其完成，避免把「扫描中」误判为「空结果」返回给调用方
         if isScanning {
+            let fallback = cachedJavaList ?? []
             scanLock.unlock()
-            scanCondition.lock()
-            while isScanning {
-                scanCondition.wait()
-            }
-            scanCondition.unlock()
-            // 等完了再看一眼缓存：useCache=true 直接复用；useCache=false（强制刷新）继续执行本线程扫描
-            scanLock.lock()
-            if useCache, let cached = cachedJavaList {
-                scanLock.unlock()
-                return cached
-            }
-            scanLock.unlock()
+            return fallback
         }
-        scanLock.lock()
         isScanning = true
         scanLock.unlock()
 
@@ -94,9 +80,6 @@ class JavaManager {
             scanLock.lock()
             isScanning = false
             scanLock.unlock()
-            scanCondition.lock()
-            scanCondition.broadcast()
-            scanCondition.unlock()
         }
 
         if useCache, let cachedPaths: [String] = cache.object([String].self, forKey: "cachedJavaPaths") {
@@ -142,11 +125,6 @@ class JavaManager {
     }
 
     private func syncJavaVirtualMachines(from infos: [JavaInfo]) {
-        // 清理失效条目：可执行文件已不存在的旧 JVM 移除，避免启动时选中已删除的 Java
-        let fm = FileManager.default
-        DataManager.shared.javaVirtualMachines.removeAll { jvm in
-            !fm.isExecutableFile(atPath: jvm.executableURL.path)
-        }
         let existingPaths = Set(DataManager.shared.javaVirtualMachines.map { $0.executableURL.path })
         var newJVMs: [JavaVirtualMachine] = []
         for info in infos {
@@ -205,11 +183,7 @@ class JavaManager {
         if let best = JavaManager.shared.selectBestJava(requiredMajor: minimumMajor, from: list) {
             return URL(fileURLWithPath: best.path)
         }
-        // 兜底 /usr/bin/java：macOS 上它可能是系统 stub（占位符，非真实 Java）。
-        // 只有能解析出真实版本号时才可用，stub 运行会弹系统提示且无法启动游戏。
-        if FileManager.default.isExecutableFile(atPath: "/usr/bin/java"),
-           let info = JavaManager.shared.parseJavaVersion(at: "/usr/bin/java"),
-           info.majorVersion >= minimumMajor {
+        if FileManager.default.isExecutableFile(atPath: "/usr/bin/java") {
             return URL(fileURLWithPath: "/usr/bin/java")
         }
         return nil

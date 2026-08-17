@@ -50,34 +50,26 @@ enum JavaVersionParser {
 
         // 如果 release 文件解析失败，回退到 java -version
         if majorVersion == 0 {
-            // 失效路径保护：可执行文件不存在时直接放弃，避免 run() 失败后
-            // readDataToEndOfFile() 永久阻塞（管道写端无人关闭）导致扫描线程卡死。
-            guard FileManager.default.isExecutableFile(atPath: javaBin) else { return nil }
-
             let task = Process()
             task.executableURL = URL(fileURLWithPath: javaBin)
             task.arguments = ["-version"]
             let pipe = Pipe()
             task.standardError = pipe
-            do {
-                try task.run()
-            } catch {
-                return nil
-            }
+            try? task.run()
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             task.waitUntilExit()
             guard let output = String(data: data, encoding: .utf8) else { return nil }
 
-            // 老版本格式: version "1.8.0_402" → 主版本 8
-            let legacyPattern = #"version "1\.(\d+)"#
-            // 现代格式: version "21.0.1" → 主版本 21
-            let modernPattern = #"version "(\d+)\."#
-            if let regex = try? NSRegularExpression(pattern: legacyPattern),
+            let versionPattern = #"version "(\d+)"#
+            if let regex = try? NSRegularExpression(pattern: versionPattern),
                let match = regex.firstMatch(in: output, range: NSRange(location: 0, length: output.utf16.count)) {
                 majorVersion = Int((output as NSString).substring(with: match.range(at: 1))) ?? 0
-            } else if let regex = try? NSRegularExpression(pattern: modernPattern),
-                      let match = regex.firstMatch(in: output, range: NSRange(location: 0, length: output.utf16.count)) {
-                majorVersion = Int((output as NSString).substring(with: match.range(at: 1))) ?? 0
+            } else {
+                let oldPattern = #"version "1\.(\d+)"#
+                if let regex = try? NSRegularExpression(pattern: oldPattern),
+                   let match = regex.firstMatch(in: output, range: NSRange(location: 0, length: output.utf16.count)) {
+                    majorVersion = Int((output as NSString).substring(with: match.range(at: 1))) ?? 0
+                }
             }
 
             if output.contains("aarch64") || output.contains("arm64") { arch = "arm64" }
@@ -96,11 +88,7 @@ enum JavaVersionParser {
             fileTask.arguments = [javaBin]
             let filePipe = Pipe()
             fileTask.standardOutput = filePipe
-            do {
-                try fileTask.run()
-            } catch {
-                return nil
-            }
+            try? fileTask.run()
             let fileData = filePipe.fileHandleForReading.readDataToEndOfFile()
             fileTask.waitUntilExit()
             let fileOutput = String(data: fileData, encoding: .utf8) ?? ""
@@ -109,10 +97,6 @@ enum JavaVersionParser {
         }
 
         let normalizedArch = arch == "x86_64" ? "x64" : (arch == "arm64" ? "aarch64" : arch)
-
-        // 解析不出主版本号（release 读不到且 java -version 也不识别）视为无效，
-        // 防止 /usr/bin/java stub、坏二进制等被当成可用 Java 展示/选中
-        guard majorVersion > 0 else { return nil }
 
         let info = JavaInfo(path: javaBin, majorVersion: majorVersion, fullVersion: displayVersion, architecture: normalizedArch, vendor: vendor, isValid: true)
         return info
