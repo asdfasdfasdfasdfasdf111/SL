@@ -46,6 +46,8 @@ enum SkinAvatarCropper {
         guard (width == 64 && height == 64) || (width == 64 && height == 32) else {
             throw LauncherError.skinValidationFailed("不支持的皮肤尺寸: \(width)×\(height)")
         }
+        // CGImage/CIImage 的像素行顺序与 Minecraft 皮肤贴图一致：row 0 = 顶部。
+        // 因此 Minecraft 坐标 (x, y) 直接对应裁剪 rect (x, y, 8, 8)，无需翻转。
         let layer1Rect = CGRect(x: 8, y: 8, width: 8, height: 8)
         guard let layer1 = cgImage.cropping(to: layer1Rect) else {
             throw LauncherError.skinValidationFailed("无法裁剪第一层")
