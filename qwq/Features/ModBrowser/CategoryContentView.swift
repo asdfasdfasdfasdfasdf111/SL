@@ -20,8 +20,7 @@ struct CategoryContentView: View {
 
     private var launchView: some View {
         GeometryReader { geometry in
-            // 左侧卡片宽度自适应：占内容区宽度 32%，限制 260~360pt，窗口缩放时保持合理比例。
-            let cardWidth: CGFloat = min(max(geometry.size.width * 0.32, 260), 360)
+            let cardWidth: CGFloat = 280
             let buttonWidth = cardWidth * 0.7
             let avatarSize = buttonWidth * 0.7
             let logCardHeight = geometry.size.height * 0.32
@@ -34,7 +33,7 @@ struct CategoryContentView: View {
         // 关闭「窗口/页面首次出现时自动选中名称框」：macOS 上绑定了 .focused 的 TextField
         // 是窗口中第一个可聚焦控件时，AppKit 会在成为 key window 时自动将其置为 firstResponder。
         // 显式声明默认焦点为 false，让用户主动点击/按 Tab 才聚焦，而不是打开启动器就被选中。
-        .defaultFocusCompat($isUsernameFocused, false)
+        .defaultFocus($isUsernameFocused, false)
         // ⚠️ .defaultFocus(false) 只约束 SwiftUI 默认焦点，AppKit 仍会把窗口首个 TextField
         // 自动置为 firstResponder（表现为打开即聚焦/全选）。此处挂一个占位 NSView，
         // 在页面加入窗口、布局完成后主动 makeFirstResponder(nil) 清掉焦点，仅启动生效
@@ -108,12 +107,10 @@ struct CategoryContentView: View {
             // 双层渲染（还原：头 + 帽层叠加消除半透明），数据来自首帧预载缓存。
             // .id(data)：@State 初始值仅在首次出现生效，皮肤数据变化时靠 id 变化强制重建并重新裁剪
             if let data = avatarSkinData {
-                // 头层：Minecraft 皮肤贴图 (8,8) 起始；帽层：(40,8) 起始。
-                // 新版皮肤可能头层透明、帽层含脸/头发，两层叠加与官方渲染一致。
-                SkinLayerView(imageData: data, startX: 8, startY: 8, width: 8 * 5.4 / 58 * avatarSize, height: 8 * 5.4 / 58 * avatarSize)
+                SkinLayerView(imageData: data, startX: 8, startY: 16, width: 8 * 5.4 / 58 * avatarSize, height: 8 * 5.4 / 58 * avatarSize)
                     .id(data)
                     .shadow(color: Color.black.opacity(0.2), radius: 1)
-                SkinLayerView(imageData: data, startX: 40, startY: 8, width: 7.99 * 6.1 / 58 * avatarSize, height: 7.99 * 6.1 / 58 * avatarSize)
+                SkinLayerView(imageData: data, startX: 40, startY: 16, width: 7.99 * 6.1 / 58 * avatarSize, height: 7.99 * 6.1 / 58 * avatarSize)
                     .id(data)
             }
         }
