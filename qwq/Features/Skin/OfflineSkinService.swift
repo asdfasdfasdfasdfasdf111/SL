@@ -34,8 +34,11 @@ enum OfflineSkinService {
                     let avatarImage = try SkinAvatarCropper.cropAvatar(from: url)
                     let avatarDir = appSupport.appendingPathComponent("SL启动器/Avatars")
                     try FileManager.default.createDirectory(at: avatarDir, withIntermediateDirectories: true)
-                    let avatarDestURL = avatarDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("png")
-                    if avatarImage.pngData() != nil {
+                    // 确定性命名：固定文件名，避免每次选皮肤都产生一个 UUID 孤儿文件
+                    let avatarDestURL = avatarDir.appendingPathComponent("selected_avatar.png")
+                    if let pngData = avatarImage.pngData() {
+                        // 必须先落盘再指向：否则 avatarImageURL 指向从未写入的文件（悬空指针）
+                        try pngData.write(to: avatarDestURL)
                         DispatchQueue.main.async {
                             settings.avatarImageURL = avatarDestURL
                             settings.skinImageURL = skinDestURL
@@ -77,7 +80,12 @@ enum OfflineSkinService {
     /// 未设置头像时恢复默认皮肤：磁盘缓存优先 → JAR 提取 → 内置皮肤
     static func loadDefaultIfNeeded(isLaunching: Bool, settings: LauncherSettings) {
         guard !isLaunching else { return }
-        guard settings.avatarImageURL == nil else { return }
+        // 头像指针为空 **或指向已不存在的文件**（悬空指针）时才重新加载；
+        // 正常存在的头像（含用户自选）一律不覆盖。
+        if let existing = settings.avatarImageURL,
+           FileManager.default.fileExists(atPath: existing.path) {
+            return
+        }
 
         // 优先从皮肤文件系统缓存加载
         let offlineUUID = settings.fixedOfflineUUID.components(separatedBy: "-").joined().lowercased()
@@ -165,7 +173,8 @@ enum OfflineSkinService {
                 let avatarImage = try SkinAvatarCropper.cropAvatar(from: skinURL)
                 let avatarDir = appSupport.appendingPathComponent("SL启动器/Avatars")
                 try FileManager.default.createDirectory(at: avatarDir, withIntermediateDirectories: true)
-                let destURL = avatarDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("png")
+                // 确定性命名（按版本）：同版本重复提取直接覆盖，不再堆 UUID 孤儿文件
+                let destURL = avatarDir.appendingPathComponent("game_avatar_\(settings.selectedMinecraftVersion).png")
                 if let pngData = avatarImage.pngData() {
                     try pngData.write(to: destURL)
                     settings.avatarImageURL = destURL
