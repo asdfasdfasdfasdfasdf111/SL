@@ -28,7 +28,7 @@ public enum LaunchFix {
         // 1) 缺失支持库分析（PCL2 McLibFix）：已存在且 sha1 匹配 → 跳过，仅收集缺失项
         for library in manifest.getNeededLibraries() {
             guard let artifact = library.artifact else { continue }
-            let dest = dir.librariesURL.appending(path: artifact.path)
+            let dest = dir.librariesURL.appendingPathComponent(artifact.path)
             if fileIsValid(dest, hash: artifact.sha1) { continue }
             if let url = DownloadSourceManager.shared.getLibraryURL(library) {
                 items.append(.init(url, dest, sha1: artifact.sha1))
@@ -38,7 +38,7 @@ public enum LaunchFix {
         // 2) 资源索引：缺失或损坏时先补索引，再按索引分析缺失资源
         var assetsObjects: [AssetIndex.Object] = []
         if let assetIndexInfo = manifest.assetIndex {
-            let indexPath = dir.assetsURL.appending(path: "indexes").appending(path: "\(assetIndexInfo.id).json")
+            let indexPath = dir.assetsURL.appendingPathComponent("indexes").appendingPathComponent("\(assetIndexInfo.id).json")
             if !fileIsValid(indexPath, hash: assetIndexInfo.sha1) {
                 if let url = URL(string: assetIndexInfo.url) {
                     items.append(.init(url, indexPath, sha1: assetIndexInfo.sha1))
@@ -54,7 +54,7 @@ public enum LaunchFix {
         
         // 3) 缺失资源分析（PCL2 McAssetsFixList CheckHash）：asset 以 hash 命名，直接用 hash 校验
         for object in assetsObjects {
-            let dest = object.appendTo(dir.assetsURL.appending(path: "objects"))
+            let dest = object.appendTo(dir.assetsURL.appendingPathComponent("objects"))
             if fileIsValid(dest, hash: object.hash) { continue }
             let src = object.appendTo(URL(string: "https://resources.download.minecraft.net")!)
             items.append(.init(src, dest, sha1: object.hash))
@@ -68,12 +68,12 @@ public enum LaunchFix {
             }.start()
             // 若资源索引是本次刚下载的，现在补上资源分析
             if assetsObjects.isEmpty, let assetIndexInfo = manifest.assetIndex {
-                let indexPath = dir.assetsURL.appending(path: "indexes").appending(path: "\(assetIndexInfo.id).json")
+                let indexPath = dir.assetsURL.appendingPathComponent("indexes").appendingPathComponent("\(assetIndexInfo.id).json")
                 if let data = try? Data(contentsOf: indexPath),
                    let index = try? AssetIndex.parse(data) {
                     var assetItems: [DownloadItem] = []
                     for object in index.objects {
-                        let dest = object.appendTo(dir.assetsURL.appending(path: "objects"))
+                        let dest = object.appendTo(dir.assetsURL.appendingPathComponent("objects"))
                         if fileIsValid(dest, hash: object.hash) { continue }
                         let src = object.appendTo(URL(string: "https://resources.download.minecraft.net")!)
                         assetItems.append(.init(src, dest, sha1: object.hash))

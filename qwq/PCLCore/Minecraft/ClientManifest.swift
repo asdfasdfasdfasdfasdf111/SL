@@ -101,14 +101,14 @@ public class ClientManifest {
                 let path = Util.toPath(mavenCoordinate: name)
                 self.artifact = DownloadInfo(
                     path: path,
-                    url: (URL(string: json["url"].stringValue) ?? URL(string: "https://bmclapi2.bangbang93.com/maven")!).appending(path: path).absoluteString
+                    url: (URL(string: json["url"].stringValue) ?? URL(string: "https://bmclapi2.bangbang93.com/maven")!).appendingPathComponent(path).absoluteString
                 )
             } else {
                 if split.count >= 2 && split[1] == "launchwrapper" {
                     self.rules = []
                     self.natives = [:]
                     let path = Util.toPath(mavenCoordinate: name)
-                    self.artifact = DownloadInfo(path: path, url: URL(string: "https://libraries.minecraft.net")!.appending(path: path).absoluteString)
+                    self.artifact = DownloadInfo(path: path, url: URL(string: "https://libraries.minecraft.net")!.appendingPathComponent(path).absoluteString)
                 } else {
                     self.rules = json["rules"].arrayValue.map { Rule(json: $0) }
                     self.natives = json["natives"].dictionaryObject as? [String: String] ?? [:]
@@ -305,7 +305,7 @@ public class ClientManifest {
     checkParent:
         if let inheritsFrom = json["inheritsFrom"].string,
            let minecraftDirectory = minecraftDirectory {
-            let parentURL = minecraftDirectory.versionsURL.appending(path: inheritsFrom).appending(path: "\(inheritsFrom).json")
+            let parentURL = minecraftDirectory.versionsURL.appendingPathComponent(inheritsFrom).appendingPathComponent("\(inheritsFrom).json")
             
             guard FileManager.default.fileExists(atPath: parentURL.path) else {
                 err("\(url.path) 中有 inheritsFrom 字段，但其对应的 JSON 不存在")

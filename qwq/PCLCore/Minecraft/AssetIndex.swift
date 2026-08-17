@@ -29,7 +29,7 @@ public class AssetIndex {
         }
         
         public func appendTo(_ url: URL) -> URL {
-            return url.appending(path: String(hash.prefix(2))).appending(path: hash)
+            return url.appendingPathComponent(String(hash.prefix(2))).appendingPathComponent(hash)
         }
     }
     

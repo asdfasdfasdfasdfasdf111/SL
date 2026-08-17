@@ -32,7 +32,7 @@ public class MinecraftLauncher {
     
     public init?(_ instance: MinecraftInstance) {
         self.instance = instance
-        self.logURL = SharedConstants.shared.applicationSupportURL.appending(path: "GameLogs").appending(path: id.uuidString + ".log")
+        self.logURL = SharedConstants.shared.applicationSupportURL.appendingPathComponent("GameLogs").appendingPathComponent(id.uuidString + ".log")
         try? FileManager.default.createDirectory(at: logURL.parent(), withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: logURL.path, contents: Data())
     }
@@ -83,7 +83,7 @@ public class MinecraftLauncher {
                     let lineData = logBuffer.prefix(upTo: nl)
                     logBuffer.removeSubrange(0...nl)
                     guard let line = String(data: lineData, encoding: .utf8) else { continue }
-                    raw(line.replacing("\t", with: "    "))
+                    raw(line.replacingOccurrences(of: "\t", with: "    "))
                     try? logHandle.write(contentsOf: (line + "\n").data(using: .utf8)!)
                     logHandle.seekToEndOfFile()
                 }
@@ -113,7 +113,7 @@ public class MinecraftLauncher {
                             return
                         }
                     }
-                    try await Task.sleep(for: .seconds(1))
+                    try await Task.sleep(nanoseconds: 1 * 1_000_000_000)
                 }
             }
 
@@ -153,7 +153,7 @@ public class MinecraftLauncher {
     
     public func buildJvmArguments(_ options: LaunchOptions) -> [String] {
         let values: [String: String] = [
-            "natives_directory": instance.runningDirectory.appending(path: "natives").path,
+            "natives_directory": instance.runningDirectory.appendingPathComponent("natives").path,
             "launcher_name": "PCL.Mac",
             "launcher_version": SharedConstants.shared.version,
             "classpath": buildClasspath(),
@@ -270,10 +270,10 @@ public class MinecraftLauncher {
         var urls: [URL] = []
         for library in instance.manifest.getNeededLibraries() {
             if let artifact = library.artifact {
-                urls.append(instance.minecraftDirectory.librariesURL.appending(path: artifact.path))
+                urls.append(instance.minecraftDirectory.librariesURL.appendingPathComponent(artifact.path))
             }
         }
-        urls.append(instance.runningDirectory.appending(path: "\(instance.name).jar"))
+        urls.append(instance.runningDirectory.appendingPathComponent("\(instance.name).jar"))
 
         return urls.map { $0.path }.joined(separator: ":")
     }

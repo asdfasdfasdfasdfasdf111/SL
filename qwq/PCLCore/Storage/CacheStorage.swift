@@ -10,7 +10,7 @@ import SwiftyJSON
 
 /// 用于缓存下载项
 public class CacheStorage {
-    public static let `default`: CacheStorage = .init(rootURL: .applicationSupportDirectory.appending(path: "minecraft").appending(path: "cache"))
+    public static let `default`: CacheStorage = .init(rootURL: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("minecraft").appendingPathComponent("cache"))
     
     private let rootURL: URL
     private var libraries: [Library]
@@ -19,7 +19,7 @@ public class CacheStorage {
     public init(rootURL: URL) {
         self.rootURL = rootURL
         try? FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-        let indexURL = rootURL.appending(path: "index.json")
+        let indexURL = rootURL.appendingPathComponent("index.json")
         if FileManager.default.fileExists(atPath: indexURL.path) {
             do {
                 // readToEnd 可能返回 nil（空/损坏文件），强解包会崩；失败走空索引重建
@@ -45,7 +45,7 @@ public class CacheStorage {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
         do {
-            try encoder.encode(["libraries" : libraries]).write(to: rootURL.appending(path: "index.json"), options: .atomic)
+            try encoder.encode(["libraries" : libraries]).write(to: rootURL.appendingPathComponent("index.json"), options: .atomic)
         } catch {
             err("无法保存 libraries: \(error.localizedDescription)")
         }
@@ -53,9 +53,9 @@ public class CacheStorage {
     
     public func getLibraryPath(_ hash: String) -> URL {
         rootURL
-            .appending(path: "SHA-1")
-            .appending(path: String(hash.prefix(2)))
-            .appending(path: hash)
+            .appendingPathComponent("SHA-1")
+            .appendingPathComponent(String(hash.prefix(2)))
+            .appendingPathComponent(hash)
     }
     
     public func copy(name: String, to dest: URL) -> Bool {

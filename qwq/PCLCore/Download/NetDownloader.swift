@@ -320,7 +320,7 @@ public actor NetManager {
         let ids = pending
         let progressTask = Task.detached(priority: .utility) {
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(200))
+                try? await Task.sleep(nanoseconds: 200 * 1_000_000)
                 let (p, count) = await self.overallProgressValue(for: ids)
                 await MainActor.run { overallProgress?(p, count) }
             }
@@ -830,7 +830,7 @@ public actor NetManager {
                 }
                 return
             }
-            try await Task.sleep(for: .milliseconds(100))
+            try await Task.sleep(nanoseconds: 100 * 1_000_000)
             try Task.checkCancellation()
         }
     }

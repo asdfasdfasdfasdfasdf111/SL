@@ -37,7 +37,7 @@ public class VersionManifest: Codable {
         
         public init(_ json: JSON) {
             let formatter = ISO8601DateFormatter()
-            self.id = json["id"].stringValue.replacing(" Pre-Release ", with: "-pre")
+            self.id = json["id"].stringValue.replacingOccurrences(of: " Pre-Release ", with: "-pre")
             self.type = .init(rawValue: json["type"].stringValue) ?? .release
             self.url = json["url"].stringValue
             // 第三方清单（unlisted 源等）的 time/releaseTime 可能缺失或格式异常，强解包会崩；

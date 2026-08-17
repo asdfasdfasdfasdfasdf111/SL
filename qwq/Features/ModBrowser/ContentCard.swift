@@ -40,7 +40,7 @@ struct ContentCard: View {
                     .font(.system(size: 12))
                     .foregroundColor(.secondary)
                     .lineLimit(2)
-                    .contentTransition(.opacity)
+                    .contentTransitionOpacityCompat()
                 if !translatedTags.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 4) {

@@ -76,7 +76,7 @@ public class BMCLAPIDownloadSource: DownloadSource {
               let url = URL(string: urlString) else {
             return nil
         }
-        return URL(string: "https://bmclapi2.bangbang93.com")!.appending(path: url.path)
+        return URL(string: "https://bmclapi2.bangbang93.com")!.appendingPathComponent(url.path)
     }
     
     public func getClientJARURL(_ version: MinecraftVersion, _ manifest: ClientManifest) -> URL? {
@@ -84,7 +84,7 @@ public class BMCLAPIDownloadSource: DownloadSource {
     }
     
     public func getLibraryURL(_ library: ClientManifest.Library) -> URL? {
-        return URL(string: "https://bmclapi2.bangbang93.com/maven")!.appending(path: Util.toPath(mavenCoordinate: library.name))
+        return URL(string: "https://bmclapi2.bangbang93.com/maven")!.appendingPathComponent(Util.toPath(mavenCoordinate: library.name))
     }
     
     public func getAssetURL(hash: String) -> URL? {

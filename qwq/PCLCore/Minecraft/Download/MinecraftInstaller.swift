@@ -41,7 +41,7 @@ public class MinecraftInstaller {
         guard !urls.isEmpty else {
             throw MyLocalizedError(reason: "无法获取 \(task.minecraftVersion.displayName) 的 JSON 下载 URL。")
         }
-        let destination = task.versionURL.appending(path: "\(task.name).json")
+        let destination = task.versionURL.appendingPathComponent("\(task.name).json")
         
         try await SingleFileDownloader.download(task: task, urls: urls, destination: destination, replaceMethod: .replace)
         
@@ -70,7 +70,7 @@ public class MinecraftInstaller {
         try await SingleFileDownloader.download(
             task: task,
             urls: urls,
-            destination: task.versionURL.appending(path: "\(task.name).jar"),
+            destination: task.versionURL.appendingPathComponent("\(task.name).jar"),
             expectedSHA1: manifest.clientDownload?.sha1,
             stage: parallel ? .clientJar : nil
         )
@@ -101,7 +101,7 @@ public class MinecraftInstaller {
         guard !urls.isEmpty else {
             throw MyLocalizedError(reason: "无法获取 \(task.minecraftVersion.displayName) 的 assetIndex 下载 URL。")
         }
-        let destination: URL = task.minecraftDirectory.assetsURL.appending(component: "indexes").appending(component: "\(assetIndex.id).json")
+        let destination: URL = task.minecraftDirectory.assetsURL.appendingPathComponent("indexes").appendingPathComponent("\(assetIndex.id).json")
         try await SingleFileDownloader.download(task: task, urls: urls, destination: destination, expectedSHA1: assetIndex.sha1, stage: parallel ? .clientIndex : nil)
         do {
             let data = try Data(contentsOf: destination)
@@ -122,7 +122,7 @@ public class MinecraftInstaller {
         var items: [DownloadItem] = []
         
         for object in objects {
-            let dest = object.appendTo(task.minecraftDirectory.assetsURL.appending(path: "objects"))
+            let dest = object.appendTo(task.minecraftDirectory.assetsURL.appendingPathComponent("objects"))
             // 多源构造（主源 + 互补备用源）：官方失败自动切镜像，镜像失败自动切官方。
             // 旧实现硬编码官方 CDN（resources.download.minecraft.net），官方不可用时全部失败。
             // getAssetURL 仅在 hash 不足 2 字符时返回 nil，asset hash 恒为 40 位十六进制，! 安全
@@ -148,7 +148,7 @@ public class MinecraftInstaller {
         
         for library in try task.manifest.unwrap().getNeededLibraries() {
             if let artifact = library.artifact {
-                let dest = task.minecraftDirectory.librariesURL.appending(path: artifact.path)
+                let dest = task.minecraftDirectory.librariesURL.appendingPathComponent(artifact.path)
                 if CacheStorage.default.copy(name: library.name, to: dest) {
                     continue
                 }
@@ -167,7 +167,7 @@ public class MinecraftInstaller {
         
         for library in task.manifest!.getNeededLibraries() {
             if libraryNames.contains(library.name) {
-                CacheStorage.default.add(name: library.name, path: task.minecraftDirectory.librariesURL.appending(path: library.artifact!.path))
+                CacheStorage.default.add(name: library.name, path: task.minecraftDirectory.librariesURL.appendingPathComponent(library.artifact!.path))
             }
         }
         if parallel { await task.finishParallelStage(.clientLibraries) }
@@ -182,7 +182,7 @@ public class MinecraftInstaller {
         var items: [DownloadItem] = []
         
         for (library, artifact) in try task.manifest.unwrap().getNeededNatives() {
-            let dest = task.minecraftDirectory.librariesURL.appending(path: artifact.path)
+            let dest = task.minecraftDirectory.librariesURL.appendingPathComponent(artifact.path)
             if CacheStorage.default.copy(name: library.name, to: dest) {
                 continue
             }
@@ -196,12 +196,12 @@ public class MinecraftInstaller {
             items.append(.init(DownloadSourceManager.shared.getDownloadSource(), { $0.getLibraryURL(library)! }, destination: dest, sha1: artifact.sha1))
         }
         
-        try? FileManager.default.createDirectory(at: task.versionURL.appending(path: "natives"), withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: task.versionURL.appendingPathComponent("natives"), withIntermediateDirectories: true)
         try await MultiFileDownloader(task: task, items: items, stage: parallel ? .natives : nil).start()
         
         for (library, artifact) in task.manifest!.getNeededNatives() {
             if libraryNames.contains(library.name) {
-                CacheStorage.default.add(name: library.name, path: task.minecraftDirectory.librariesURL.appending(path: artifact.path))
+                CacheStorage.default.add(name: library.name, path: task.minecraftDirectory.librariesURL.appendingPathComponent(artifact.path))
             }
         }
         if parallel { await task.finishParallelStage(.natives) }
@@ -209,9 +209,9 @@ public class MinecraftInstaller {
     
     // MARK: 解压本地库
     private static func unzipNatives(_ task: MinecraftInstallTask) throws {
-        let nativesURL: URL = task.versionURL.appending(path: "natives")
+        let nativesURL: URL = task.versionURL.appendingPathComponent("natives")
         for (_, native) in task.manifest!.getNeededNatives() {
-            let jarURL: URL = task.minecraftDirectory.librariesURL.appending(path: native.path)
+            let jarURL: URL = task.minecraftDirectory.librariesURL.appendingPathComponent(native.path)
             Util.unzip(archiveURL: jarURL, destination: nativesURL, replace: true)
             do {
                 try processLibs(task, nativesURL)
@@ -266,9 +266,9 @@ public class MinecraftInstaller {
     private static func finalWork(_ task: MinecraftInstallTask) {
         let _1_12_2 = MinecraftVersion(displayName: "1.12.2")
         // 拷贝 log4j2.xml
-        let targetURL: URL = task.versionURL.appending(path: "log4j2.xml")
+        let targetURL: URL = task.versionURL.appendingPathComponent("log4j2.xml")
         try? FileManager.default.copyItem(
-            at: SharedConstants.shared.applicationResourcesURL.appending(path: task.minecraftVersion >= _1_12_2 ? "log4j2.xml" : "log4j2-1.12-.xml"),
+            at: SharedConstants.shared.applicationResourcesURL.appendingPathComponent(task.minecraftVersion >= _1_12_2 ? "log4j2.xml" : "log4j2-1.12-.xml"),
             to: targetURL
         )
         
@@ -287,7 +287,7 @@ public class MinecraftInstaller {
             process.executableURL = javaURL
             process.environment = ProcessInfo.processInfo.environment
             process.currentDirectoryURL = URL(fileURLWithPath: "/tmp")
-            process.arguments = ["-jar", SharedConstants.shared.applicationResourcesURL.appending(path: "glfw-patcher.jar").path, task.minecraftDirectory.librariesURL.appending(path: glfw.artifact!.path).path]
+            process.arguments = ["-jar", SharedConstants.shared.applicationResourcesURL.appendingPathComponent("glfw-patcher.jar").path, task.minecraftDirectory.librariesURL.appendingPathComponent(glfw.artifact!.path).path]
             do {
                 try process.run()
                 process.waitUntilExit()
@@ -301,7 +301,7 @@ public class MinecraftInstaller {
     // MARK: 修改客户端清单中的 id
     private static func modifyId(_ task: MinecraftInstallTask) {
         do {
-            let manifestURL = task.versionURL.appending(path: "\(task.versionURL.lastPathComponent).json")
+            let manifestURL = task.versionURL.appendingPathComponent("\(task.versionURL.lastPathComponent).json")
             guard FileManager.default.fileExists(atPath: manifestURL.path),
                   let data = try FileHandle(forReadingFrom: manifestURL).readToEnd(),
                   var dict = try JSON(data: data).dictionaryObject else {
@@ -393,7 +393,7 @@ public class MinecraftInstaller {
     
     // MARK: 确保 natives 已解压（PCL2 McLaunchNatives 语义：启动前缺失则重解压）
     public static func ensureNatives(_ instance: MinecraftInstance) throws {
-        let nativesURL = instance.runningDirectory.appending(path: "natives")
+        let nativesURL = instance.runningDirectory.appendingPathComponent("natives")
         // 已有可用的 dylib/jnilib 则跳过
         if let contents = try? FileManager.default.contentsOfDirectory(atPath: nativesURL.path),
            contents.contains(where: { $0.hasSuffix(".dylib") || $0.hasSuffix(".jnilib") }) {

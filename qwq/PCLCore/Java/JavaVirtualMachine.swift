@@ -62,7 +62,7 @@ public class JavaVirtualMachine: Identifiable, Equatable {
             return Error
         }
         guard executableURL.isFileURL else {
-            err("\(executableURL.path()) 不是文件!")
+            err("\(executableURL.path) 不是文件!")
             return Error
         }
         
@@ -79,8 +79,8 @@ public class JavaVirtualMachine: Identifiable, Equatable {
         
         // 获取版本信息
         let releaseURLs = [
-            executableURL.parent().parent().appending(path: "release"),
-            executableURL.parent().parent().parent().appending(path: "release")
+            executableURL.parent().parent().appendingPathComponent("release"),
+            executableURL.parent().parent().parent().appendingPathComponent("release")
         ]
         var version: Int = 0
         var displayVersion: String = "未知"
@@ -97,7 +97,7 @@ public class JavaVirtualMachine: Identifiable, Equatable {
                     let versionPart = parts.isEmpty ? "" : String(parts[displayVersion.starts(with: "1.") && parts.count > 1 ? 1 : 0])
                     version = Int(versionPart) ?? 0
                 } else {
-                    err("加载 \(executableURL.path()) 时出现错误: 未找到键 JAVA_VERSION 对应的值")
+                    err("加载 \(executableURL.path) 时出现错误: 未找到键 JAVA_VERSION 对应的值")
                 }
                 implementor = release["IMPLEMENTOR"]
                 asyncDetect = false
@@ -108,7 +108,7 @@ public class JavaVirtualMachine: Identifiable, Equatable {
         // 检查是否为 JDK
         var isJdk: Bool? = nil
         if executableURL.path != "/usr/bin/java" {
-            if FileManager.default.fileExists(atPath: executableURL.parent().appending(path: "javac").path) {
+            if FileManager.default.fileExists(atPath: executableURL.parent().appendingPathComponent("javac").path) {
                 isJdk = true
             } else {
                 isJdk = false

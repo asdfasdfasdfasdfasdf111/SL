@@ -13,7 +13,7 @@ public struct SharedConstants {
     public let applicationContentsURL: URL
     public let applicationResourcesURL: URL
     public let logURL: URL
-    public let applicationSupportURL: URL = .applicationSupportDirectory.appending(path: "Swim111Launcher")
+    public let applicationSupportURL: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Swim111Launcher")
     public let temperatureURL: URL
     public let authlibInjectorURL: URL
     
@@ -24,11 +24,11 @@ public struct SharedConstants {
     public let branch: String
     
     private init() {
-        self.applicationContentsURL = Bundle.main.bundleURL.appending(path: "Contents")
-        self.applicationResourcesURL = self.applicationContentsURL.appending(path: "Resources")
-        self.logURL = applicationSupportURL.appending(path: "Logs").appending(path: "app.log")
-        self.temperatureURL = applicationSupportURL.appending(path: "Temp")
-        self.authlibInjectorURL = applicationSupportURL.appending(path: "authlib-injector.jar")
+        self.applicationContentsURL = Bundle.main.bundleURL.appendingPathComponent("Contents")
+        self.applicationResourcesURL = self.applicationContentsURL.appendingPathComponent("Resources")
+        self.logURL = applicationSupportURL.appendingPathComponent("Logs").appendingPathComponent("app.log")
+        self.temperatureURL = applicationSupportURL.appendingPathComponent("Temp")
+        self.authlibInjectorURL = applicationSupportURL.appendingPathComponent("authlib-injector.jar")
         
         self.dateFormatter.dateFormat = "yyyy/MM/dd HH:mm"
         self.dateFormatter.timeZone = TimeZone(identifier: "Asia/Shanghai")

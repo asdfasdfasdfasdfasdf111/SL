@@ -8,7 +8,7 @@
 import Foundation
 
 public class TemperatureDirectory {
-    public var root: URL { SharedConstants.shared.temperatureURL.appending(path: name) }
+    public var root: URL { SharedConstants.shared.temperatureURL.appendingPathComponent(name) }
     private let name: String
     
     public init(name: String) {
@@ -22,7 +22,7 @@ public class TemperatureDirectory {
     
     @discardableResult
     public func createFile(path: String, data: Data? = nil) -> URL? {
-        let path = root.appending(path: path)
+        let path = root.appendingPathComponent(path)
         try? FileManager.default.createDirectory(at: path.parent(), withIntermediateDirectories: true)
         if FileManager.default.createFile(atPath: path.path, contents: data) {
             return path
@@ -31,7 +31,7 @@ public class TemperatureDirectory {
         }
     }
     
-    public func getURL(path: String) -> URL { root.appending(path: path) }
+    public func getURL(path: String) -> URL { root.appendingPathComponent(path) }
     
     public func free() {
         do {

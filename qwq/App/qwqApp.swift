@@ -17,7 +17,8 @@ struct qwqApp: App {
                 .frame(minWidth: 800, minHeight: 590)  // 原 570，再增加 20 点
         }
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 900, height: 660)  // 默认高度相应增加，保持比例
+        // 默认窗口尺寸 900×660：macOS 13+ 的 Scene.defaultSize 与 SceneBuilder 条件语句
+        // 在 12 上不可用，改由 AppDelegate.applicationDidFinishLaunching 统一设置。
     }
 }
 

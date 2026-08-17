@@ -29,7 +29,7 @@ SL（应用内名 **qwq**）是一个使用 **Swift + SwiftUI** 原生编写的 
 
 ## 构建要求
 
-- macOS 13.0+
+- macOS 12.0+
 - Xcode 15+（项目使用 Xcode 26.3 创建）
 - 依赖通过 Swift Package Manager 自动解析：[SwiftyJSON](https://github.com/SwiftyJSON/SwiftyJSON)、[ZIPFoundation](https://github.com/weichsel/ZIPFoundation)
 

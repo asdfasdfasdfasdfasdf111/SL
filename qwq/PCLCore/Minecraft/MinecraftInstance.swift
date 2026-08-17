@@ -41,7 +41,7 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
     }
     
     public static func create(_ minecraftDirectory: MinecraftDirectory, _ name: String, config: MinecraftConfig? = nil) -> MinecraftInstance? {
-        create(minecraftDirectory, minecraftDirectory.versionsURL.appending(path: name), config: config)
+        create(minecraftDirectory, minecraftDirectory.versionsURL.appendingPathComponent(name), config: config)
     }
     
     public static func create(_ minecraftDirectory: MinecraftDirectory, _ runningDirectory: URL, config: MinecraftConfig? = nil) -> MinecraftInstance? {
@@ -69,7 +69,7 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
     private init(minecraftDirectory: MinecraftDirectory, runningDirectory: URL, config: MinecraftConfig? = nil) {
         self.runningDirectory = runningDirectory
         self.minecraftDirectory = minecraftDirectory
-        self.configPath = runningDirectory.appending(path: ".PCL_Mac.json")
+        self.configPath = runningDirectory.appendingPathComponent(".PCL_Mac.json")
         self.config = config
     }
     
@@ -140,8 +140,8 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
     public static func readJavaMajorVersion(at javaURL: URL) -> Int? {
         let base = javaURL.deletingLastPathComponent().deletingLastPathComponent()
         let candidates: [URL] = [
-            base.appending(path: "release"),
-            base.deletingLastPathComponent().appending(path: "release"),
+            base.appendingPathComponent("release"),
+            base.deletingLastPathComponent().appendingPathComponent("release"),
         ]
         for releaseURL in candidates {
             guard let content = try? String(contentsOf: releaseURL, encoding: .utf8) else { continue }
@@ -349,7 +349,7 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
     @discardableResult
     private func loadManifest() -> Bool {
         do {
-            let manifestPath = runningDirectory.appending(path: runningDirectory.lastPathComponent + ".json")
+            let manifestPath = runningDirectory.appendingPathComponent(runningDirectory.lastPathComponent + ".json")
             
             // readToEnd 可能返回 nil（空/损坏清单文件），强解包会崩；失败按读取失败处理
             guard let data = try FileHandle(forReadingFrom: manifestPath).readToEnd() else {
@@ -375,7 +375,7 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
             return
         }
         do {
-            let archive = try Archive(url: runningDirectory.appending(path: "\(name).jar"), accessMode: .read)
+            let archive = try Archive(url: runningDirectory.appendingPathComponent("\(name).jar"), accessMode: .read)
             guard let entry = archive["version.json"] else {
                 throw MyLocalizedError(reason: "version.json 不存在")
             }

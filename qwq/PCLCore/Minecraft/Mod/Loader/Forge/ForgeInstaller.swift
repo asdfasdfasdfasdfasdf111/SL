@@ -34,7 +34,7 @@ public class ForgeInstaller {
         // 若被 [ ] 包裹，解析中间部分的 Maven 坐标并拼接到 libraries 后
         if value.hasPrefix("[") && value.hasSuffix("]") {
             let inner = String(value.dropFirst().dropLast())
-            return minecraftDirectory.librariesURL.appending(path: Util.toPath(mavenCoordinate: inner)).path
+            return minecraftDirectory.librariesURL.appendingPathComponent(Util.toPath(mavenCoordinate: inner)).path
         } else if value.hasPrefix("'") && value.hasSuffix("'") && value.count >= 2 {
             // 若被 ' ' 包裹，去除 ' '
             return String(value.dropFirst().dropLast())
@@ -51,8 +51,8 @@ public class ForgeInstaller {
         
         // 创建默认键值对
         values["SIDE"] = "client"
-        values["INSTALLER"] = temp.root.appending(path: "installer.jar").path
-        values["MINECRAFT_JAR"] = versionPath.appending(path: "\(versionPath.lastPathComponent).jar").path
+        values["INSTALLER"] = temp.root.appendingPathComponent("installer.jar").path
+        values["MINECRAFT_JAR"] = versionPath.appendingPathComponent("\(versionPath.lastPathComponent).jar").path
         values["MINECRAFT_VERSION"] = values["MINECRAFT_JAR"]!
         values["ROOT"] = minecraftDirectory.rootURL.path
         values["LIBRARY_DIR"] = minecraftDirectory.librariesURL.path
@@ -92,7 +92,7 @@ public class ForgeInstaller {
     
     // MARK: - 执行处理器任务
     private func executeProcessor(_ processor: ForgeInstallProfile.Processor) throws {
-        let processorPath = minecraftDirectory.librariesURL.appending(path: processor.jarPath)
+        let processorPath = minecraftDirectory.librariesURL.appendingPathComponent(processor.jarPath)
         guard let mainClass = Util.getMainClass(processorPath) else {
             warn("\(processorPath.lastPathComponent) 没有主类")
             return
@@ -106,7 +106,7 @@ public class ForgeInstaller {
         process.executableURL = javaURL
         process.arguments = [
             // processor 初始化逻辑中往 classpath 里添加了它本身的 jar，这里直接 map
-            "-cp", processor.classpath.map { minecraftDirectory.librariesURL.appending(path: $0).path }.joined(separator: ":"),
+            "-cp", processor.classpath.map { minecraftDirectory.librariesURL.appendingPathComponent($0).path }.joined(separator: ":"),
             mainClass
         ]
         process.arguments!.append(contentsOf: processor.args.map(replaceWithValue(_:)))
@@ -190,7 +190,7 @@ public class ForgeInstaller {
             log("该安装器为旧版格式")
             temp.createFile(path: "manifest.json", data: try json["versionInfo"].rawData())
             
-            let forgePath = minecraftDirectory.librariesURL.appending(path: Util.toPath(mavenCoordinate: json["install"]["path"].stringValue))
+            let forgePath = minecraftDirectory.librariesURL.appendingPathComponent(Util.toPath(mavenCoordinate: json["install"]["path"].stringValue))
             
             try? FileManager.default.createDirectory(at: forgePath.parent(), withIntermediateDirectories: true)
             try ArchiveUtil.getEntryOrThrow(archive: archive, name: json["install"]["filePath"].stringValue).write(to: forgePath)
@@ -203,10 +203,10 @@ public class ForgeInstaller {
     // MARK: - 拷贝客户端清单
     private func copyManifest(version: MinecraftVersion) throws {
         try loadInstallProfile()
-        let manifestURL = versionPath.appending(path: "\(versionPath.lastPathComponent).json")
+        let manifestURL = versionPath.appendingPathComponent("\(versionPath.lastPathComponent).json")
         
         // 若 inheritsFrom 对应的版本 JSON 不存在，复制
-        let baseManifestURL = minecraftDirectory.versionsURL.appending(path: version.displayName).appending(path: "\(version.displayName).json")
+        let baseManifestURL = minecraftDirectory.versionsURL.appendingPathComponent(version.displayName).appendingPathComponent("\(version.displayName).json")
         if !FileManager.default.fileExists(atPath: baseManifestURL.path) {
             try? FileManager.default.createDirectory(at: baseManifestURL.parent(), withIntermediateDirectories: true)
             try FileManager.default.copyItem(at: manifestURL, to: baseManifestURL)
@@ -236,7 +236,7 @@ public class ForgeInstaller {
         
         let downloader = MultiFileDownloader(
             urls: libraries.compactMap(DownloadSourceManager.shared.getLibraryURL(_:)),
-            destinations: artifacts.map { minecraftDirectory.librariesURL.appending(path: $0.path) },
+            destinations: artifacts.map { minecraftDirectory.librariesURL.appendingPathComponent($0.path) },
             replaceMethod: .skip
         ) { progress, _ in
             Task { @MainActor in

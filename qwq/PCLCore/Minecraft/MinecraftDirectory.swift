@@ -9,7 +9,7 @@ import Foundation
 import Combine
 
 public class MinecraftDirectory: Codable, Identifiable, Hashable {
-    public static let `default`: MinecraftDirectory = .init(rootURL: .applicationSupportDirectory.appending(path: "minecraft"), name: "默认文件夹")
+    public static let `default`: MinecraftDirectory = .init(rootURL: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("minecraft"), name: "默认文件夹")
     
     public var id: UUID
     public let rootURL: URL

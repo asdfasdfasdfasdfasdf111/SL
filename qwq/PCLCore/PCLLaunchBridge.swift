@@ -272,7 +272,7 @@ private func pclLaunchInternal(
                 }
                 for line in lines { logHandler(line) }
             } else {
-                try? await Task.sleep(for: .milliseconds(400))
+                try? await Task.sleep(nanoseconds: 400 * 1_000_000)
             }
         }
     }
@@ -294,7 +294,7 @@ private func pclLaunchInternal(
                     }
                 }
             }
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(nanoseconds: 2 * 1_000_000_000)
         }
     }
 

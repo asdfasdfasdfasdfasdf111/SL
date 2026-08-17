@@ -26,7 +26,7 @@ final class SpeedMeter: ObservableObject {
         tickerTask = Task { @MainActor [weak self] in
             var idleSeconds = 0
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
+                try? await Task.sleep(nanoseconds: 1 * 1_000_000_000)
                 guard let self else { break }
                 let intervalBytes = await self.counter.takeInterval()
                 self.downloadSpeed = intervalBytes

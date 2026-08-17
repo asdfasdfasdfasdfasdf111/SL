@@ -2,6 +2,19 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 最低系统要求降至 macOS 12.0（2026-08-17）
+
+- 部署目标由 macOS 13.0 降至 macOS 12.0（README 系统要求同步更新）
+- 全量替换 macOS 13 专属 API 为 12 可用等价物（行为不变）：
+  - `URL.appending(path:directoryHint:)` / `appending(component:)` → `appendingPathComponent(_:)`（101 处，脚本批量替换 + 人工核对）
+  - `Task.sleep(for: .seconds/.milliseconds)` → `Task.sleep(nanoseconds:)`
+  - `URL.applicationSupportDirectory` 静态属性 → `FileManager.default.urls(for:in:)[0]`
+  - `String.replacing(_:with:)` → `replacingOccurrences(of:with:)`
+  - `URL.path(percentEncoded:)` / `path()` → `path`
+- SwiftUI：新增 `UI/CompatModifiers.swift`，`defaultFocus`、`contentTransition(.opacity)` 以 `#available` 包装修饰符（`defaultFocusCompat` / `contentTransitionOpacityCompat`）；`Scene.defaultSize` 因 SceneBuilder 在 macOS 12 目标下不支持条件语句，改由 `AppDelegate` 在 `applicationDidFinishLaunching` 中统一设置默认窗口尺寸（900×660 居中）
+- 依赖无影响：SwiftyJSON / ZIPFoundation 的最低平台要求均低于 macOS 12
+- 全量编译验证通过（swift build，macOS 12 目标，0 错误）
+
 ## 仓库规范整理（2026-08-17）
 
 - 新增 `README.md`（项目介绍、功能状态清单、构建说明、PCL2/PCLMac 致谢与引用说明）与 `LICENSE`（GPL-3.0），修复公开仓库无许可证即默认保留所有权利的问题

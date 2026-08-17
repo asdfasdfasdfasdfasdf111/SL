@@ -202,7 +202,7 @@ public class MinecraftInstallTask: InstallTask {
     public var manifest: ClientManifest?
     public var assetIndex: AssetIndex?
     public var name: String
-    public var versionURL: URL { minecraftDirectory.versionsURL.appending(path: name) }
+    public var versionURL: URL { minecraftDirectory.versionsURL.appendingPathComponent(name) }
     public let minecraftVersion: MinecraftVersion
     public let minecraftDirectory: MinecraftDirectory
     /// 显式固定为 MainActor 隔离，避免 Swift 6.2 + Swift 5 模式 + Approachable Concurrency
@@ -290,7 +290,7 @@ public class FabricInstallTask: InstallTask {
             state = .inprogress
         }
         do {
-            let manifestURL = task.versionURL.appending(path: "\(task.name).json")
+            let manifestURL = task.versionURL.appendingPathComponent("\(task.name).json")
             try await FabricInstaller.installFabric(version: task.minecraftVersion, minecraftDirectory: task.minecraftDirectory, runningDirectory: task.versionURL, self.loaderVersion)
             task.manifest = try ClientManifest.parse(url: manifestURL, minecraftDirectory: task.minecraftDirectory)
         } catch {

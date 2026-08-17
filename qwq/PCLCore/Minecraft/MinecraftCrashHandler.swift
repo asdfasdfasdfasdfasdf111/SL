@@ -20,7 +20,7 @@ public class MinecraftCrashHandler {
         
         do {
             let contents = try FileManager.default.contentsOfDirectory(
-                at: instance.runningDirectory.appending(path: "natives"),
+                at: instance.runningDirectory.appendingPathComponent("natives"),
                 includingPropertiesForKeys: nil
             )
             for fileURL in contents {
@@ -40,11 +40,11 @@ public class MinecraftCrashHandler {
         tmp.createFile(path: "启动命令.command", data: lastLaunchCommand.data(using: .utf8))
         
         // 导出日志与输出
-        try? FileManager.default.copyItem(at: SharedConstants.shared.logURL, to: tmp.root.appending(path: "PCL.Mac 启动器日志.log"))
-        try? FileManager.default.copyItem(at: launcher.logURL, to: tmp.root.appending(path: "游戏崩溃前的输出.txt"))
+        try? FileManager.default.copyItem(at: SharedConstants.shared.logURL, to: tmp.root.appendingPathComponent("PCL.Mac 启动器日志.log"))
+        try? FileManager.default.copyItem(at: launcher.logURL, to: tmp.root.appendingPathComponent("游戏崩溃前的输出.txt"))
         copyGameLogs(instance: instance, report: tmp.root)
         
-        try? FileManager.default.copyItem(at: instance.runningDirectory.appending(path: instance.name + ".json"), to: tmp.root.appending(path: instance.name + ".json"))
+        try? FileManager.default.copyItem(at: instance.runningDirectory.appendingPathComponent(instance.name + ".json"), to: tmp.root.appendingPathComponent(instance.name + ".json"))
         try? FileManager.default.zipItem(at: tmp.root, to: destination, shouldKeepParent: false)
         debug("错误报告导出完成")
         try? FileManager.default.removeItem(at: launcher.logURL)
@@ -52,12 +52,12 @@ public class MinecraftCrashHandler {
     }
     
     private static func copyGameLogs(instance: MinecraftInstance, report: URL) {
-        let logsURL = instance.runningDirectory.appending(path: "logs")
-        try? FileManager.default.copyItem(at: logsURL.appending(path: "latest.log"), to: report.appending(path: "latest.log"))
-        try? FileManager.default.copyItem(at: logsURL.appending(path: "debug.log"), to: report.appending(path: "debug.log"))
+        let logsURL = instance.runningDirectory.appendingPathComponent("logs")
+        try? FileManager.default.copyItem(at: logsURL.appendingPathComponent("latest.log"), to: report.appendingPathComponent("latest.log"))
+        try? FileManager.default.copyItem(at: logsURL.appendingPathComponent("debug.log"), to: report.appendingPathComponent("debug.log"))
         
         do {
-            let files = try FileManager.default.contentsOfDirectory(at: instance.runningDirectory.appending(path: "crash-reports"), includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants])
+            let files = try FileManager.default.contentsOfDirectory(at: instance.runningDirectory.appendingPathComponent("crash-reports"), includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants])
             
             let latestReport = files
                 .filter { $0.hasDirectoryPath == false }
@@ -68,7 +68,7 @@ public class MinecraftCrashHandler {
                 })
             
             if let latestFile = latestReport {
-                try FileManager.default.copyItem(at: latestFile, to: report.appending(path: latestFile.lastPathComponent))
+                try FileManager.default.copyItem(at: latestFile, to: report.appendingPathComponent(latestFile.lastPathComponent))
             }
         } catch {
             err("无法复制 crash-report: \(error.localizedDescription)")
