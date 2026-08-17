@@ -9,9 +9,9 @@ enum SearchTranslator {
 
     /// 中文 → 英文候选词列表（缓存命中直接返回）
     static func translate(_ text: String) async -> [String] {
-        cacheLock.lock()
-        if let cached = cache[text] { cacheLock.unlock(); return cached }
-        cacheLock.unlock()
+        if let cached = cacheLock.withLockCompat({ cache[text] }) {
+            return cached
+        }
 
         var components = URLComponents(string: "https://api.mymemory.translated.net/get")!
         components.queryItems = [
@@ -36,21 +36,19 @@ enum SearchTranslator {
         }
         guard !results.isEmpty else { return [] }
 
-        cacheLock.lock()
-        // 限制缓存大小：超过 100 条则清空一半
-        if cache.count >= 100 {
-            let keys = Array(cache.keys.prefix(50))
-            for k in keys { cache.removeValue(forKey: k) }
+        cacheLock.withLockCompat {
+            // 限制缓存大小：超过 100 条则清空一半
+            if cache.count >= 100 {
+                let keys = Array(cache.keys.prefix(50))
+                for k in keys { cache.removeValue(forKey: k) }
+            }
+            cache[text] = results
         }
-        cache[text] = results
-        cacheLock.unlock()
         return results
     }
 
     /// 清空缓存（内存警告时调用）
     static func clearCache() {
-        cacheLock.lock()
-        cache.removeAll()
-        cacheLock.unlock()
+        cacheLock.withLockCompat { cache.removeAll() }
     }
 }

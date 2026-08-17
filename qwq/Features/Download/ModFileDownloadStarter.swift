@@ -42,7 +42,7 @@ enum ModFileDownloadStarter {
                 // 到达时归属不一致 → 拒绝清理，避免误清新任务引用（跨任务交叉清理 UAF，
                 // 崩溃 #4 根因）。顺序无妨：onComplete 只是登记回调，下面才 task.start()。
                 ownerID = await MainActor.run { manager.start(task) }
-                task.onComplete { [pageType, settings, manager, destFile, ownerID] in
+                task.onComplete { [pageType, settings, destFile, ownerID] in
                     Task { @MainActor in
                         if pageType == .modpack, task.failureReason == nil {
                             // 整合包：zip 下载完成后还需解压安装（含 Minecraft/加载器/模组下载）
@@ -83,12 +83,14 @@ enum ModFileDownloadStarter {
                 }
                 task.start()
             } catch {
+                // Sendable 闭包不可捕获 var：先拷贝成常量再进 MainActor.run
+                let capturedOwner = ownerID
                 await MainActor.run {
                     // 只操作全局单例与 settings（引用类型，生命周期与视图解耦）
                     // 只有本次确实 start 过才 dismiss（ownerID 非 nil 且归属一致才清），
                     // 否则绝不动管理器里可能正在进行的其它下载
-                    if let ownerID {
-                        DownloadDetailManager.shared.dismiss(ownerID: ownerID)
+                    if let capturedOwner {
+                        DownloadDetailManager.shared.dismiss(ownerID: capturedOwner)
                     }
                     settings.launchErrorMessage = "下载失败: \(error.localizedDescription)"
                     settings.showLaunchAlert = true

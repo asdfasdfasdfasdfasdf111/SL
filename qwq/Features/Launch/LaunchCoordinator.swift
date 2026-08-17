@@ -125,7 +125,7 @@ enum LaunchCoordinator {
                         }
                     }
                     // 再插入 session（带 transition）；索引分配与暂存日志 flush 在 addSession 内完成
-                    withAnimation(.exaggeratedSpring) {
+                    _ = withAnimation(.exaggeratedSpring) {
                         sessionManager.addSession(launcher: launcher)
                     }
                 }

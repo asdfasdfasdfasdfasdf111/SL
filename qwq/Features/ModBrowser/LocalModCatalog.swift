@@ -20,7 +20,7 @@ enum LocalModCatalog {
         let downloads: Int
     }
 
-    private nonisolated(unsafe) static let localCatalogLock = NSLock()
+    private static let localCatalogLock = NSLock()
     private nonisolated(unsafe) static var localCatalog: [Item]?
     private nonisolated(unsafe) static var localCatalogItemsByType: [String: [DownloadedItem]] = [:]
     /// 本地全量目录是否已在后台解析完成。主线程只在它为 true 时才调用 items，

@@ -256,7 +256,7 @@ private func pclLaunchInternal(
     // 增量读取：FileHandle 维护读偏移，只读新增字节（原实现每 150ms 全量 Data(contentsOf:) 重读整个文件）
     // 无新数据时休眠 400ms；UTF-8 字符跨 chunk 截断通过「仅按 \n 边界切行 + 缓冲尾部」保证完整
     let logTask = Task.detached(priority: .utility) {
-        guard let handle = try? FileHandle(forReadingAtPath: logURL.path) else { return }
+        guard let handle = FileHandle(forReadingAtPath: logURL.path) else { return }
         defer { try? handle.close() }
         var pending = Data()
         while !Task.isCancelled {

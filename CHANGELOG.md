@@ -2,6 +2,13 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 编译警告清零（2026-08-17）
+
+- 全项目编译警告 34 → **0**（macOS 12 目标、Swift 5 语言模式全量构建验证）
+- 并发：新增 `PCLCore/Utils/LockCompat.swift`，`withUnfairLock` / `NSLock.withLockCompat` / `semaphoreWait` 同步中转函数（Apple 建议的 `OSAllocatedUnfairLock` 需 macOS 13，本方案 12 可用且加锁语义与原 lock/unlock 配对完全一致）；`ModpackDownloader`、`ModDownloader`、`SearchTranslator`、`TranslationService` 中 async 上下文内的裸锁调用全部改为作用域锁，去重逻辑保持「检查+登记」原子性
+- Sendable：`CardTranslationModel` weak self 捕获改为进 `MainActor.run` 前拷成强引用常量（写回仍受 `isActive` 守卫）；`ModFileDownloadStarter` 捕获 var 改常量拷贝、移除未使用捕获
+- 机械项：删除无意义 `try?`（2 处）、`withAnimation` 结果丢弃（1 处）、多余的 `nonisolated(unsafe)`（2 处）
+
 ## 最低系统要求降至 macOS 12.0（2026-08-17）
 
 - 部署目标由 macOS 13.0 降至 macOS 12.0（README 系统要求同步更新）

@@ -56,23 +56,23 @@ public class ModpackDownloader {
     }
 
     private func cachedSearchResult(forKey key: String) -> [Modpack]? {
-        os_unfair_lock_lock(&cacheLock)
-        defer { os_unfair_lock_unlock(&cacheLock) }
-        guard let entry = searchCache[key] else { return nil }
-        if Date().timeIntervalSince(entry.timestamp) > cacheTTL {
-            searchCache.removeValue(forKey: key)
-            return nil
+        withUnfairLock(&cacheLock) {
+            guard let entry = searchCache[key] else { return nil }
+            if Date().timeIntervalSince(entry.timestamp) > cacheTTL {
+                searchCache.removeValue(forKey: key)
+                return nil
+            }
+            return entry.results
         }
-        return entry.results
     }
 
     private func setCacheResult(_ results: [Modpack], forKey key: String) {
-        os_unfair_lock_lock(&cacheLock)
-        defer { os_unfair_lock_unlock(&cacheLock) }
-        searchCache[key] = (timestamp: Date(), results: results)
-        if searchCache.count > 50 {
-            let oldestKey = searchCache.min(by: { $0.value.timestamp < $1.value.timestamp })?.key
-            if let oldestKey = oldestKey { searchCache.removeValue(forKey: oldestKey) }
+        withUnfairLock(&cacheLock) {
+            searchCache[key] = (timestamp: Date(), results: results)
+            if searchCache.count > 50 {
+                let oldestKey = searchCache.min(by: { $0.value.timestamp < $1.value.timestamp })?.key
+                if let oldestKey = oldestKey { searchCache.removeValue(forKey: oldestKey) }
+            }
         }
     }
 
@@ -82,12 +82,9 @@ public class ModpackDownloader {
             return cached
         }
 
-        os_unfair_lock_lock(&pendingLock)
-        if let existingTask = pendingRequests[key] {
-            os_unfair_lock_unlock(&pendingLock)
+        if let existingTask = withUnfairLock(&pendingLock, { pendingRequests[key] }) {
             return try await existingTask.value
         }
-        os_unfair_lock_unlock(&pendingLock)
 
         let task = Task<[Modpack], Error> {
             var components = URLComponents(string: "\(base)/search")!
@@ -104,14 +101,10 @@ public class ModpackDownloader {
             return result.hits
         }
 
-        os_unfair_lock_lock(&pendingLock)
-        pendingRequests[key] = task
-        os_unfair_lock_unlock(&pendingLock)
+        withUnfairLock(&pendingLock) { pendingRequests[key] = task }
 
         defer {
-            os_unfair_lock_lock(&pendingLock)
-            pendingRequests.removeValue(forKey: key)
-            os_unfair_lock_unlock(&pendingLock)
+            withUnfairLock(&pendingLock) { pendingRequests.removeValue(forKey: key) }
         }
 
         return try await task.value

@@ -38,23 +38,26 @@ final class TranslationService {
             return cached
         }
 
-        // 4. 去重
-        lock.lock()
-        if inFlight.contains(projectId) {
-            lock.unlock()
+        // 4. 去重（检查 + 登记在一次持锁内完成，保持原子性）
+        let isDuplicated: Bool = lock.withLockCompat {
+            if inFlight.contains(projectId) {
+                return true
+            } else {
+                inFlight.insert(projectId)
+                return false
+            }
+        }
+        if isDuplicated {
             try? await Task.sleep(nanoseconds: 500_000_000)
             if let cached = cache.textGet("tr_\(projectId)"), !cached.isEmpty, ChineseText.contains(cached) { return cached }
             return text
-        } else {
-            inFlight.insert(projectId)
-            lock.unlock()
         }
         defer {
-            lock.lock(); inFlight.remove(projectId); lock.unlock()
+            lock.withLockCompat { inFlight.remove(projectId) }
         }
 
         // 4a. 全局并发限制（最多 24 个同时翻译）
-        Self.translationSemaphore.wait()
+        semaphoreWait(Self.translationSemaphore)
         defer { Self.translationSemaphore.signal() }
 
         // 5. 竞速拉取 Modrinth 详情与镜像翻译：谁先给出含中文的结果就采用谁，

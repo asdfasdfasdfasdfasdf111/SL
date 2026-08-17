@@ -10,7 +10,7 @@ import Combine
 
 @MainActor
 final class SpeedMeter: ObservableObject {
-    public nonisolated(unsafe) static let shared: SpeedMeter = .init()
+    public static let shared: SpeedMeter = .init()
     
     @Published public private(set) var downloadSpeed: Int64 = 0
     

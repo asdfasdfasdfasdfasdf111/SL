@@ -51,8 +51,10 @@ final class CardTranslationModel: ObservableObject {
             let ids = items.prefix(warmupCount).map { $0.id }
             let batch = service.prefetchTranslations(ids: ids)
             guard !batch.isEmpty, !Task.isCancelled else { return }
+            // Sendable 闭包不可引用 weak var 捕获：先拷成强引用常量再进 MainActor.run
+            guard let self else { return }
             await MainActor.run {
-                guard !Task.isCancelled, let self, self.isActive else { return }
+                guard !Task.isCancelled, self.isActive else { return }
                 // 单次 merge 写入：只触发一次 body 重算；超限裁剪统一走 CardTranslationStore
                 CardTranslationStore.merge(&self.translated, batch: batch, active: self.pendingIDs)
             }
@@ -78,7 +80,7 @@ final class CardTranslationModel: ObservableObject {
         let subtitle = item.subtitle
         // 磁盘缓存查询走 detached 立即执行（毫秒级、成本低，无需防抖）；
         // 命中即应用，减少「卡片出现 → 等防抖 → 再查盘」的感知延迟
-        if let diskCached = try? await Task.detached(priority: .utility, operation: { service.cachedTranslation(for: id) }).value,
+        if let diskCached = await Task.detached(priority: .utility, operation: { service.cachedTranslation(for: id) }).value,
            !diskCached.isEmpty {
             if Task.isCancelled {
                 pendingIDs.remove(id)
@@ -101,8 +103,9 @@ final class CardTranslationModel: ObservableObject {
             // 后台线程发起网络翻译：translateText 内含信号量阻塞等待，必须脱离主线程执行
             let result = try? await service.translateText(text: subtitle, projectId: id)
             let final = result ?? ""
+            // Sendable 闭包不可引用 weak var 捕获：先拷成强引用常量再进 MainActor.run
+            guard !Task.isCancelled, let self else { return }
             await MainActor.run {
-                guard let self else { return }
                 self.pendingIDs.remove(id)
                 if !final.isEmpty, self.isActive {
                     // 淡入动画：翻译完成时副标题文字柔和过渡，不再生硬跳变
