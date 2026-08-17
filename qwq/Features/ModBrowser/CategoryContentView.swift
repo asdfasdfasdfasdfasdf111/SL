@@ -20,7 +20,8 @@ struct CategoryContentView: View {
 
     private var launchView: some View {
         GeometryReader { geometry in
-            let cardWidth: CGFloat = 280
+            // 左侧卡片宽度自适应：占内容区宽度 32%，限制 260~360pt，窗口缩放时保持合理比例。
+            let cardWidth: CGFloat = min(max(geometry.size.width * 0.32, 260), 360)
             let buttonWidth = cardWidth * 0.7
             let avatarSize = buttonWidth * 0.7
             let logCardHeight = geometry.size.height * 0.32
