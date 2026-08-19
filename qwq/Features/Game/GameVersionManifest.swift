@@ -62,7 +62,14 @@ enum GameVersionManifest {
         async let unlisted = fetchList(url: unlistedManifestURL)
         var (official, fallback, unlistedVersions) = await (primary, mirror, unlisted)
         if official.isEmpty { official = fallback }
+        // 兜底保护：official 与 fallback 都为空时，不应拿 alist 未列出源当主数据源——
+        // alist 只列"未列出版本"（snapshot/pending/old_alpha/old_beta），本来就没有 release 类型，
+        // 把它当主数据会导致正式版筛选永远为空。
+        // 此时优先尝试未列出源中含 release 的条目（BMCLAPI 偶尔把版本塞这里）；都没有就放弃联网。
         var merged = official
+        if merged.isEmpty {
+            merged = unlistedVersions.filter { ($0["type"] as? String) == "release" }
+        }
         for i in unlistedVersions.indices {
             if let url = unlistedVersions[i]["url"] as? String {
                 unlistedVersions[i]["url"] = url.replacingOccurrences(of: unlistedManifestRoot, with: unlistedManifestMirrorRoot)
