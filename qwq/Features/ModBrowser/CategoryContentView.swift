@@ -68,7 +68,17 @@ struct CategoryContentView: View {
         }
     }
     private func leftCard(cardWidth: CGFloat, avatarSize: CGFloat, buttonWidth: CGFloat) -> some View {
-        VStack(spacing: 16) {
+        let tapLaunch: () -> Void = {
+            isUsernameFocused = false
+            guard !settings.selectedMinecraftVersion.isEmpty else {
+                settings.launchErrorMessage = "请先在「游戏」分类中选择一个版本"
+                settings.showLaunchAlert = true
+                return
+            }
+            guard !sessionManager.isLaunching else { return }
+            startLaunch()
+        }
+        return VStack(spacing: 16) {
             if !settings.selectedMinecraftVersion.isEmpty {
                 Text("当前版本: \(settings.selectedMinecraftVersion)")
                     .font(.caption).foregroundColor(.secondary).padding(.top, 4)
@@ -79,27 +89,27 @@ struct CategoryContentView: View {
             avatarView(avatarSize: avatarSize)
             usernameField
             skinButton
-            Spacer()
-            LaunchButton(
-                buttonWidth: buttonWidth,
-                isLaunching: sessionManager.isLaunching,
-                launchPhase: sessionManager.launchPhase,
-                lightProgress: sessionManager.lightProgress,
-                darkProgress: sessionManager.darkProgress,
-                onTap: {
-                    isUsernameFocused = false
-                    guard !settings.selectedMinecraftVersion.isEmpty else {
-                        settings.launchErrorMessage = "请先在「游戏」分类中选择一个版本"
-                        settings.showLaunchAlert = true
-                        return
-                    }
-                    guard !sessionManager.isLaunching else { return }
-                    startLaunch()
-                }
-            )
+            Spacer(minLength: 0)
+            // 占位：启动按钮放在卡片背景的 overlay 上钉底（见下方 overlay），
+            // 这里 76pt 透明占位防止 VStack 内容与按钮重叠
+            Color.clear.frame(height: 76)
         }
         .frame(width: cardWidth)
-        .background(RoundedRectangle(cornerRadius: 24).fill(.regularMaterial).shadow(radius: 12))
+        .background(
+            RoundedRectangle(cornerRadius: 24).fill(.regularMaterial).shadow(radius: 12)
+                .overlay(
+                    LaunchButton(
+                        buttonWidth: buttonWidth,
+                        isLaunching: sessionManager.isLaunching,
+                        launchPhase: sessionManager.launchPhase,
+                        lightProgress: sessionManager.lightProgress,
+                        darkProgress: sessionManager.darkProgress,
+                        onTap: tapLaunch
+                    )
+                    .padding(.bottom, 24),
+                    alignment: .bottom
+                )
+        )
     }
 
     private func avatarView(avatarSize: CGFloat) -> some View {

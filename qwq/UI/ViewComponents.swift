@@ -47,11 +47,14 @@ struct SkinLayerView: View {
         }
     }
 
-    /// 静态同步裁剪：startX/startY 为 Minecraft 皮肤贴图坐标（左上角为原点），
-    /// CIImage 像素行顺序同样以顶部为 row 0，因此直接裁剪，无需 yOffset 翻转。
+    /// 静态同步裁剪：startX/startY 为 Minecraft 皮肤贴图坐标（左上角为原点）。
+    /// CIImage 的 cropped(rect:) 使用左下原点坐标系（y 向上增长），需把 startY
+    /// 翻转成 (imageHeight - startY - height) 才能读到 Minecraft 期望的区域。
     private static func cropped(imageData: Data, startX: CGFloat, startY: CGFloat) -> NSImage? {
         guard var ciImage = CIImage(data: imageData) else { return nil }
-        ciImage = ciImage.cropped(to: CGRect(x: startX, y: startY, width: 8, height: 8))
+        let cropHeight: CGFloat = 8
+        let ciY = max(0, ciImage.extent.height - startY - cropHeight)
+        ciImage = ciImage.cropped(to: CGRect(x: startX, y: ciY, width: 8, height: cropHeight))
         let context = CIContext(options: nil)
         let extent = ciImage.extent
         guard let cgImage = context.createCGImage(ciImage, from: extent) else { return nil }
