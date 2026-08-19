@@ -53,6 +53,7 @@ struct CategoryContentView: View {
                 .onTapGesture { isUsernameFocused = false }
             HStack(alignment: .top, spacing: 20) {
                 leftCard(cardWidth: cardWidth, avatarSize: avatarSize, buttonWidth: buttonWidth)
+                    .frame(height: cardHeight, alignment: .top)
                     .zIndex(1)
                 logPanel(logCardHeight: logCardHeight)
                 Spacer(minLength: 0)
@@ -67,47 +68,38 @@ struct CategoryContentView: View {
         }
     }
     private func leftCard(cardWidth: CGFloat, avatarSize: CGFloat, buttonWidth: CGFloat) -> some View {
-        let tapLaunch: () -> Void = {
-            isUsernameFocused = false
-            guard !settings.selectedMinecraftVersion.isEmpty else {
-                settings.launchErrorMessage = "请先在「游戏」分类中选择一个版本"
-                settings.showLaunchAlert = true
-                return
-            }
-            guard !sessionManager.isLaunching else { return }
-            startLaunch()
-        }
-        return VStack(spacing: 16) {
+        VStack(spacing: 16) {
             if !settings.selectedMinecraftVersion.isEmpty {
                 Text("当前版本: \(settings.selectedMinecraftVersion)")
                     .font(.caption).foregroundColor(.secondary).padding(.top, 4)
             } else {
                 Text("未选择版本").font(.caption).foregroundColor(.secondary).padding(.top, 4)
             }
+            Spacer(minLength: 0)
             avatarView(avatarSize: avatarSize)
             usernameField
             skinButton
-            // 占位：启动按钮放在卡片背景的 overlay 上钉底（见下方 overlay），
-            // 这里 76pt 透明占位防止 VStack 内容与按钮重叠
-            Color.clear.frame(height: 76)
+            Spacer()
+            LaunchButton(
+                buttonWidth: buttonWidth,
+                isLaunching: sessionManager.isLaunching,
+                launchPhase: sessionManager.launchPhase,
+                lightProgress: sessionManager.lightProgress,
+                darkProgress: sessionManager.darkProgress,
+                onTap: {
+                    isUsernameFocused = false
+                    guard !settings.selectedMinecraftVersion.isEmpty else {
+                        settings.launchErrorMessage = "请先在「游戏」分类中选择一个版本"
+                        settings.showLaunchAlert = true
+                        return
+                    }
+                    guard !sessionManager.isLaunching else { return }
+                    startLaunch()
+                }
+            )
         }
-        .fixedSize(horizontal: false, vertical: true)
         .frame(width: cardWidth)
-        .background(
-            RoundedRectangle(cornerRadius: 24).fill(.regularMaterial).shadow(radius: 12)
-                .overlay(
-                    LaunchButton(
-                        buttonWidth: buttonWidth,
-                        isLaunching: sessionManager.isLaunching,
-                        launchPhase: sessionManager.launchPhase,
-                        lightProgress: sessionManager.lightProgress,
-                        darkProgress: sessionManager.darkProgress,
-                        onTap: tapLaunch
-                    )
-                    .padding(.bottom, 24),
-                    alignment: .bottom
-                )
-        )
+        .background(RoundedRectangle(cornerRadius: 24).fill(.regularMaterial).shadow(radius: 12))
     }
 
     private func avatarView(avatarSize: CGFloat) -> some View {
@@ -115,10 +107,10 @@ struct CategoryContentView: View {
             // 双层渲染（还原：头 + 帽层叠加消除半透明），数据来自首帧预载缓存。
             // .id(data)：@State 初始值仅在首次出现生效，皮肤数据变化时靠 id 变化强制重建并重新裁剪
             if let data = avatarSkinData {
-                SkinLayerView(imageData: data, startX: 8, startY: 8, width: 8 * 5.4 / 58 * avatarSize, height: 8 * 5.4 / 58 * avatarSize)
+                SkinLayerView(imageData: data, startX: 8, startY: 16, width: 8 * 5.4 / 58 * avatarSize, height: 8 * 5.4 / 58 * avatarSize)
                     .id(data)
                     .shadow(color: Color.black.opacity(0.2), radius: 1)
-                SkinLayerView(imageData: data, startX: 40, startY: 8, width: 7.99 * 6.1 / 58 * avatarSize, height: 7.99 * 6.1 / 58 * avatarSize)
+                SkinLayerView(imageData: data, startX: 40, startY: 16, width: 7.99 * 6.1 / 58 * avatarSize, height: 7.99 * 6.1 / 58 * avatarSize)
                     .id(data)
             }
         }
