@@ -129,11 +129,6 @@ struct ContentView: View {
                 window.titlebarAppearsTransparent = true
                 window.styleMask.insert(.fullSizeContentView)
                 window.minSize = NSSize(width: 800, height: 550)
-                var frame = window.frame
-                if frame.size.height > window.minSize.height {
-                    frame.size.height = window.minSize.height
-                    window.setFrame(frame, display: true, animate: true)
-                }
             }
             JavaManager.shared.preScanJavaAsync()
         }

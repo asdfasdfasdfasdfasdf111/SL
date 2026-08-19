@@ -107,10 +107,10 @@ struct CategoryContentView: View {
             // 双层渲染（还原：头 + 帽层叠加消除半透明），数据来自首帧预载缓存。
             // .id(data)：@State 初始值仅在首次出现生效，皮肤数据变化时靠 id 变化强制重建并重新裁剪
             if let data = avatarSkinData {
-                SkinLayerView(imageData: data, startX: 8, startY: 16, width: 8 * 5.4 / 58 * avatarSize, height: 8 * 5.4 / 58 * avatarSize)
+                SkinLayerView(imageData: data, startX: 8, startY: 8, width: 8 * 5.4 / 58 * avatarSize, height: 8 * 5.4 / 58 * avatarSize)
                     .id(data)
                     .shadow(color: Color.black.opacity(0.2), radius: 1)
-                SkinLayerView(imageData: data, startX: 40, startY: 16, width: 7.99 * 6.1 / 58 * avatarSize, height: 7.99 * 6.1 / 58 * avatarSize)
+                SkinLayerView(imageData: data, startX: 40, startY: 8, width: 7.99 * 6.1 / 58 * avatarSize, height: 7.99 * 6.1 / 58 * avatarSize)
                     .id(data)
             }
         }
