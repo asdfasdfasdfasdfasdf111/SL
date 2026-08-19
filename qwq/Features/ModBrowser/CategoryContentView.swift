@@ -53,7 +53,6 @@ struct CategoryContentView: View {
                 .onTapGesture { isUsernameFocused = false }
             HStack(alignment: .top, spacing: 20) {
                 leftCard(cardWidth: cardWidth, avatarSize: avatarSize, buttonWidth: buttonWidth)
-                    .frame(height: cardHeight, alignment: .top)
                     .zIndex(1)
                 logPanel(logCardHeight: logCardHeight)
                 Spacer(minLength: 0)
