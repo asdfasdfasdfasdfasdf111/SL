@@ -84,15 +84,14 @@ struct CategoryContentView: View {
             } else {
                 Text("未选择版本").font(.caption).foregroundColor(.secondary).padding(.top, 4)
             }
-            Spacer(minLength: 0)
             avatarView(avatarSize: avatarSize)
             usernameField
             skinButton
-            Spacer(minLength: 0)
             // 占位：启动按钮放在卡片背景的 overlay 上钉底（见下方 overlay），
             // 这里 76pt 透明占位防止 VStack 内容与按钮重叠
             Color.clear.frame(height: 76)
         }
+        .fixedSize(horizontal: false, vertical: true)
         .frame(width: cardWidth)
         .background(
             RoundedRectangle(cornerRadius: 24).fill(.regularMaterial).shadow(radius: 12)
