@@ -52,3 +52,9 @@ PCL2/
 
 # 自动化任务元数据（勿提交）
 .workbuddy/
+
+# opencode 内部计划目录（勿提交）
+.omo/
+
+# superbased 截图目录（勿提交）
+.superbased/
