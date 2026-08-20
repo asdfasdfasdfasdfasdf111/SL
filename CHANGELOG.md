@@ -2,6 +2,12 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 皮肤资源包兼容 26.2 + 启动体验（2026-08-20）
+
+- **皮肤资源包修复（26.2+ 兼容）**：新版（25w31a+）资源包格式改用必填 `min_format`/`max_format`（resource pack ≥ 65 时旧字段 `pack_format`/`supported_formats` 会被判定 "no longer compatible" 并剔除）——现在从版本 jar 内 `version.json` 动态读取 `pack_version.resource_major/minor`，≥ 65 写新格式、老版本回落 `pack_format`；同时修复资源包临时目录未创建导致打包失败的问题。真机验证 26.2-Fabric 正常加载（`Reloading ResourceManager: vanilla, file/SL 皮肤.zip`）
+- 游戏启动强制中文：每次启动前将目标版本 options.txt 的 `lang` 写为 `zh_cn`
+- 版本选择列表支持横向滑动（版本多时左右拖动查看，避免超出卡片高度被裁）
+
 ## 编译警告清零（2026-08-17）
 
 - 全项目编译警告 34 → **0**（macOS 12 目标、Swift 5 语言模式全量构建验证）

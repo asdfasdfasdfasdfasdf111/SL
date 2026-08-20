@@ -17,7 +17,7 @@ enum SkinResourcePackApplier {
         let skinHash = (try? Util.sha1OfFile(url: skinURL)) ?? "unknown"
         let currentHash = "pack_\(version)_\(skinHash)"
         if settings.appliedSkinHash == currentHash {
-            print("皮肤资源包未变化，跳过")
+            NSLog("皮肤资源包未变化，跳过")
             return
         }
 
@@ -28,10 +28,22 @@ enum SkinResourcePackApplier {
         // 1) 组织临时目录：pack.mcmeta + assets 皮肤文件
         let tempDir = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? fileManager.removeItem(at: tempDir) }
+        try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
 
-        // pack.mcmeta：pack_format 用 1 保证全版本可加载（旧格式在新版可正常使用，仅显示"旧格式"标记）
+        // pack.mcmeta：pack_format 版本自适应——现代版本（1.21+）从 jar 内 version.json 动态读
+        // pack_version.resource_major（26.2 实测 88）；老版本（无该字段）回落 pack_format 1
+        // （旧格式仍被老版本接受，但新版本会报 "Removed ... no longer compatible" 并拒绝加载）
+        let packVersion = SkinResourcePackApplier.packPackVersion(for: gameDir.appendingPathComponent("\(version).jar"))
         let mcmetaURL = tempDir.appendingPathComponent("pack.mcmeta")
-        let mcmeta = #"{"pack":{"pack_format":1,"description":"SL 启动器 自定义离线皮肤资源包"}}"#
+        // 25w31a+（resource pack >= 65）格式改用必填 min_format/max_format；此时旧字段
+        // pack_format/supported_formats "not allowed and must be removed"（写了判 no longer compatible，26.2 实测）。
+        // <25w31a 的版本不认新字段，回落 pack_format
+        let mcmeta: String
+        if let packVersion, packVersion.major >= 65 {
+            mcmeta = #"{"pack":{"description":"SL 启动器 自定义离线皮肤资源包","min_format":[\#(packVersion.major),\#(packVersion.minor)],"max_format":[\#(packVersion.major),\#(packVersion.minor)]}}"#
+        } else {
+            mcmeta = #"{"pack":{"pack_format":\#(packVersion?.major ?? 1),"description":"SL 启动器 自定义离线皮肤资源包"}}"#
+        }
         try mcmeta.write(to: mcmetaURL, atomically: true, encoding: .utf8)
 
         // 皮肤写入所有可能被加载的默认皮肤路径（wide + slim 双模型 + 旧版顶层路径）
@@ -57,7 +69,6 @@ enum SkinResourcePackApplier {
             try fileManager.removeItem(at: zipURL)
         }
         try runCommand("/usr/bin/zip", arguments: ["-rq", zipURL.path, "pack.mcmeta", "assets"], currentDirectory: tempDir)
-        print("皮肤资源包已生成: \(zipURL.path)")
 
         // 3) 注入 options.txt 的 resourcePacks（PCL2 逻辑：去重后追加到末尾 = 最高优先级）
         try updateOptionsResourcePacks(gameDir: gameDir, addPack: packFileName)
@@ -113,7 +124,23 @@ enum SkinResourcePackApplier {
             content += "resourcePacks:\(newValue)\n"
         }
         try content.write(to: optionsURL, atomically: true, encoding: .utf8)
-        print("options.txt resourcePacks 已更新: \(newValue)")
+        NSLog("options.txt resourcePacks 已更新: \(newValue)")
+    }
+
+    /// 读取版本 jar 内 version.json 的 pack_version（resource_major/minor）。
+    /// 老版本 client jar 无 version.json 或该字段，返回 nil → 调用方回落 pack_format 1
+    private static func packPackVersion(for versionJar: URL) -> (major: Int, minor: Int)? {
+        guard FileManager.default.fileExists(atPath: versionJar.path) else { return nil }
+        guard let out = AppContext.shared.processPool.execute(
+            "/usr/bin/unzip", args: ["-p", versionJar.path, "version.json"],
+            timeout: 10, captureStderr: true
+        ),
+        let data = out.data(using: .utf8),
+        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let pv = obj["pack_version"] as? [String: Any],
+        let major = pv["resource_major"] as? Int else { return nil }
+        let minor = pv["resource_minor"] as? Int ?? 0
+        return (major, minor)
     }
 
     /// 执行命令（使用 ProcessPool）

@@ -136,26 +136,34 @@ enum LaunchCoordinator {
                        let session = sessionManager.session(for: launcher) {
                         session.isProcessRunning = false
                         session.isLaunching = false
-                    }
-                    switch result {
-                    case .success(let exitCode):
-                        let userTerminated = launcher?.isUserTerminated ?? false
-                        if exitCode != 0 && !userTerminated {
-                            settings.launchErrorMessage = "Minecraft 异常退出 (退出码: \(exitCode))，请查看日志"
+                        switch result {
+                        case .success(let exitCode):
+                            let userTerminated = launcher.isUserTerminated
+                            if exitCode != 0 && !userTerminated {
+                                settings.launchErrorMessage = "Minecraft 异常退出 (退出码: \(exitCode))，请查看日志"
+                                settings.showLaunchAlert = true
+                            }
+                            if exitCode == 0 || userTerminated {
+                                // 正常退出或被用户终止：自动清掉会话，避免日志面板残留
+                                let willBeEmpty = sessionManager.sessions.count == 1
+                                withAnimation(.exaggeratedSpring) {
+                                    sessionManager.removeSession(session)
+                                    if willBeEmpty { sessionManager.showLogView = false }
+                                }
+                            }
+                            sessionManager.resetProgress()
+                            withAnimation(.easeOut(duration: 0.3)) {
+                                sessionManager.launchPhase = .idle
+                            }
+                        case .failure(let error):
+                            sessionManager.resetProgress()
+                            withAnimation(.easeOut(duration: 0.3)) {
+                                sessionManager.launchPhase = .idle
+                                if sessionManager.sessions.isEmpty { sessionManager.showLogView = false }
+                            }
+                            settings.launchErrorMessage = error.localizedDescription
                             settings.showLaunchAlert = true
                         }
-                        sessionManager.resetProgress()
-                        withAnimation(.easeOut(duration: 0.3)) {
-                            sessionManager.launchPhase = .idle
-                        }
-                    case .failure(let error):
-                        sessionManager.resetProgress()
-                        withAnimation(.easeOut(duration: 0.3)) {
-                            sessionManager.launchPhase = .idle
-                            if sessionManager.sessions.isEmpty { sessionManager.showLogView = false }
-                        }
-                        settings.launchErrorMessage = error.localizedDescription
-                        settings.showLaunchAlert = true
                     }
                 }
             }
@@ -166,18 +174,34 @@ enum LaunchCoordinator {
         // 后台执行避免阻塞主线程。JAR 替换对 1.13+ 无效（默认皮肤在 entity/player/{slim,wide}/ 下），
         // 资源包方案全版本生效（1.19.3+ 与旧版路径都写入）。
         let gameDirPath = settings.selectedGameRoot.isEmpty ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "") : settings.selectedGameRoot
-        if let skin = settings.skinImageURL, !gameDirPath.isEmpty, !version.isEmpty {
+        // 语言与皮肤写入串行在同一个后台队列（都改 options.txt，避免竞态互相覆盖）。
+        // 实际游戏运行目录是 gameRoot/versions/<版本>（instance.runningDirectory，pclLaunch 实证），
+        // 皮肤包与 options.txt 必须写到这里；此前写到 gameRoot 根目录游戏读不到（潜伏错误）。
+        let versionGameDir: URL? = {
+            guard !gameDirPath.isEmpty, !version.isEmpty else { return nil }
+            return URL(fileURLWithPath: gameDirPath + "/versions/" + version)
+        }()
+        if let skin = settings.skinImageURL, let versionGameDir {
             DispatchQueue.global(qos: .utility).async {
                 do {
                     try SkinResourcePackApplier.apply(
                         skinURL: skin,
                         toVersion: version,
-                        gameDir: URL(fileURLWithPath: gameDirPath),
+                        gameDir: versionGameDir,
                         settings: settings
                     )
                 } catch {
-                    print("皮肤资源包应用失败: \(error.localizedDescription)")
+                    let err = "皮肤资源包应用失败: \(error.localizedDescription)"
+                    NSLog(err)
                 }
+                GameLanguageSetter.applyChinese(gameDir: versionGameDir)
+                DispatchQueue.main.async {
+                    startGame()
+                }
+            }
+        } else if let versionGameDir {
+            DispatchQueue.global(qos: .utility).async {
+                GameLanguageSetter.applyChinese(gameDir: versionGameDir)
                 DispatchQueue.main.async {
                     startGame()
                 }
@@ -210,31 +234,22 @@ enum LaunchCoordinator {
         }
     }
 
-    /// 电源按钮点击：运行中有游戏 → NSAlert 确认后终止全部；否则取消启动并复位
+    /// 电源按钮点击：运行中有游戏 → 直接终止全部（不弹窗确认）；否则取消启动并复位
     static func handlePowerTap(sessionManager: LaunchSessionManager) {
         let runningSessions = sessionManager.sessions.filter { $0.isProcessRunning }
         if !runningSessions.isEmpty {
-            let alert = NSAlert()
-            alert.messageText = runningSessions.count == 1 ? "确认关闭游戏？" : "确认关闭 \(runningSessions.count) 个正在运行的游戏？"
-            alert.informativeText = "游戏进程将被终止，未保存的进度可能会丢失。"
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "关闭")
-            alert.addButton(withTitle: "取消")
-            let response = alert.runModal()
-            if response == .alertFirstButtonReturn {
-                for s in runningSessions {
-                    s.launcher.terminate()
-                    s.isProcessRunning = false
-                    s.isLaunching = false
-                }
-                withAnimation(.exaggeratedSpring) {
-                    sessionManager.removeAllSessions()
-                    sessionManager.showLogView = false
-                }
-                sessionManager.resetProgress()
-                withAnimation(.easeOut(duration: 0.3)) {
-                    sessionManager.launchPhase = .idle
-                }
+            for s in runningSessions {
+                s.launcher.terminate()
+                s.isProcessRunning = false
+                s.isLaunching = false
+            }
+            withAnimation(.exaggeratedSpring) {
+                sessionManager.removeAllSessions()
+                sessionManager.showLogView = false
+            }
+            sessionManager.resetProgress()
+            withAnimation(.easeOut(duration: 0.3)) {
+                sessionManager.launchPhase = .idle
             }
         } else {
             sessionManager.resetProgress()
