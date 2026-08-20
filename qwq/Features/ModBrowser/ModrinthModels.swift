@@ -35,5 +35,6 @@ public struct ModrinthVersion: Codable {
         public let filename: String
         public let primary: Bool
         public let size: Int
+        public let hashes: [String: String]?
     }
 }

@@ -196,8 +196,8 @@ struct ModDetailView: View {
                 .buttonStyle(.plain)
                 .scaleEffect(bounceScale)
                 .padding(.trailing, downloadDetail.showCircleButton ? 88 : 12)
-                // 详情页底部有外层裁剪；在原安全间距上再上移 8pt，避免按钮仍显得过低。
-                .padding(.bottom, 44)
+                // 详情页底部有外层裁剪；上移更多避免按钮被裁切
+                .padding(.bottom, 193)
                 .animation(.interpolatingSpring(stiffness: 170, damping: 14), value: downloadDetail.showCircleButton)
             }
         }

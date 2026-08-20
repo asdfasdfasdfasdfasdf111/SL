@@ -129,7 +129,7 @@ public class ModDownloader {
         guard let primaryFile = version.files.first(where: { $0.primary }) ?? version.files.first else {
             throw ModError.noDownloadableFile
         }
-        let fileURL = URL(string: primaryFile.url)!
+        let fileURL = try URL(string: primaryFile.url).unwrap("模组文件下载地址无效")
         let destURL = destination.appendingPathComponent(primaryFile.filename)
         
         let (tempURL, _) = try await session.download(from: fileURL)
@@ -138,6 +138,12 @@ public class ModDownloader {
             try FileManager.default.removeItem(at: destURL)
         }
         try FileManager.default.moveItem(at: tempURL, to: destURL)
+
+        if let sha1 = primaryFile.hashes?["sha1"], !sha1.isEmpty,
+           let failReason = FileChecker(hash: sha1).check(destURL) {
+            try? FileManager.default.removeItem(at: destURL)
+            throw ModError.hashMismatch(failReason)
+        }
         return destURL
     }
     
@@ -243,6 +249,8 @@ public class ModDownloader {
         case noCompatibleVersion
         case noGameVersionSet
         case noGameRootSet
+        case invalidURL
+        case hashMismatch(String)
 
         public var errorDescription: String? {
             switch self {
@@ -250,6 +258,8 @@ public class ModDownloader {
             case .noCompatibleVersion: return "未找到兼容的模组版本"
             case .noGameVersionSet: return "未选择 Minecraft 版本"
             case .noGameRootSet: return "未设置游戏根目录"
+            case .invalidURL: return "模组文件下载地址无效"
+            case .hashMismatch(let reason): return "模组文件完整性校验失败：\(reason)"
             }
         }
     }

@@ -17,6 +17,10 @@ struct CategoryContentView: View {
     // 头像皮肤数据首帧缓存：视图创建时同步从本地（持久化皮肤 → UUID 皮肤磁盘缓存 → 内置 Steve）预载，
     // 双层渲染（头+帽）拿到数据后立即裁剪显示，首帧不再空白等待 JAR 提取
     @State private var avatarSkinData: Data? = CategoryContentView.preloadedSkinData()
+    // 头像成品（头+帽）预裁缓存：后台裁剪，主线程渲染路径零 CoreImage（否则每次布局重算
+    // 同步 new CIContext + createCGImage 会卡住动画帧）
+    @State private var headImage: NSImage?
+    @State private var hatImage: NSImage?
 
     private var launchView: some View {
         GeometryReader { geometry in
@@ -24,8 +28,8 @@ struct CategoryContentView: View {
             let buttonWidth = cardWidth * 0.7
             let avatarSize = buttonWidth * 0.7
             let logCardHeight = geometry.size.height * 0.32
-            // 卡片随内容区动态高度：上下各留 20pt 空隙，底部不贴边但始终延伸到底部附近。
-            let cardHeight = max(0, geometry.size.height - 40)
+            // 固定卡片高度：防止 Spacer 吸收 HStack 额外高度导致拉伸
+            let cardHeight: CGFloat = 20 + avatarSize + 12 + 44 + 50 + 80 + 64 + 4 + 28
             launchContent(cardWidth: cardWidth, buttonWidth: buttonWidth, avatarSize: avatarSize, logCardHeight: logCardHeight, cardHeight: cardHeight)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -52,14 +56,14 @@ struct CategoryContentView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { isUsernameFocused = false }
             HStack(alignment: .top, spacing: 20) {
-                leftCard(cardWidth: cardWidth, avatarSize: avatarSize, buttonWidth: buttonWidth)
-                    .frame(height: cardHeight, alignment: .top)
+                leftCard(cardWidth: cardWidth, avatarSize: avatarSize, buttonWidth: buttonWidth, cardHeight: cardHeight)
                     .zIndex(1)
                 logPanel(logCardHeight: logCardHeight)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 20)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             CloseSessionButton(
                 isLaunching: sessionManager.isLaunching,
                 hasRunningSessions: sessionManager.hasRunningSessions,
@@ -67,7 +71,7 @@ struct CategoryContentView: View {
             )
         }
     }
-    private func leftCard(cardWidth: CGFloat, avatarSize: CGFloat, buttonWidth: CGFloat) -> some View {
+    private func leftCard(cardWidth: CGFloat, avatarSize: CGFloat, buttonWidth: CGFloat, cardHeight: CGFloat) -> some View {
         VStack(spacing: 16) {
             if !settings.selectedMinecraftVersion.isEmpty {
                 Text("当前版本: \(settings.selectedMinecraftVersion)")
@@ -75,11 +79,10 @@ struct CategoryContentView: View {
             } else {
                 Text("未选择版本").font(.caption).foregroundColor(.secondary).padding(.top, 4)
             }
-            Spacer(minLength: 0)
             avatarView(avatarSize: avatarSize)
             usernameField
             skinButton
-            Spacer()
+            Spacer(minLength: 0)
             LaunchButton(
                 buttonWidth: buttonWidth,
                 isLaunching: sessionManager.isLaunching,
@@ -98,26 +101,30 @@ struct CategoryContentView: View {
                 }
             )
         }
-        .frame(width: cardWidth)
+        .frame(width: cardWidth, height: cardHeight)
         .background(RoundedRectangle(cornerRadius: 24).fill(.regularMaterial).shadow(radius: 12))
     }
 
     private func avatarView(avatarSize: CGFloat) -> some View {
         ZStack {
-            // 双层渲染（还原：头 + 帽层叠加消除半透明），数据来自首帧预载缓存。
-            // .id(data)：@State 初始值仅在首次出现生效，皮肤数据变化时靠 id 变化强制重建并重新裁剪
-            if let data = avatarSkinData {
-                SkinLayerView(imageData: data, startX: 8, startY: 16, width: 8 * 5.4 / 58 * avatarSize, height: 8 * 5.4 / 58 * avatarSize)
-                    .id(data)
+            // 双层渲染（还原：头 + 帽层叠加消除半透明）。
+            // headImage/hatImage 由 refreshSkinData 后台裁剪，布局重算零 CoreImage
+            if let headImage {
+                SkinLayerView(image: headImage, width: 8 * 5.4 / 58 * avatarSize, height: 8 * 5.4 / 58 * avatarSize)
                     .shadow(color: Color.black.opacity(0.2), radius: 1)
-                SkinLayerView(imageData: data, startX: 40, startY: 16, width: 7.99 * 6.1 / 58 * avatarSize, height: 7.99 * 6.1 / 58 * avatarSize)
-                    .id(data)
+            }
+            if let hatImage {
+                SkinLayerView(image: hatImage, width: 7.99 * 6.1 / 58 * avatarSize, height: 7.99 * 6.1 / 58 * avatarSize)
             }
         }
         .frame(width: avatarSize, height: avatarSize)
         .clipped()
         .padding(6)
         .onAppear {
+            // 首帧若尚未裁剪（预载 Data 成功但成品未出），后台裁出头/帽
+            if avatarSkinData != nil && headImage == nil {
+                refreshSkinData()
+            }
             // 延迟到渲染事务外：onAppear 同步写 @Published 会触发
             // "Modifying state during view update"（UAF 崩溃前兆）
             DispatchQueue.main.async {
@@ -126,16 +133,32 @@ struct CategoryContentView: View {
             }
         }
         .onChange(of: settings.skinImageURL) { _ in
+            reloadSkinDataFromFile()
+        }
+        .onChange(of: avatarSkinData) { _ in
             refreshSkinData()
         }
     }
 
-    /// 皮肤数据变更后刷新首帧缓存（后台读文件，避免主线程 IO）
-    private func refreshSkinData() {
+    /// 皮肤文件变更后后台重读（避免主线程 IO），data 变化触发 refreshSkinData 重裁
+    private func reloadSkinDataFromFile() {
         guard let url = settings.skinImageURL, FileManager.default.fileExists(atPath: url.path) else { return }
         Task.detached(priority: .userInitiated) {
             if let data = try? Data(contentsOf: url) {
                 await MainActor.run { self.avatarSkinData = data }
+            }
+        }
+    }
+
+    /// 后台裁剪头/帽成品，主线程只接收成品（渲染路径零 CoreImage）
+    private func refreshSkinData() {
+        guard let data = avatarSkinData else { return }
+        Task.detached(priority: .userInitiated) {
+            let head = SkinLayerView.cropped(imageData: data, startX: 8, startY: 16)
+            let hat = SkinLayerView.cropped(imageData: data, startX: 40, startY: 16)
+            await MainActor.run {
+                self.headImage = head
+                self.hatImage = hat
             }
         }
     }
@@ -206,6 +229,7 @@ struct CategoryContentView: View {
                 .background(
                     RoundedRectangle(cornerRadius: 20)
                         .fill(.ultraThinMaterial)
+                        .opacity(isUsernameFocused ? 1 : 0)
                         .overlay(RoundedRectangle(cornerRadius: 20).stroke(isUsernameFocused ? theme.accentColor : Color.clear, lineWidth: 1.5))
                 )
                 .foregroundColor(.primary)
