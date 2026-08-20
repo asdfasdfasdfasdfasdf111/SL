@@ -82,14 +82,6 @@ public class VersionManifest: Codable {
         }
     }
     
-    public func getLatestRelease() -> GameVersion {
-        return self.versions.find { $0.id == self.latest.release }!
-    }
-    
-    public func getLatestSnapshot() -> GameVersion {
-        return self.versions.find { $0.id == self.latest.snapshot }!
-    }
-    
     public static func getReleaseDate(_ version: MinecraftVersion) -> Date? {
         if let manifest = DataManager.shared.versionManifest {
             return manifest.versions.find { $0.id == version.displayName }?.releaseTime // 需要缓存

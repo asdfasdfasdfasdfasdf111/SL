@@ -318,6 +318,14 @@ public class MinecraftLauncher {
             throw MyLocalizedError(reason: "无效的 authlib-injector 下载 URL")
         }
         try await SingleFileDownloader.download(url: downloadURL, destination: SharedConstants.shared.authlibInjectorURL)
+
+        // 下载后校验 SHA256（BMCLAPI latest.json 的 checksums.sha256），防篡改/损坏：
+        // 校验失败说明文件被中间人替换或下载不完整，删除并报错，绝不静默放行注入游戏进程
+        if let sha256 = json["checksums"]["sha256"].string, !sha256.isEmpty,
+           let failReason = FileChecker(hash: sha256).check(SharedConstants.shared.authlibInjectorURL) {
+            try? FileManager.default.removeItem(at: SharedConstants.shared.authlibInjectorURL)
+            throw MyLocalizedError(reason: "authlib-injector 哈希校验失败：\(failReason)")
+        }
         log("authlib-injector 下载完成")
     }
 }

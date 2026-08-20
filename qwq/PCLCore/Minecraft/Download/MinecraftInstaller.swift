@@ -116,7 +116,7 @@ public class MinecraftInstaller {
     private static func downloadHashResourcesFiles(_ task: MinecraftInstallTask, parallel: Bool = false) async throws {
         if parallel { await task.beginParallelStage(.clientResources) }
         else { task.updateStage(.clientResources) }
-        let objects = task.assetIndex!.objects
+        let objects = try task.assetIndex.unwrap().objects
         
         // asset 以 hash 命名，直接用 hash 作为校验：已存在且匹配 → 引擎内跳过，损坏 → 重下
         var items: [DownloadItem] = []
@@ -165,9 +165,9 @@ public class MinecraftInstaller {
         
         try await MultiFileDownloader(task: task, items: items, stage: parallel ? .clientLibraries : nil).start()
         
-        for library in task.manifest!.getNeededLibraries() {
-            if libraryNames.contains(library.name) {
-                CacheStorage.default.add(name: library.name, path: task.minecraftDirectory.librariesURL.appendingPathComponent(library.artifact!.path))
+        for library in try task.manifest.unwrap().getNeededLibraries() {
+            if libraryNames.contains(library.name), let artifact = library.artifact {
+                CacheStorage.default.add(name: library.name, path: task.minecraftDirectory.librariesURL.appendingPathComponent(artifact.path))
             }
         }
         if parallel { await task.finishParallelStage(.clientLibraries) }
@@ -199,7 +199,7 @@ public class MinecraftInstaller {
         try? FileManager.default.createDirectory(at: task.versionURL.appendingPathComponent("natives"), withIntermediateDirectories: true)
         try await MultiFileDownloader(task: task, items: items, stage: parallel ? .natives : nil).start()
         
-        for (library, artifact) in task.manifest!.getNeededNatives() {
+        for (library, artifact) in try task.manifest.unwrap().getNeededNatives() {
             if libraryNames.contains(library.name) {
                 CacheStorage.default.add(name: library.name, path: task.minecraftDirectory.librariesURL.appendingPathComponent(artifact.path))
             }
@@ -210,7 +210,7 @@ public class MinecraftInstaller {
     // MARK: 解压本地库
     private static func unzipNatives(_ task: MinecraftInstallTask) throws {
         let nativesURL: URL = task.versionURL.appendingPathComponent("natives")
-        for (_, native) in task.manifest!.getNeededNatives() {
+        for (_, native) in try task.manifest.unwrap().getNeededNatives() {
             let jarURL: URL = task.minecraftDirectory.librariesURL.appendingPathComponent(native.path)
             Util.unzip(archiveURL: jarURL, destination: nativesURL, replace: true)
             do {
@@ -264,6 +264,10 @@ public class MinecraftInstaller {
     
     // MARK: 收尾
     private static func finalWork(_ task: MinecraftInstallTask) {
+        guard let manifest = task.manifest else {
+            err("finalWork: 任务缺少 manifest，跳过收尾")
+            return
+        }
         let _1_12_2 = MinecraftVersion(displayName: "1.12.2")
         // 拷贝 log4j2.xml
         let targetURL: URL = task.versionURL.appendingPathComponent("log4j2.xml")
@@ -278,7 +282,7 @@ public class MinecraftInstaller {
         instance?.saveConfig()
         
         // 修改 GLFW
-        if let glfw = task.manifest!.getNeededLibraries().find({ $0.name.contains("lwjgl-glfw") }) {
+        if let glfw = manifest.getNeededLibraries().find({ $0.name.contains("lwjgl-glfw") }) {
             guard let javaURL = JavaManager.resolveJavaExecutable() else {
                 err("未找到可用的 Java 运行时，无法运行 glfw-patcher")
                 return
@@ -319,9 +323,14 @@ public class MinecraftInstaller {
     
     // MARK: 获取进度
     public static func updateProgress(_ task: MinecraftInstallTask) {
+        guard let assetIndex = task.assetIndex,
+              let manifest = task.manifest else {
+            log("updateProgress: 任务数据未就绪，跳过进度计算")
+            return
+        }
         DispatchQueue.main.async {
-            let components = 3 + task.assetIndex!.objects.count
-                + task.manifest!.getNeededLibraries().count + task.manifest!.getNeededNatives().count
+            let components = 3 + assetIndex.objects.count
+                + manifest.getNeededLibraries().count + manifest.getNeededNatives().count
             task.totalFiles = components
             log("总文件数: \(task.totalFiles)")
             // 前置阶段均已下载：clientJson 完成、clientIndex 完成、第二波开始前 jar 完成 = 3

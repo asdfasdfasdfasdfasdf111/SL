@@ -1,4 +1,5 @@
 import Foundation
+import ZIPFoundation
 
 class ModpackInstaller {
 
@@ -49,13 +50,19 @@ class ModpackInstaller {
     }
 
     private func unzip(_ source: URL, to destination: URL) throws {
-        guard let _ = AppContext.shared.processPool.execute(
-            "/usr/bin/unzip",
-            args: ["-q", source.path, "-d", destination.path],
-            timeout: 120,
-            captureStderr: true
-        ) else {
-            throw InstallError.unzipFailed(exitCode: -1)
+        do {
+            let archive = try Archive(url: source, accessMode: .read)
+            for entry in archive {
+                // ZIP Slip 防御（同 Util.unzip）：拒绝绝对路径与含 .. 的条目，防止写入目标目录之外
+                let entryPath = entry.path.replacingOccurrences(of: "\\", with: "/")
+                let normalizedPath = (entryPath as NSString).standardizingPath
+                if normalizedPath.hasPrefix("/") || normalizedPath.components(separatedBy: "/").contains("..") {
+                    continue
+                }
+                _ = try archive.extract(entry, to: destination.appendingPathComponent(normalizedPath))
+            }
+        } catch {
+            throw InstallError.unzipFailed
         }
     }
 
@@ -164,8 +171,7 @@ class ModpackInstaller {
     enum InstallError: Error, LocalizedError {
         case invalidManifest
         case versionNotFound(String)
-        case unzipFailed(exitCode: Int32)
-        case unzipTimedOut
+        case unzipFailed
 
         var errorDescription: String? {
             switch self {
@@ -173,10 +179,8 @@ class ModpackInstaller {
                 return "整合包清单无效"
             case .versionNotFound(let v):
                 return "未找到 Minecraft 版本: \(v)"
-            case .unzipFailed(let code):
-                return "解压失败 (退出码: \(code))"
-            case .unzipTimedOut:
-                return "解压超时"
+            case .unzipFailed:
+                return "整合包解压失败"
             }
         }
     }

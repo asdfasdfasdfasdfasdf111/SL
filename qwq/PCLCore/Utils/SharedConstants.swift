@@ -13,7 +13,7 @@ public struct SharedConstants {
     public let applicationContentsURL: URL
     public let applicationResourcesURL: URL
     public let logURL: URL
-    public let applicationSupportURL: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Swim111Launcher")
+    public let applicationSupportURL: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("SL启动器")
     public let temperatureURL: URL
     public let authlibInjectorURL: URL
     

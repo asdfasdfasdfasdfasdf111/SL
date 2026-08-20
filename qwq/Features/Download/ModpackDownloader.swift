@@ -22,6 +22,7 @@ public struct ModpackVersion: Codable {
         public let url: String
         public let filename: String
         public let size: Int
+        public let hashes: [String: String]?
     }
     
     // 兼容官方 Modrinth API 的不同字段名
@@ -111,7 +112,7 @@ public class ModpackDownloader {
     }
     
     public func versions(packId: String) async throws -> [ModpackVersion] {
-        let url = URL(string: "\(base)/project/\(packId)/version")!
+        guard let url = URL(string: "\(base)/project/\(packId)/version") else { throw ModpackError.invalidURL }
         var req = URLRequest(url: url)
         req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         let (data, _) = try await session.data(for: req)
@@ -125,8 +126,8 @@ public class ModpackDownloader {
               let file = latest.files.first else {
             throw ModpackError.noFile
         }
-        let fileUrl = URL(string: file.url)!
         let destFile = destination.appendingPathComponent(file.filename)
+        guard let fileUrl = URL(string: file.url) else { throw ModpackError.invalidURL }
 
         let (tempUrl, _) = try await session.download(from: fileUrl)
         try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
@@ -134,6 +135,12 @@ public class ModpackDownloader {
             try FileManager.default.removeItem(at: destFile)
         }
         try FileManager.default.moveItem(at: tempUrl, to: destFile)
+
+        if let sha1 = file.hashes?["sha1"], !sha1.isEmpty,
+           let failReason = FileChecker(hash: sha1).check(destFile) {
+            try? FileManager.default.removeItem(at: destFile)
+            throw ModpackError.hashMismatch(failReason)
+        }
         return destFile
     }
     
@@ -160,11 +167,13 @@ public class ModpackDownloader {
     }
     
     public enum ModpackError: Error, LocalizedError {
-        case noFile, notFound
+        case noFile, notFound, invalidURL, hashMismatch(String)
         public var errorDescription: String? {
             switch self {
             case .noFile: return "整合包版本没有可下载的文件"
             case .notFound: return "未找到匹配的整合包"
+            case .invalidURL: return "整合包文件下载地址无效"
+            case .hashMismatch(let reason): return "整合包文件完整性校验失败：\(reason)"
             }
         }
     }
