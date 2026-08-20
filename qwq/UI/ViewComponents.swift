@@ -15,22 +15,15 @@ struct PixelArtImageView: View {
 }
 
 struct SkinLayerView: View {
-    let imageData: Data
-    let startX: CGFloat
-    let startY: CGFloat
+    /// 预裁成品（后台裁剪缓存），主线程渲染路径零 CoreImage
+    let image: NSImage?
     let width: CGFloat
     let height: CGFloat
-    /// 初始化时同步裁出的成品，首帧即有图，不再依赖 onAppear 异步裁剪（消除首帧空白闪烁）
-    @State private var image: NSImage?
 
-    init(imageData: Data, startX: CGFloat, startY: CGFloat, width: CGFloat, height: CGFloat) {
-        self.imageData = imageData
-        self.startX = startX
-        self.startY = startY
+    init(image: NSImage?, width: CGFloat, height: CGFloat) {
+        self.image = image
         self.width = width
         self.height = height
-        // 同步裁剪：CIImage 裁 8×8 区域毫秒级，直接作为 @State 初始值
-        _image = State(initialValue: SkinLayerView.cropped(imageData: imageData, startX: startX, startY: startY))
     }
 
     var body: some View {
@@ -47,8 +40,8 @@ struct SkinLayerView: View {
         }
     }
 
-    /// 静态同步裁剪：yOffset 兼容 64 高（带帽层）与 32 高（旧版无帽）两种贴图
-    private static func cropped(imageData: Data, startX: CGFloat, startY: CGFloat) -> NSImage? {
+    /// 后台调用的静态裁剪：yOffset 兼容 64 高（带帽层）与 32 高（旧版无帽）两种贴图
+    static func cropped(imageData: Data, startX: CGFloat, startY: CGFloat) -> NSImage? {
         guard var ciImage = CIImage(data: imageData) else { return nil }
         let yOffset: CGFloat = ciImage.extent.height == 32 ? 0 : 32
         ciImage = ciImage.cropped(to: CGRect(x: startX, y: startY + yOffset, width: 8, height: 8))

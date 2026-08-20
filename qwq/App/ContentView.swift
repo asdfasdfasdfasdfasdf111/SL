@@ -174,12 +174,13 @@ struct ContentView: View {
                 Rectangle().fill(Color.secondary.opacity(0.3)).frame(height: 0.5).padding(.horizontal, 32)
                 GeometryReader { geometry in
                     let width = geometry.size.width
+                    let height = geometry.size.height
                     ZStack {
                         if downloadDetail.isPresented {
                             DownloadDetailView()
                                 .transition(.move(edge: .trailing).combined(with: .opacity))
                         } else {
-                            categoryCanvas(width: width)
+                            categoryCanvas(width: width, height: height)
                         }
                     }
                     .clipped()
@@ -190,11 +191,11 @@ struct ContentView: View {
     }
     /// 旧版分类画布：所有分类页完整横向排布，点击导航或拖拽时整页连续滑动；
     /// 从第 1 项跳到第 5 项会真实经过中间页面，拖拽中内容实时跟手。
-    private func categoryCanvas(width: CGFloat) -> some View {
+    private func categoryCanvas(width: CGFloat, height: CGFloat) -> some View {
         HStack(spacing: 0) {
             ForEach(categories) { category in
                 CategoryContentView(category: category, searchText: searchText)
-                    .frame(width: width)
+                    .frame(width: width, height: height)
             }
         }
         .offset(x: -CGFloat(selectedIndex) * width + dragOffset)

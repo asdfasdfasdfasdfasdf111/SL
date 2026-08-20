@@ -1,12 +1,15 @@
 import Cocoa
 import SwiftUI
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let window = NSApp.windows.first else { return }
+        window.delegate = self
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
+        window.styleMask.remove(.resizable)
         window.minSize = NSSize(width: 800, height: 590)
+        window.maxSize = NSSize(width: 800, height: 590)
         // macOS 12 没有 Scene.defaultSize，手动设置默认窗口尺寸（900×660）并居中；
         // macOS 13+ 由 qwqApp 里的 .defaultSizeCompat 声明。
         if #unavailable(macOS 13.0) {
@@ -31,5 +34,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             resized.unlockFocus()
             NSApp.applicationIconImage = resized
         }
+    }
+
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        return NSSize(width: 800, height: 590)
+    }
+
+    func windowShouldZoom(_ window: NSWindow, toFrame newFrame: NSRect) -> Bool {
+        return false
     }
 }

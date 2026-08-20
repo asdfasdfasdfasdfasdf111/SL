@@ -21,6 +21,39 @@ struct LaunchButton: View {
     @State private var buttonScale: CGFloat = 1.0
     @State private var scaleTask: Task<Void, Never>?
 
+    // 「死动画」锁：动画播完前不响应新相位，排队到 pendingPhase，杜绝转场被中途打断
+    @State private var displayedPhase: LaunchPhase = .idle
+    @State private var pendingPhase: LaunchPhase?
+    @State private var phaseTransitionActive = false
+    @State private var phaseTransitionTask: Task<Void, Never>?
+
+    private static let phaseSpring = Animation.spring(response: 0.5, dampingFraction: 0.7)
+
+    private func schedulePhaseChange(to newPhase: LaunchPhase) {
+        guard newPhase != displayedPhase else { return }
+        guard !phaseTransitionActive else {
+            pendingPhase = newPhase
+            return
+        }
+        beginPhaseTransition(to: newPhase)
+    }
+
+    private func beginPhaseTransition(to phase: LaunchPhase) {
+        phaseTransitionActive = true
+        withAnimation(LaunchButton.phaseSpring) { displayedPhase = phase }
+        // 锁定时长 = spring(0.5) 视觉完播时长，期间新相位排队，解锁后播最新目标
+        phaseTransitionTask?.cancel()
+        phaseTransitionTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard !Task.isCancelled else { return }
+            phaseTransitionActive = false
+            if let pending = pendingPhase {
+                pendingPhase = nil
+                beginPhaseTransition(to: pending)
+            }
+        }
+    }
+
     var body: some View {
         Button(action: {
             // 点击弹跳动画（可取消 Task：视图销毁后不再写已释放的 State storage）
@@ -34,13 +67,13 @@ struct LaunchButton: View {
             onTap()
         }) {
             ZStack(alignment: .leading) {
-                if launchPhase == .downloading || launchPhase == .installing {
+                if displayedPhase == .downloading || displayedPhase == .installing {
                     Rectangle()
                         .fill(theme.accentColor.opacity(0.6))
                         .frame(width: buttonWidth * CGFloat(lightProgress), height: 50)
                         .animation(.exaggeratedSpring, value: lightProgress)
                 }
-                if launchPhase == .launching {
+                if displayedPhase == .launching {
                     Rectangle()
                         .fill(theme.accentColor.opacity(0.85))
                         .frame(width: buttonWidth * CGFloat(darkProgress), height: 50)
@@ -50,7 +83,7 @@ struct LaunchButton: View {
                     .strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 1)
                     .background(RoundedRectangle(cornerRadius: 25).fill(.ultraThinMaterial))
                 ZStack {
-                    if launchPhase == .idle {
+                    if displayedPhase == .idle {
                         Text("启动游戏")
                             .font(.system(size: 20, weight: .medium))
                             .foregroundColor(.primary)
@@ -60,33 +93,32 @@ struct LaunchButton: View {
                                 removal: .move(edge: .top).combined(with: .opacity)
                             ))
                     }
-                    if launchPhase == .preparing {
+                    if displayedPhase == .preparing {
                         // 启动前准备（皮肤资源包应用等，此前按钮变灰却无文案反馈）
                         Text("准备中…")
                             .font(.system(size: 16, weight: .medium))
                             .foregroundColor(.primary)
                             .frame(width: buttonWidth, height: 50, alignment: .center)
                     }
-                    if launchPhase == .downloading {
+                    if displayedPhase == .downloading {
                         Text("正在检查游戏完整性")
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(.primary)
                             .frame(width: buttonWidth, height: 50, alignment: .center)
                     }
-                    if launchPhase == .installing {
+                    if displayedPhase == .installing {
                         Text("Java 安装中")
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(.primary)
                             .frame(width: buttonWidth, height: 50, alignment: .center)
                     }
-                    if launchPhase == .launching {
+                    if displayedPhase == .launching {
                         Text("启动中")
                             .font(.system(size: 16, weight: .medium))
                             .foregroundColor(.primary)
                             .frame(width: buttonWidth, height: 50, alignment: .center)
                     }
                 }
-                .animation(.spring(response: 0.5, dampingFraction: 0.7), value: launchPhase)
             }
             .frame(width: buttonWidth, height: 50)
             .mask(RoundedRectangle(cornerRadius: 25).frame(width: buttonWidth, height: 50))
@@ -97,8 +129,15 @@ struct LaunchButton: View {
         .animation(.punchySpring, value: buttonScale)
         .disabled(isLaunching)
         .padding(.bottom, 30)
+        .onChange(of: launchPhase) { newPhase in
+            schedulePhaseChange(to: newPhase)
+        }
+        .onAppear {
+            displayedPhase = launchPhase
+        }
         .onDisappear {
             scaleTask?.cancel()
+            phaseTransitionTask?.cancel()
         }
     }
 }
