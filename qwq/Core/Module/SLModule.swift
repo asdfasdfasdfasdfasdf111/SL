@@ -1,16 +1,13 @@
 import Foundation
 
-/// A small, explicit boundary for application modules.
-///
-/// Modules are compile-time units for now. They are not dynamic plug-ins and
-/// must not reach into another module's implementation. Cross-module access is
-/// provided through `ModuleContext` capabilities.
+/// Small, explicit boundary for application modules.
+/// Modules are compile-time units for now; cross-module access is provided by
+/// typed capabilities rather than direct singleton dependencies.
 protocol SLModule {
     var identifier: String { get }
     func register(in context: ModuleContext) throws
 }
 
-/// A capability key keeps registrations typed while avoiding global singletons.
 struct ModuleCapabilityKey<Value>: Hashable {
     let name: String
 
@@ -19,10 +16,12 @@ struct ModuleCapabilityKey<Value>: Hashable {
     }
 }
 
-struct ModuleContext {
+/// Reference semantics are intentional: module registration must update the
+/// shared context even though `SLModule.register` receives it as a value.
+final class ModuleContext {
     private var values: [String: Any] = [:]
 
-    mutating func register<Value>(_ value: Value, for key: ModuleCapabilityKey<Value>) {
+    func register<Value>(_ value: Value, for key: ModuleCapabilityKey<Value>) {
         values[key.name] = value
     }
 

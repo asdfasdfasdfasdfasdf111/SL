@@ -1,13 +1,8 @@
 import Foundation
 
 /// Owns module registration for the application lifetime.
-///
-/// This is intentionally small: lifecycle, dependency ordering, and dynamic
-/// code loading are out of scope until the module boundaries are proven by real
-/// features. Keeping this registry boring makes it safe to migrate existing
-/// code incrementally.
 final class ModuleRegistry {
-    private(set) var context = ModuleContext()
+    let context = ModuleContext()
     private(set) var registeredIdentifiers: [String] = []
 
     func register(_ modules: [any SLModule]) throws {
