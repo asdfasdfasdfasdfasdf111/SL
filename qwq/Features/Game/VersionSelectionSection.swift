@@ -20,8 +20,10 @@ struct VersionSelectionSection: View {
     let localVersionLoaders: [String: ModLoader]
     let isLoadingModpackVersions: Bool
     let isLoadingLoaders: Bool
-    /// 逐加载器检测状态（流式渲染：checking 转圈 / supported 可选 / notSupported 置灰 / unavailable 可点重试）
+    /// 逐加载器检测状态（流式渲染：checking 检测中 / supported 可选 / notSupported 置灰 / unavailable 可点重试）
     let loaderStates: [String: LoaderState]
+    /// 检测完成顺序（先定论的在前；supported 卡片按此排序展示）
+    let loaderCompletionOrder: [String]
     /// 加载器检测「结果未知」错误文案（网络失败/5xx/超时，区别于「明确不支持」）；
     /// 为 nil 时按正常分支渲染
     var loaderError: String? = nil
@@ -116,14 +118,23 @@ struct VersionSelectionSection: View {
         }
     }
 
-    /// 卡片区：有 checking/supported 项 → 逐卡片状态网格；全部定论且无支持 → 空态文案
+    /// 卡片区：只显示已定论 supported 的加载器卡片（按完成顺序）；检测中轻文字提示；全部无支持 → 空态文案
     private var loaderCardArea: some View {
-        let hasSupported = loaderStates.values.contains { $0 == .supported }
-        let hasChecking = loaderStates.values.contains { $0 == .checking }
-        if !hasSupported && !hasChecking {
+        let supported = loaderCompletionOrder.filter { loaderStates[$0] == .supported }
+        if supported.isEmpty {
+            let hasChecking = loaderStates.values.contains { $0 == .checking }
+            if hasChecking {
+                // 检测中：轻文字提示，不显示转圈
+                return AnyView(
+                    Text("正在检测可用加载器…")
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                        .padding(.vertical, 16)
+                )
+            }
             return AnyView(
                 Group {
-                    if let error = loaderError, !error.isEmpty, !hasSupported, !hasChecking, loaderStates.values.contains(where: { $0 == .unavailable }) {
+                    if let error = loaderError, !error.isEmpty, loaderStates.values.contains(where: { $0 == .unavailable }) {
                         // 全部结果未知：明确提示可重试，绝不显示「没有加载器」误判
                         HStack(spacing: 10) {
                             Text(error)
@@ -148,16 +159,14 @@ struct VersionSelectionSection: View {
                 }
             )
         }
-        let order = ["Fabric", "Forge", "NeoForged", "Quilt"]
-        let present = order.filter { loaderStates[$0] != nil }
         return AnyView(
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
-                    ForEach(present, id: \.self) { loader in
+                    ForEach(supported, id: \.self) { loader in
                         LoaderSelectorCard(
                             loader: loader,
                             isSelected: selectedLoader == loader,
-                            state: loaderStates[loader] ?? .supported,
+                            state: .supported,
                             onRetry: onRetryLoaders
                         ) {
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
@@ -165,12 +174,14 @@ struct VersionSelectionSection: View {
                                 selectedLoader = (selectedLoader == loader) ? "" : loader
                             }
                         }
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
                     }
                 }
                 // 水平方向预留放大动画空间（scaleEffect 1.08 放大时最左/最右卡片不被裁剪）
-                .padding(.horizontal, 10)
-                .padding(.vertical, 10)
-            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 10)
+        }
+        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: supported)
         )
     }
 

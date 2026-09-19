@@ -73,16 +73,7 @@ class ModVersionDetector {
     }
 
     private func compareVersions(_ a: String, _ b: String) -> Int {
-        let aParts = a.split(separator: ".").compactMap { Int($0) }
-        let bParts = b.split(separator: ".").compactMap { Int($0) }
-        let maxLen = max(aParts.count, bParts.count)
-        for i in 0..<maxLen {
-            let aVal = i < aParts.count ? aParts[i] : 0
-            let bVal = i < bParts.count ? bParts[i] : 0
-            if aVal < bVal { return -1 }
-            if aVal > bVal { return 1 }
-        }
-        return 0
+        GameVersionHelper.compare(a, b).signum()
     }
 
     // MARK: - JAR 内容读取（使用 ProcessPool）

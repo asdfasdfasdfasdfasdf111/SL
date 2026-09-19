@@ -75,8 +75,7 @@ enum JavaDiscovery {
                     addIfExecutable(brewPrefix + "/" + item + "/bin/java")
                 }
             }
-            let cellarPath = brewPrefix.replacingOccurrences(of: "/opt", with: "/opt/Cellar")
-                .replacingOccurrences(of: "/usr/local/opt", with: "/usr/local/Cellar")
+            let cellarPath = brewPrefix.hasSuffix("/opt") ? String(brewPrefix.dropLast(3)) + "Cellar" : brewPrefix + "/Cellar"
             if let contents = try? fm.contentsOfDirectory(atPath: cellarPath) {
                 for item in contents where item.hasPrefix("openjdk") {
                     let itemPath = cellarPath + "/" + item

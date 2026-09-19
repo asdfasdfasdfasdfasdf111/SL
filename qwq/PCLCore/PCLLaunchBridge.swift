@@ -134,7 +134,10 @@ private func pclLaunchInternal(
         }
         fixSemaphore.signal()
     }
-    fixSemaphore.wait()
+    if fixSemaphore.wait(timeout: .now() + 600) == .timedOut {
+        completion(nil, .failure(MyLocalizedError(reason: "启动前补全超时（10 分钟），请检查网络连接")))
+        return
+    }
 
     if let fixError = fixResultBox.error {
         completion(nil, .failure(MyLocalizedError(reason: "启动前补全失败：\(fixError.localizedDescription)")))
@@ -154,9 +157,10 @@ private func pclLaunchInternal(
         log("DataManager 中暂无 JVM，触发预扫描")
         JavaManager.shared.preScanJavaAsync()
         // 后台线程短等待扫描结果（最多 3s），避免启动空窗
+        let waitSem = DispatchSemaphore(value: 0)
         let deadline = Date().addingTimeInterval(3)
         while DataManager.shared.javaVirtualMachines.isEmpty && Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.1)
+            _ = waitSem.wait(timeout: .now() + 0.1)
         }
     }
 

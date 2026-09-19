@@ -62,14 +62,16 @@ enum GameVersionManifest {
         async let unlisted = fetchList(url: unlistedManifestURL)
         var (official, fallback, unlistedVersions) = await (primary, mirror, unlisted)
         if official.isEmpty { official = fallback }
-        // 兜底保护：official 与 fallback 都为空时，不应拿 alist 未列出源当主数据源——
+        // 官方清单是主源（含 release 类型）。官方+镜像都失败时绝不拿 alist 未列出源当主数据源——
         // alist 只列"未列出版本"（snapshot/pending/old_alpha/old_beta），本来就没有 release 类型，
-        // 把它当主数据会导致正式版筛选永远为空。
-        // 此时优先尝试未列出源中含 release 的条目（BMCLAPI 偶尔把版本塞这里）；都没有就放弃联网。
-        var merged = official
-        if merged.isEmpty {
-            merged = unlistedVersions.filter { ($0["type"] as? String) == "release" }
+        // 把它当主源合并并写入缓存会导致正式版筛选永远为空（曾实锤：磁盘缓存 194 条全为非 release）。
+        // 此时回退旧缓存（即使已过期也比写污染数据强），并放弃本轮回写。
+        guard !official.isEmpty else {
+            if let disk = readDiskCache() { return disk }
+            return mergedManifestCache ?? []
         }
+        var merged = official
+        // unlisted 仅作增量补充（URL 重写到 alist 镜像），append 而非替换主清单（对齐 PCL.Mac 语义）
         for i in unlistedVersions.indices {
             if let url = unlistedVersions[i]["url"] as? String {
                 unlistedVersions[i]["url"] = url.replacingOccurrences(of: unlistedManifestRoot, with: unlistedManifestMirrorRoot)
@@ -128,7 +130,10 @@ enum GameVersionManifest {
     }
 
     private static func fetchList(url: URL) async -> [[String: Any]] {
-        guard let (data, _) = try? await AppContext.shared.apiSession.data(from: url),
+        // 用统一直连会话（禁用系统代理）：apiSession 走系统代理，实测代理对
+        // piston-meta / bmclapi 的 TLS 转发会报 SecureConnectionFailed（Requests.swift 已记录），
+        // 直连反而正常。之前版本清单用 apiSession 拉不到官方源，是「正式版为空」的历史根因之一。
+        guard let (data, _) = try? await URLSession.direct.data(from: url),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let versions = json["versions"] as? [[String: Any]] else { return [] }
         return versions

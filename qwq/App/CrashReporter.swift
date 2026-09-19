@@ -38,10 +38,10 @@ enum CrashReporter {
         guard fd >= 0 else { return }
         defer { close(fd) }
 
-        var header = "===== qwq crash =====\n"
-        header += "time: \(Date())\n"
-        header += "signal: \(signal) (\(signal != 0 ? String(cString: strsignal(signal)) : "exception"))\n"
-        header += "--- thread backtrace ---\n"
+        // 信号上下文只能用 async-signal-safe 函数：write/backtrace_symbols_fd/strsignal/time
+        // 不用 Date()/String 拼接（会 malloc，信号期间 malloc 可死锁）
+        var t = time(nil)
+        let header = "===== qwq crash =====\nsignal: \(signal) (\(String(cString: strsignal(signal))))\ntime: \(String(cString: ctime(&t)))--- backtrace ---\n"
         writeStr(fd, header)
 
         var callstack = [UnsafeMutableRawPointer?](repeating: nil, count: 128)

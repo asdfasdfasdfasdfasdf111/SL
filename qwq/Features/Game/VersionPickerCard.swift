@@ -30,18 +30,16 @@ struct VersionPickerCard: View {
                 VStack(alignment: .leading, spacing: 16) {
                     if hasVersions {
                         Text("选择游戏版本").font(.headline).foregroundColor(.secondary).padding(.bottom, 4)
-                        // 版本横向滑动（版本多时左右拖动查看，避免超出卡片高度被裁）
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 12) {
+                        ScrollView(.vertical, showsIndicators: false) {
+                            VStack(alignment: .leading, spacing: 16) {
                                 ForEach(versions, id: \.self) { version in
                                     VersionButton(title: version, isSelected: selectedVersion == version) {
                                         onSelect(version)
                                     }
-                                    .frame(width: 170)
                                 }
                             }
-                            .padding(.vertical, 2)
                         }
+                        .frame(maxHeight: 420)
                     } else {
                         VStack(spacing: 20) {
                             Text("未找到游戏版本").font(.headline).foregroundColor(.secondary)

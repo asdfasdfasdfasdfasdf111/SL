@@ -104,8 +104,10 @@ public class DownloadSourceManager: DownloadSource {
         
         let data: Data
         do {
-            try await SingleFileDownloader.download(url: url.url, destination: URL(fileURLWithPath: "/tmp/testspeed"), replaceMethod: .replace)
-            data = try FileHandle(forReadingFrom: URL(fileURLWithPath: "/tmp/testspeed")).readToEnd().unwrap()
+            let testPath = "/tmp/testspeed_\(UUID().uuidString)"
+            try await SingleFileDownloader.download(url: url.url, destination: URL(fileURLWithPath: testPath), replaceMethod: .replace)
+            data = try FileHandle(forReadingFrom: URL(fileURLWithPath: testPath)).readToEnd().unwrap()
+            try? FileManager.default.removeItem(at: URL(fileURLWithPath: testPath))
         } catch {
             // 官方源连测试文件都下载失败 → 视为不可用，立即切镜像源（用户期望的核心行为：
             // 「下载失败后自己切换下载源」——测速失败本身就是源不可用的强信号）

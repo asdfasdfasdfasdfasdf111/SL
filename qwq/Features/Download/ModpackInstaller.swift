@@ -40,7 +40,7 @@ class ModpackInstaller {
             try copyContents(from: overrides, to: instanceDir)
         }
 
-        print("整合包安装完成：\(instanceDir.lastPathComponent)")
+        log("整合包安装完成：\(instanceDir.lastPathComponent)")
     }
 
     private func createTempDir() -> URL {
@@ -129,16 +129,16 @@ class ModpackInstaller {
         }
 
         let (versionData, _) = try await AppContext.shared.apiSession.data(from: versionURL)
-        try versionData.write(to: versionsDir.appendingPathComponent("\(version).json"))
+        try versionData.write(to: versionsDir.appendingPathComponent("\(version).json"), options: .atomic)
     }
 
     private func installLoader(_ loader: String, version: String, minecraftVersion: String, to dir: URL) async throws {
         let loaderLower = loader.lowercased()
-        print("安装加载器: \(loaderLower) \(version) for Minecraft \(minecraftVersion)")
+        log("安装加载器: \(loaderLower) \(version) for Minecraft \(minecraftVersion)")
         
         // 使用 PCL 核心的安装任务来处理加载器安装
         // 这里需要 PCL 核心模块的支持，暂时记录日志
-        print("加载器安装需要 PCL 核心模块支持: \(loaderLower) \(version)")
+        warn("加载器安装需要 PCL 核心模块支持: \(loaderLower) \(version)")
         
         // TODO: 后续集成 PCL 核心的 InstallTask
         // 例如：await InstallTask.installLoader(loader: loaderLower, version: version, minecraftVersion: minecraftVersion, to: dir)
@@ -146,7 +146,7 @@ class ModpackInstaller {
 
     private func downloadMod(_ mod: ModInfo, to dir: URL) async throws {
         guard let url = mod.downloadURL else {
-            print("模组 \(mod.name) 无可下载地址")
+            warn("模组 \(mod.name) 无可下载地址")
             return
         }
         let (tempURL, _) = try await AppContext.shared.apiSession.download(from: url)

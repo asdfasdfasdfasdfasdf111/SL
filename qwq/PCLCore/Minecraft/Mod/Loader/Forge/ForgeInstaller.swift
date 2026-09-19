@@ -110,8 +110,7 @@ public class ForgeInstaller {
             mainClass
         ]
         process.arguments!.append(contentsOf: processor.args.map(replaceWithValue(_:)))
-        try process.run()
-        process.waitUntilExit()
+        try Util.runProcessWithTimeout(process, timeout: 120)
     }
     
     // MARK: - 修改 DOWNLOAD_MOJMAPS 任务
@@ -193,7 +192,7 @@ public class ForgeInstaller {
             let forgePath = minecraftDirectory.librariesURL.appendingPathComponent(Util.toPath(mavenCoordinate: json["install"]["path"].stringValue))
             
             try? FileManager.default.createDirectory(at: forgePath.parent(), withIntermediateDirectories: true)
-            try ArchiveUtil.getEntryOrThrow(archive: archive, name: json["install"]["filePath"].stringValue).write(to: forgePath)
+            try ArchiveUtil.getEntryOrThrow(archive: archive, name: json["install"]["filePath"].stringValue).write(to: forgePath, options: .atomic)
         } else {
             installProfile = ForgeInstallProfile(json: json)
             temp.createFile(path: "manifest.json", data: try ArchiveUtil.getEntryOrThrow(archive: archive, name: "version.json"))

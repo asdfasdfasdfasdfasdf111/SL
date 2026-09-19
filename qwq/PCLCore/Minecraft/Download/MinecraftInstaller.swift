@@ -48,7 +48,10 @@ public class MinecraftInstaller {
         if let manifest: ClientManifest = try .parse(url: destination, minecraftDirectory: nil) {
             task.manifest = manifest
         } else {
-            let content = try String(data: FileHandle(forReadingFrom: destination).readToEnd().unwrap(), encoding: .utf8).unwrap()
+            let handle = try FileHandle(forReadingFrom: destination)
+            let rawData = (try? handle.readToEnd()) ?? Data()
+            try? handle.close()
+            let content = String(data: rawData, encoding: .utf8) ?? "(binary data, \(rawData.count) bytes)"
             err("无法解析客户端清单: \(content)")
             throw MyLocalizedError(reason: "无法解析客户端清单：\(content)")
         }
@@ -116,7 +119,12 @@ public class MinecraftInstaller {
     private static func downloadHashResourcesFiles(_ task: MinecraftInstallTask, parallel: Bool = false) async throws {
         if parallel { await task.beginParallelStage(.clientResources) }
         else { task.updateStage(.clientResources) }
-        let objects = try task.assetIndex.unwrap().objects
+        guard let assetIndex = task.assetIndex else {
+            err("资源索引未就绪，跳过散列资源下载")
+            if parallel { await task.finishParallelStage(.clientResources) }
+            return
+        }
+        let objects = assetIndex.objects
         
         // asset 以 hash 命名，直接用 hash 作为校验：已存在且匹配 → 引擎内跳过，损坏 → 重下
         var items: [DownloadItem] = []
@@ -128,7 +136,7 @@ public class MinecraftInstaller {
             // getAssetURL 仅在 hash 不足 2 字符时返回 nil，asset hash 恒为 40 位十六进制，! 安全
             items.append(.init(
                 DownloadSourceManager.shared.getDownloadSource(),
-                { $0.getAssetURL(hash: object.hash)! },
+                { $0.getAssetURL(hash: object.hash) ?? URL(string: "https://resources.download.minecraft.net/\(object.hash.prefix(2))/\(object.hash)")! },
                 destination: dest,
                 sha1: object.hash
             ))
@@ -142,11 +150,14 @@ public class MinecraftInstaller {
     private static func downloadLibraries(_ task: MinecraftInstallTask, parallel: Bool = false) async throws {
         if parallel { await task.beginParallelStage(.clientLibraries) }
         else { task.updateStage(.clientLibraries) }
-        
+        guard let manifest = task.manifest else {
+            throw MyLocalizedError(reason: "客户端清单未就绪，无法下载依赖项")
+        }
+
         var libraryNames: [String] = []
         var items: [DownloadItem] = []
-        
-        for library in try task.manifest.unwrap().getNeededLibraries() {
+
+        for library in manifest.getNeededLibraries() {
             if let artifact = library.artifact {
                 let dest = task.minecraftDirectory.librariesURL.appendingPathComponent(artifact.path)
                 if CacheStorage.default.copy(name: library.name, to: dest) {
@@ -165,23 +176,26 @@ public class MinecraftInstaller {
         
         try await MultiFileDownloader(task: task, items: items, stage: parallel ? .clientLibraries : nil).start()
         
-        for library in try task.manifest.unwrap().getNeededLibraries() {
+        for library in manifest.getNeededLibraries() {
             if libraryNames.contains(library.name), let artifact = library.artifact {
                 CacheStorage.default.add(name: library.name, path: task.minecraftDirectory.librariesURL.appendingPathComponent(artifact.path))
             }
         }
         if parallel { await task.finishParallelStage(.clientLibraries) }
     }
-    
+
     // MARK: 下载本地库
     private static func downloadNatives(_ task: MinecraftInstallTask, parallel: Bool = false) async throws {
         if parallel { await task.beginParallelStage(.natives) }
         else { task.updateStage(.natives) }
-        
+        guard let manifest = task.manifest else {
+            throw MyLocalizedError(reason: "客户端清单未就绪，无法下载本地库")
+        }
+
         var libraryNames: [String] = []
         var items: [DownloadItem] = []
-        
-        for (library, artifact) in try task.manifest.unwrap().getNeededNatives() {
+
+        for (library, artifact) in manifest.getNeededNatives() {
             let dest = task.minecraftDirectory.librariesURL.appendingPathComponent(artifact.path)
             if CacheStorage.default.copy(name: library.name, to: dest) {
                 continue
@@ -199,18 +213,21 @@ public class MinecraftInstaller {
         try? FileManager.default.createDirectory(at: task.versionURL.appendingPathComponent("natives"), withIntermediateDirectories: true)
         try await MultiFileDownloader(task: task, items: items, stage: parallel ? .natives : nil).start()
         
-        for (library, artifact) in try task.manifest.unwrap().getNeededNatives() {
+        for (library, artifact) in manifest.getNeededNatives() {
             if libraryNames.contains(library.name) {
                 CacheStorage.default.add(name: library.name, path: task.minecraftDirectory.librariesURL.appendingPathComponent(artifact.path))
             }
         }
         if parallel { await task.finishParallelStage(.natives) }
     }
-    
+
     // MARK: 解压本地库
     private static func unzipNatives(_ task: MinecraftInstallTask) throws {
         let nativesURL: URL = task.versionURL.appendingPathComponent("natives")
-        for (_, native) in try task.manifest.unwrap().getNeededNatives() {
+        guard let manifest = task.manifest else {
+            throw MyLocalizedError(reason: "客户端清单未就绪，无法解压本地库")
+        }
+        for (_, native) in manifest.getNeededNatives() {
             let jarURL: URL = task.minecraftDirectory.librariesURL.appendingPathComponent(native.path)
             Util.unzip(archiveURL: jarURL, destination: nativesURL, replace: true)
             do {
@@ -282,7 +299,7 @@ public class MinecraftInstaller {
         instance?.saveConfig()
         
         // 修改 GLFW
-        if let glfw = manifest.getNeededLibraries().find({ $0.name.contains("lwjgl-glfw") }) {
+        if let glfw = manifest.getNeededLibraries().first(where: { $0.name.contains("lwjgl-glfw") }) {
             guard let javaURL = JavaManager.resolveJavaExecutable() else {
                 err("未找到可用的 Java 运行时，无法运行 glfw-patcher")
                 return
@@ -293,8 +310,7 @@ public class MinecraftInstaller {
             process.currentDirectoryURL = URL(fileURLWithPath: "/tmp")
             process.arguments = ["-jar", SharedConstants.shared.applicationResourcesURL.appendingPathComponent("glfw-patcher.jar").path, task.minecraftDirectory.librariesURL.appendingPathComponent(glfw.artifact!.path).path]
             do {
-                try process.run()
-                process.waitUntilExit()
+                try Util.runProcessWithTimeout(process, timeout: 30)
                 log("已修改 lwjgl-glfw")
             } catch {
                 err("无法修改 lwjgl-glfw: \(error.localizedDescription)")
@@ -306,15 +322,17 @@ public class MinecraftInstaller {
     private static func modifyId(_ task: MinecraftInstallTask) {
         do {
             let manifestURL = task.versionURL.appendingPathComponent("\(task.versionURL.lastPathComponent).json")
-            guard FileManager.default.fileExists(atPath: manifestURL.path),
-                  let data = try FileHandle(forReadingFrom: manifestURL).readToEnd(),
+            guard FileManager.default.fileExists(atPath: manifestURL.path) else { return }
+            let fh = try FileHandle(forReadingFrom: manifestURL)
+            defer { try? fh.close() }
+            guard let data = try? fh.readToEnd(),
                   var dict = try JSON(data: data).dictionaryObject else {
                 return
             }
             
             dict["id"] = task.versionURL.lastPathComponent
             
-            try JSONSerialization.data(withJSONObject: dict, options: .prettyPrinted).write(to: manifestURL)
+            try JSONSerialization.data(withJSONObject: dict, options: .prettyPrinted).write(to: manifestURL, options: .atomic)
             log("已修改客户端清单中的 id")
         } catch {
             err("无法修改 id: \(error.localizedDescription)")
@@ -377,23 +395,34 @@ public class MinecraftInstaller {
     
     // MARK: 创建补全资源任务
     public static func createCompleteTask(_ instance: MinecraftInstance, _ callback: (() -> Void)? = nil) -> InstallTask {
+        guard let version = instance.version else {
+            err("实例版本未设置，无法创建补全任务")
+            let task = MinecraftInstallTask(minecraftVersion: .init(displayName: "unknown"), minecraftDirectory: instance.minecraftDirectory, name: instance.name) { _ in }
+            task.complete()
+            callback?()
+            return task
+        }
         let arch: Architecture
         if Architecture.system == .x64 { arch = .x64 }
         else { arch = instance.isUsingRosetta ? .x64 : .arm64 }
         let task = MinecraftInstallTask(
-            minecraftVersion: instance.version!,
+            minecraftVersion: version,
             minecraftDirectory: instance.minecraftDirectory,
             name: instance.name,
             architecture: arch
         ) { task in
             task.manifest = instance.manifest
-            try await downloadAssetIndex(task)
-            try await downloadClientJar(task)
-            try await downloadHashResourcesFiles(task)
-            try await downloadLibraries(task)
-            try await downloadNatives(task)
-            try unzipNatives(task)
-            finalWork(task)
+            do {
+                try await downloadAssetIndex(task)
+                try await downloadClientJar(task)
+                try await downloadHashResourcesFiles(task)
+                try await downloadLibraries(task)
+                try await downloadNatives(task)
+                try unzipNatives(task)
+                finalWork(task)
+            } catch {
+                err("资源补全失败: \(error.localizedDescription)")
+            }
             task.complete()
             callback?()
         }

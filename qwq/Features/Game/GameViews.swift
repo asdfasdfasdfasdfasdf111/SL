@@ -75,8 +75,6 @@ struct DownloadCategoryView: View {
         }
     }
 
-    private static let hasChineseRegex = try! NSRegularExpression(pattern: "\\p{Han}")
-
     private func applyFilter() {
         searchDebounceTask?.cancel()
         searchDebounceTask = Task {
@@ -124,8 +122,7 @@ struct DownloadCategoryView: View {
             }
             // 目录不可用时：中文先翻译成英文，再调用 API 搜索全库（检索标题与简介）
             var searchQuery = normalized
-            let range = NSRange(normalized.startIndex..., in: normalized)
-            let hasChinese = Self.hasChineseRegex.firstMatch(in: normalized, range: range) != nil
+            let hasChinese = ChineseText.contains(normalized)
             if hasChinese {
                 let englishTerms = await SearchTranslator.translate(normalized)
                 if !englishTerms.isEmpty {
@@ -536,6 +533,7 @@ struct DownloadCategoryView: View {
                 // 归属校验：期间已发起新请求（切换分类/刷新）则丢弃本次结果
                 guard token == fetchToken else { return }
                 items = result
+                filteredResults = result
                 currentOffset = result.count
                 hasMore = totalHits > result.count
                 isLoading = false

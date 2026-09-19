@@ -28,14 +28,16 @@ struct SupportedMetaSection: View {
                 .padding(.top, 4)
             }
             if !filteredLoaders.isEmpty {
-                HStack(spacing: 16) {
-                    ForEach(filteredLoaders, id: \.self) { loader in
-                        Image(LoaderNameResolver.assetName(for: loader))
-                            .resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(height: 28)
-                            .cornerRadius(6)
-                            .shadow(color: .black.opacity(0.12), radius: 2, x: 0, y: 1)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 16) {
+                        ForEach(filteredLoaders, id: \.self) { loader in
+                            Image(LoaderNameResolver.assetName(for: loader))
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(height: 28)
+                                .cornerRadius(6)
+                                .shadow(color: .black.opacity(0.12), radius: 2, x: 0, y: 1)
+                        }
                     }
                 }
                 .padding(.top, 4)

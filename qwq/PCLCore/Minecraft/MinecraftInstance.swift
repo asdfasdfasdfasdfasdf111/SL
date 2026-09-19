@@ -178,7 +178,9 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
             callMethod: callMethod,
             isJdk: nil
         )
-        DataManager.shared.javaVirtualMachines.append(jvm)
+        DispatchQueue.main.async {
+            DataManager.shared.javaVirtualMachines.append(jvm)
+        }
     }
 
     private static func archName(_ arch: Architecture) -> String {
@@ -192,7 +194,9 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
     
     public func loadConfig() throws {
         // readToEnd 可能返回 nil（空/损坏配置文件），强解包会崩；失败时抛错让调用方用默认配置
-        guard let data = try FileHandle(forReadingFrom: configPath).readToEnd() else {
+        let fh = try FileHandle(forReadingFrom: configPath)
+        defer { try? fh.close() }
+        guard let data = try fh.readToEnd() else {
             throw MyLocalizedError(reason: "配置文件为空: \(configPath.path)")
         }
         self.config = .init(try .init(data: data))
@@ -274,6 +278,10 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
     }
     
     public func launch(_ launchOptions: LaunchOptions) async {
+        guard version != nil else {
+            log("版本未设置，无法启动")
+            return
+        }
         if let account = launchOptions.account {
             // 防御性校验（PCL2 风格）：非法用户名直接终止启动，
             // 否则 1.20.5+ 会因 hello 包 writeUtf(name,16) 抛 EncoderException 而进服失败
@@ -316,7 +324,8 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
             if exitCode != 0 {
                 log("检测到非 0 退出代码")
                 hint("检测到 Minecraft 出现错误，错误分析已开始……")
-                Task {
+                Task { [weak self] in
+                    guard let self else { return }
                     if await PopupManager.shared.showAsync(
                         .init(.error, "Minecraft 出现错误", "很抱歉，PCL.Mac 暂时没有分析功能。\n如果要寻求帮助，请把错误报告文件发给对方，而不是发送这个窗口的照片或者截图。\n不要截图！不要截图！！不要截图！！！", [.ok, .init(label: "导出错误报告", style: .accent)])
                     ) == 1 {
@@ -333,7 +342,8 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
                             err("无法找到窗口以显示错误报告导出面板")
                             return
                         }
-                        savePanel.beginSheetModal(for: sheetHost) { [unowned self] result in
+                        savePanel.beginSheetModal(for: sheetHost) { [weak self] result in
+                            guard let self else { return }
                             if result == .OK {
                                 if let url = savePanel.url {
                                     MinecraftCrashHandler.exportErrorReport(self, launcher, to: url)
@@ -352,7 +362,9 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
             let manifestPath = runningDirectory.appendingPathComponent(runningDirectory.lastPathComponent + ".json")
             
             // readToEnd 可能返回 nil（空/损坏清单文件），强解包会崩；失败按读取失败处理
-            guard let data = try FileHandle(forReadingFrom: manifestPath).readToEnd() else {
+            let fh = try FileHandle(forReadingFrom: manifestPath)
+            defer { try? fh.close() }
+            guard let data = try fh.readToEnd() else {
                 err("无法读取 \(manifestPath.lastPathComponent): 文件为空")
                 return false
             }

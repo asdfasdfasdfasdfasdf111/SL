@@ -78,7 +78,6 @@ final class AppContext {
             // 半清而非全清：保留最近使用的一半（LRU 裁剪），避免压力过后所有缓存
             // 重新从磁盘/网络回填；真正的临界压力由系统触发多次事件逐步收紧
             self?.cacheManager.trimMemory(toFraction: 0.5)
-            self?.processPool.clearMemoryCaches()
             DownloadCategoryView.clearStaticCaches()
         }
         source.resume()

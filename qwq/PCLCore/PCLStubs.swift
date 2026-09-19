@@ -10,18 +10,6 @@ extension URL {
     }
 }
 
-extension Array {
-    public func find(_ isTarget: @escaping (Element) -> Bool) -> Element? {
-        for element in self { if isTarget(element) { return element } }
-        return nil
-    }
-    public func union(_ another: any Collection<Element>) -> [Element] {
-        var result = self
-        for element in another { result.append(element) }
-        return result
-    }
-}
-
 public extension Optional {
     func unwrap(_ errorMessage: String? = nil, file: String = #file, line: Int = #line) throws -> Wrapped {
         guard let value = self else {
@@ -72,13 +60,8 @@ public enum ColorSchemeOption: Codable { case light, dark, system }
 public class AppSettings: ObservableObject {
     public static let shared = AppSettings()
     public var currentMinecraftDirectory: MinecraftDirectory? = .default
-    public var defaultInstance: String? = nil
-    public var hasMicrosoftAccount: Bool = false
     public var fileDownloadSource: DownloadSourceOption = .both
     public var versionManifestSource: DownloadSourceOption = .both
-    public var lastVersionManifest: VersionManifest? = nil
-    public var showPclMacPopup: Bool = true
-    public var launchCount: Int = 0
     private init() {}
 }
 
@@ -226,13 +209,6 @@ public class PopupManager: ObservableObject {
     public func showAsync(_ model: PopupModel) async -> Int { 0 }
 }
 
-// MARK: - NetworkTest
-public class NetworkTest {
-    public static let shared = NetworkTest()
-    private init() {}
-    public func hasNetworkConnection() -> Bool { true }
-}
-
 // MARK: - CodableAppStorage (simplified)
 @propertyWrapper
 public struct CodableAppStorage<Value: Codable> {
@@ -258,20 +234,9 @@ public struct CodableAppStorage<Value: Codable> {
     }
 }
 
-// MARK: - DownloadSourceProtocol (compat for old GameVersionDownloader)
-public typealias DownloadSourceProtocol = DownloadSource
-
-extension DownloadSourceManager {
-    public var source: DownloadSource { getDownloadSource() }
-}
-
 // MARK: - Theme (stub)
 public class Theme {
     public var id: String
     public init(id: String) { self.id = id }
     public static func load(id: String) -> Theme { Theme(id: id) }
-}
-
-public class ColorConstants {
-    public static var colorScheme: ColorSchemeOption = .system
 }

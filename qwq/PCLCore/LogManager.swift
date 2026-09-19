@@ -49,9 +49,7 @@ final class LogStore {
                 self.logLines.removeFirst(100)
             }
             self.logs.append(message)
-            if SharedConstants.shared.isDevelopment {
-                self.logLines.append(line ?? LogLine(message))
-            }
+            self.logLines.append(line ?? LogLine(message))
             if self.writeImmediately && write {
                 self.appendToDisk(message + "\n")
             }
@@ -71,23 +69,6 @@ final class LogStore {
     
     func clear() {
         try? FileManager.default.removeItem(at: SharedConstants.shared.logURL)
-    }
-    
-    func save() {
-        if !writeImmediately {
-            queue.async {
-                let allLogs = self.logs.joined(separator: "\n")
-                self.appendToDisk(allLogs) { isSuccess in
-                    if isSuccess {
-                        log("日志保存成功")
-                    }
-                    log("已触发进程终止")
-                    DispatchQueue.main.async {
-                        NSApp.reply(toApplicationShouldTerminate: true)
-                    }
-                }
-            }
-        }
     }
 }
 

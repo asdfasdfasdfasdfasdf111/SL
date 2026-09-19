@@ -3,49 +3,73 @@ import Foundation
 // 数据模型族 → ModrinthModels.swift（ModrinthMod/ModrinthProject/ModrinthVersion）
 // ModLoader → ModLoader.swift（加载器枚举 + displayName/assetName）
 
+// MARK: - Modrinth 搜索缓存（ModDownloader / ModpackDownloader 共用，替代两份逐字重复的 cache+TTL+lock）
+
+/// TTL 结果缓存 + 同 key 并发请求合并
+final class ModrinthSearchCache<Value> {
+    private var cached: [String: (Date, Value)] = [:]
+    private var inFlight: [String: Task<Value, Error>] = [:]
+    private let ttl: TimeInterval
+    private var lock = os_unfair_lock()
+
+    init(ttl: TimeInterval = 120) { self.ttl = ttl }
+
+    func hit(_ key: String) -> Value? {
+        withUnfairLock(&lock) {
+            guard let (ts, value) = cached[key] else { return nil }
+            if Date().timeIntervalSince(ts) > ttl {
+                cached.removeValue(forKey: key)
+                return nil
+            }
+            return value
+        }
+    }
+
+    func store(_ key: String, _ value: Value) {
+        withUnfairLock(&lock) {
+            cached[key] = (Date(), value)
+            if cached.count > 50, let oldest = cached.min(by: { $0.value.0 < $1.value.0 })?.key {
+                cached.removeValue(forKey: oldest)
+            }
+        }
+    }
+
+    func existingTask(_ key: String) -> Task<Value, Error>? {
+        withUnfairLock(&lock) { inFlight[key] }
+    }
+
+    func track(_ key: String, _ task: Task<Value, Error>) {
+        withUnfairLock(&lock) { inFlight[key] = task }
+    }
+
+    func untrack(_ key: String) {
+        withUnfairLock(&lock) { inFlight.removeValue(forKey: key) }
+    }
+
+    func clear() {
+        withUnfairLock(&lock) {
+            cached.removeAll()
+            inFlight.removeAll()
+        }
+    }
+}
+
 public class ModDownloader {
     private let baseURL = "https://api.modrinth.com/v2"
     private let userAgent = "Swim111Launcher/1.0 (Minecraft Launcher)"
 
     private var session: URLSession { AppContext.shared.apiSession }
 
-    private var searchCache: [String: (timestamp: Date, results: [ModrinthMod])] = [:]
-    private let cacheTTL: TimeInterval = 120
-    private var cacheLock = os_unfair_lock()
-
-    private var pendingRequests: [String: Task<[ModrinthMod], Error>] = [:]
-    private var pendingLock = os_unfair_lock()
+    private let searchCache = ModrinthSearchCache<[ModrinthMod]>()
 
     public init() {}
 
     public func clearCache() {
-        withUnfairLock(&cacheLock) { searchCache.removeAll() }
-        withUnfairLock(&pendingLock) { pendingRequests.removeAll() }
+        searchCache.clear()
     }
 
     private func cacheKey(query: String, limit: Int, loader: ModLoader?, gameVersion: String?) -> String {
         return "\(query.lowercased())|\(limit)|\(loader?.rawValue ?? "nil")|\(gameVersion ?? "nil")"
-    }
-
-    private func cachedSearchResult(forKey key: String) -> [ModrinthMod]? {
-        withUnfairLock(&cacheLock) {
-            guard let entry = searchCache[key] else { return nil }
-            if Date().timeIntervalSince(entry.timestamp) > cacheTTL {
-                searchCache.removeValue(forKey: key)
-                return nil
-            }
-            return entry.results
-        }
-    }
-
-    private func setCacheResult(_ results: [ModrinthMod], forKey key: String) {
-        withUnfairLock(&cacheLock) {
-            searchCache[key] = (timestamp: Date(), results: results)
-            if searchCache.count > 50 {
-                let oldestKey = searchCache.min(by: { $0.value.timestamp < $1.value.timestamp })?.key
-                if let oldestKey = oldestKey { searchCache.removeValue(forKey: oldestKey) }
-            }
-        }
     }
 
     private func request(_ path: String) -> URLRequest {
@@ -58,11 +82,11 @@ public class ModDownloader {
     
     public func searchMods(query: String, limit: Int = 20, loader: ModLoader? = nil, gameVersion: String? = nil) async throws -> [ModrinthMod] {
         let key = cacheKey(query: query, limit: limit, loader: loader, gameVersion: gameVersion)
-        if let cached = cachedSearchResult(forKey: key) {
+        if let cached = searchCache.hit(key) {
             return cached
         }
 
-        if let existingTask = withUnfairLock(&pendingLock, { pendingRequests[key] }) {
+        if let existingTask = searchCache.existingTask(key) {
             return try await existingTask.value
         }
 
@@ -85,14 +109,14 @@ public class ModDownloader {
             req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
             let (data, _) = try await session.data(for: req)
             let result = try JSONDecoder().decode(SearchResult.self, from: data)
-            setCacheResult(result.hits, forKey: key)
+            searchCache.store(key, result.hits)
             return result.hits
         }
 
-        withUnfairLock(&pendingLock) { pendingRequests[key] = task }
+        searchCache.track(key, task)
 
         defer {
-            withUnfairLock(&pendingLock) { pendingRequests.removeValue(forKey: key) }
+            searchCache.untrack(key)
         }
 
         return try await task.value

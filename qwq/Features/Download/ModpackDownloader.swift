@@ -43,12 +43,7 @@ public class ModpackDownloader {
 
     private var session: URLSession { AppContext.shared.apiSession }
 
-    private var searchCache: [String: (timestamp: Date, results: [Modpack])] = [:]
-    private let cacheTTL: TimeInterval = 120
-    private var cacheLock = os_unfair_lock()
-
-    private var pendingRequests: [String: Task<[Modpack], Error>] = [:]
-    private var pendingLock = os_unfair_lock()
+    private let searchCache = ModrinthSearchCache<[Modpack]>()
 
     public init() {}
 
@@ -56,34 +51,13 @@ public class ModpackDownloader {
         return "\(query.lowercased())|\(limit)"
     }
 
-    private func cachedSearchResult(forKey key: String) -> [Modpack]? {
-        withUnfairLock(&cacheLock) {
-            guard let entry = searchCache[key] else { return nil }
-            if Date().timeIntervalSince(entry.timestamp) > cacheTTL {
-                searchCache.removeValue(forKey: key)
-                return nil
-            }
-            return entry.results
-        }
-    }
-
-    private func setCacheResult(_ results: [Modpack], forKey key: String) {
-        withUnfairLock(&cacheLock) {
-            searchCache[key] = (timestamp: Date(), results: results)
-            if searchCache.count > 50 {
-                let oldestKey = searchCache.min(by: { $0.value.timestamp < $1.value.timestamp })?.key
-                if let oldestKey = oldestKey { searchCache.removeValue(forKey: oldestKey) }
-            }
-        }
-    }
-
     public func search(query: String, limit: Int = 20) async throws -> [Modpack] {
         let key = cacheKey(query: query, limit: limit)
-        if let cached = cachedSearchResult(forKey: key) {
+        if let cached = searchCache.hit(key) {
             return cached
         }
 
-        if let existingTask = withUnfairLock(&pendingLock, { pendingRequests[key] }) {
+        if let existingTask = searchCache.existingTask(key) {
             return try await existingTask.value
         }
 
@@ -98,14 +72,14 @@ public class ModpackDownloader {
             req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
             let (data, _) = try await session.data(for: req)
             let result = try JSONDecoder().decode(SearchResult.self, from: data)
-            setCacheResult(result.hits, forKey: key)
+            searchCache.store(key, result.hits)
             return result.hits
         }
 
-        withUnfairLock(&pendingLock) { pendingRequests[key] = task }
+        searchCache.track(key, task)
 
         defer {
-            withUnfairLock(&pendingLock) { pendingRequests.removeValue(forKey: key) }
+            searchCache.untrack(key)
         }
 
         return try await task.value

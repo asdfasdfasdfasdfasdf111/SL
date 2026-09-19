@@ -28,7 +28,7 @@ class MinecraftSkinManager {
         if fileManager.fileExists(atPath: destURL.path) {
             try fileManager.removeItem(at: destURL)
         }
-        try skinData.write(to: destURL)
+        try skinData.write(to: destURL, options: .atomic)
 
         return destURL
     }

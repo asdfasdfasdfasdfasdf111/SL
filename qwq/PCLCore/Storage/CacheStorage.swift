@@ -23,7 +23,9 @@ public class CacheStorage {
         if FileManager.default.fileExists(atPath: indexURL.path) {
             do {
                 // readToEnd 可能返回 nil（空/损坏文件），强解包会崩；失败走空索引重建
-                guard let data = try FileHandle(forReadingFrom: indexURL).readToEnd() else {
+                let fh = try FileHandle(forReadingFrom: indexURL)
+                defer { try? fh.close() }
+                guard let data = try fh.readToEnd() else {
                     err("index.json 读取为空，重建缓存索引")
                     self.libraries = []
                     return

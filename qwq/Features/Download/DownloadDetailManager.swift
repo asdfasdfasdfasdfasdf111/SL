@@ -61,11 +61,6 @@ final class DownloadDetailManager: ObservableObject {
         }
     }
 
-    /// 追加任务（当前未用，保留多任务扩展能力）
-    func addTask(_ task: InstallTask, key: String) {
-        tasks.addTask(key: key, task: task)
-    }
-
     /// 关闭详情页并清空任务（下载完成 / 失败后调用）
     /// 关闭带非线性动画，与打开对称；后台回调也走这里，动画自动在主线程播放
     /// - Parameter ownerID: 发起关闭的任务组 id。当传入且与「当前展示的任务组」不一致时，

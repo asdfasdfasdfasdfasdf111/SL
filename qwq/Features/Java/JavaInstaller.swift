@@ -34,6 +34,7 @@ class JavaInstaller {
 
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
         let pkgPath = tempDir.appendingPathComponent("openjdk-\(version)-\(arch).tar.gz")
 
         let task = AppContext.shared.downloadSession.downloadTask(with: downloadURL) { tempURL, response, error in
@@ -66,6 +67,7 @@ class JavaInstaller {
 
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
         let pkgPath = tempDir.appendingPathComponent("openjdk-\(version)-\(arch).pkg")
 
         do {

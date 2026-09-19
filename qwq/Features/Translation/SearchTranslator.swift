@@ -37,10 +37,9 @@ enum SearchTranslator {
         guard !results.isEmpty else { return [] }
 
         cacheLock.withLockCompat {
-            // 限制缓存大小：超过 100 条则清空一半
             if cache.count >= 100 {
-                let keys = Array(cache.keys.prefix(50))
-                for k in keys { cache.removeValue(forKey: k) }
+                let sortedKeys = cache.keys.sorted()
+                for k in sortedKeys.prefix(50) { cache.removeValue(forKey: k) }
             }
             cache[text] = results
         }

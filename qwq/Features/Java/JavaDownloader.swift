@@ -41,6 +41,8 @@ enum JavaDownloader {
 
                 let targetDir = basePath.appendingPathComponent("jdk-\(version)")
                 try? FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
+                var success = false
+                defer { if !success { try? FileManager.default.removeItem(at: targetDir) } }
 
                 // 解压 zip
                 let unzip = Process()
@@ -56,6 +58,7 @@ enum JavaDownloader {
 
                 // 查找解压后的 java 可执行文件
                 if let javaURL = findJavaExecutable(in: targetDir) {
+                    success = true
                     completion(.success(javaURL))
                 } else {
                     completion(.failure(NSError(domain: "JavaManager", code: -4, userInfo: [NSLocalizedDescriptionKey: "解压后未找到 Java"])))
@@ -88,6 +91,8 @@ enum JavaDownloader {
             guard let tempURL = tempURL else { completion(.failure(NSError(domain: "JavaManager", code: -3))); return }
             let targetDir = basePath.appendingPathComponent("jdk-\(version)")
             try? FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
+            var success = false
+            defer { if !success { try? FileManager.default.removeItem(at: targetDir) } }
             let tar = Process()
             tar.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
             tar.arguments = ["-xzf", tempURL.path, "-C", targetDir.path, "--strip-components=1"]
@@ -95,6 +100,7 @@ enum JavaDownloader {
                 try tar.run()
                 tar.waitUntilExit()
                 if tar.terminationStatus == 0, let javaURL = findJavaExecutable(in: targetDir) {
+                    success = true
                     completion(.success(javaURL))
                 } else {
                     completion(.failure(NSError(domain: "JavaManager", code: -4, userInfo: [NSLocalizedDescriptionKey: "解压失败"])))

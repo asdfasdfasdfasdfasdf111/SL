@@ -58,3 +58,6 @@ PCL2/
 
 # superbased 截图目录（勿提交）
 .superbased/
+
+# opencode 项目配置 & 第三方 skill 安装目录（勿提交，与 .omo 同理）
+.opencode/

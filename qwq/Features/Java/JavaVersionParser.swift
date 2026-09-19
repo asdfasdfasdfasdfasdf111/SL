@@ -56,8 +56,15 @@ enum JavaVersionParser {
             let pipe = Pipe()
             task.standardError = pipe
             try? task.run()
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            task.waitUntilExit()
+
+            let sem = DispatchSemaphore(value: 0)
+            task.terminationHandler = { _ in sem.signal() }
+            var data = Data()
+            DispatchQueue.global().async { data = pipe.fileHandleForReading.readDataToEndOfFile() }
+            if sem.wait(timeout: .now() + 10) == .timedOut {
+                task.terminate()
+                return nil
+            }
             guard let output = String(data: data, encoding: .utf8) else { return nil }
 
             let versionPattern = #"version "(\d+)"#
@@ -89,8 +96,13 @@ enum JavaVersionParser {
             let filePipe = Pipe()
             fileTask.standardOutput = filePipe
             try? fileTask.run()
-            let fileData = filePipe.fileHandleForReading.readDataToEndOfFile()
-            fileTask.waitUntilExit()
+            let fileSem = DispatchSemaphore(value: 0)
+            fileTask.terminationHandler = { _ in fileSem.signal() }
+            var fileData = Data()
+            DispatchQueue.global().async { fileData = filePipe.fileHandleForReading.readDataToEndOfFile() }
+            if fileSem.wait(timeout: .now() + 10) == .timedOut {
+                fileTask.terminate()
+            }
             let fileOutput = String(data: fileData, encoding: .utf8) ?? ""
             if fileOutput.contains("arm64") { arch = "arm64" }
             else if fileOutput.contains("x86_64") { arch = "x86_64" }

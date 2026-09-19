@@ -57,6 +57,7 @@ struct ModDetailView: View {
     @State private var projectGameVersions: [String] = []
     @State private var projectLoaders: [String] = []
     @State private var isLoadingProject = false
+    @State private var isViewActive = false
 
     @State private var availableLoaders: [String] = []
     @State private var isLoadingLoaders = false
@@ -66,6 +67,8 @@ struct ModDetailView: View {
     @State private var loaderError: String?
     // 逐加载器检测状态（流式：完成一个显示一个，不再等全部结束才出卡片）
     @State private var loaderStates: [String: LoaderState] = [:]
+    /// 加载器检测完成顺序（先定论的在最前；只用于 supported 卡片排序）
+    @State private var loaderCompletionOrder: [String] = []
 
     private func assetName(for loader: String) -> String {
         LoaderNameResolver.assetName(for: loader)
@@ -79,6 +82,7 @@ struct ModDetailView: View {
                 let downloader = ModDownloader()
                 let project = try await downloader.getProject(modId: item.id)
                 await MainActor.run {
+                    guard isViewActive else { return }
                     projectGameVersions = project.game_versions ?? []
                     projectLoaders = project.loaders ?? []
                     isLoadingProject = false
@@ -115,7 +119,7 @@ struct ModDetailView: View {
                     }
                 }
             } catch {
-                await MainActor.run { isLoadingProject = false }
+                await MainActor.run { if isViewActive { isLoadingProject = false } }
             }
         }
     }
@@ -157,6 +161,7 @@ struct ModDetailView: View {
                         pageWidth = width
                     }
                     translationModel.activate()
+                    isViewActive = true
                     applyDefaultVersionSelection()
                     triggerPageLoads()
                 }
@@ -196,14 +201,12 @@ struct ModDetailView: View {
                 .buttonStyle(.plain)
                 .scaleEffect(bounceScale)
                 .padding(.trailing, downloadDetail.showCircleButton ? 88 : 12)
-                // 详情页底部有外层裁剪；上移更多避免按钮被裁切
-                .padding(.bottom, 193)
+                .padding(.bottom, 20)
                 .animation(.interpolatingSpring(stiffness: 170, damping: 14), value: downloadDetail.showCircleButton)
             }
         }
         .onDisappear {
-            // 视图销毁：取消延迟动画任务与加载器检测任务，防止其继续写已释放的 @State storage（UAF）；
-            // 翻译 model 同步 deactivate，异步翻译回调不再写回
+            isViewActive = false
             bounceTask?.cancel()
             backNavTask?.cancel()
             loaderSupportTask?.cancel()
@@ -303,6 +306,8 @@ struct ModDetailView: View {
             initial[name] = .checking
         }
         loaderStates = initial
+        // 完成顺序：缓存已定论项在前（按显示顺序），检测中新定论的按流式到达顺序追加
+        loaderCompletionOrder = LoaderSupportChecker.loaderOrder.filter { initial[$0] == .supported || initial[$0] == .notSupported }
         applyLoaderStates(initial, version: version)
         // 3. 无论当前版本是否命中缓存，都预加载相邻版本；缓存全命中正是后台预取的最佳时机。
         prefetchNearbyLoaders(for: requested)
@@ -318,6 +323,9 @@ struct ModDetailView: View {
                     var states = loaderStates
                     states[loader] = state
                     loaderStates = states
+                    if !loaderCompletionOrder.contains(loader) {
+                        loaderCompletionOrder.append(loader)
+                    }
                     applyLoaderStates(states, version: requested)
                 }
             }
@@ -519,6 +527,7 @@ struct ModDetailView: View {
                     isLoadingModpackVersions: isLoadingModpackVersions,
                     isLoadingLoaders: isLoadingLoaders,
                     loaderStates: loaderStates,
+                    loaderCompletionOrder: loaderCompletionOrder,
                     loaderError: (pageTypeForIndex == .loaderSelector && isBasePage) ? loaderError : nil,
                     onRetryLoaders: { fetchLoaderSupport(for: selectedVersion) },
                     selectedVersion: $selectedVersion,

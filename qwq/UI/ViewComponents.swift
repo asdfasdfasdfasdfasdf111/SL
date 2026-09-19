@@ -43,7 +43,8 @@ struct SkinLayerView: View {
     /// 后台调用的静态裁剪：yOffset 兼容 64 高（带帽层）与 32 高（旧版无帽）两种贴图
     static func cropped(imageData: Data, startX: CGFloat, startY: CGFloat) -> NSImage? {
         guard var ciImage = CIImage(data: imageData) else { return nil }
-        let yOffset: CGFloat = ciImage.extent.height == 32 ? 0 : 32
+        let h = ciImage.extent.height
+        let yOffset: CGFloat = (h == 32 || h == 64) ? (h == 32 ? 0 : 32) : 0
         ciImage = ciImage.cropped(to: CGRect(x: startX, y: startY + yOffset, width: 8, height: 8))
         let context = CIContext(options: nil)
         let extent = ciImage.extent
@@ -180,6 +181,6 @@ extension NSImage {
         guard let data = pngData() else {
             throw LauncherError.skinValidationFailed("无法转换为 PNG")
         }
-        try data.write(to: url)
+        try data.write(to: url, options: .atomic)
     }
 }

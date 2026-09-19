@@ -104,7 +104,7 @@ struct GameCategoryView: View {
             let savedRoot = await MainActor.run { settings.selectedGameRoot }
             return await GameScanService.resolveGameRoot(savedRoot: savedRoot)
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
             if isLoading && !scanTimedOut {
                 scanTimedOut = true
                 withAnimation(.easeOut(duration: 0.8)) { showCard = true; hasVersions = false; isLoading = false }

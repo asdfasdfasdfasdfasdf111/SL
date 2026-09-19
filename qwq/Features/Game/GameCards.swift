@@ -73,20 +73,14 @@ struct LoaderSelectorCard: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            if state == .checking {
-                ProgressView()
-                    .scaleEffect(0.7)
-                    .frame(height: 32)
-                    .frame(maxWidth: .infinity)
-            } else {
-                Image(mapLoaderAsset(loader))
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(height: 32)
-                    .cornerRadius(6)
-                    .shadow(color: .black.opacity(0.12), radius: 2, x: 0, y: 1)
-                    .opacity(state == .notSupported ? 0.25 : 1)
-            }
+            // 图标是本地 asset，任何状态都直接显示；checking 仅降透明度表示未定论（不可点），不转圈
+            Image(mapLoaderAsset(loader))
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(height: 32)
+                .cornerRadius(6)
+                .shadow(color: .black.opacity(0.12), radius: 2, x: 0, y: 1)
+                .opacity(state == .notSupported ? 0.25 : (state == .checking ? 0.7 : 1))
             Text(loader)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(.primary)

@@ -115,7 +115,7 @@ struct ContentView: View {
         .environmentObject(settings)
         // 切换分类时自动收起下载详情（下载与圆按钮保持，仅关闭覆盖层）
         .onChange(of: selectedCategory) { _ in
-            if downloadDetail.isPresented {
+            if downloadDetail.isPresented && dragOffset == 0 {
                 downloadDetail.toggle()
             }
         }
@@ -174,13 +174,12 @@ struct ContentView: View {
                 Rectangle().fill(Color.secondary.opacity(0.3)).frame(height: 0.5).padding(.horizontal, 32)
                 GeometryReader { geometry in
                     let width = geometry.size.width
-                    let height = geometry.size.height
                     ZStack {
                         if downloadDetail.isPresented {
                             DownloadDetailView()
                                 .transition(.move(edge: .trailing).combined(with: .opacity))
                         } else {
-                            categoryCanvas(width: width, height: height)
+                            categoryCanvas(width: width)
                         }
                     }
                     .clipped()
@@ -191,21 +190,28 @@ struct ContentView: View {
     }
     /// 旧版分类画布：所有分类页完整横向排布，点击导航或拖拽时整页连续滑动；
     /// 从第 1 项跳到第 5 项会真实经过中间页面，拖拽中内容实时跟手。
-    private func categoryCanvas(width: CGFloat, height: CGFloat) -> some View {
+    private func categoryCanvas(width: CGFloat) -> some View {
         HStack(spacing: 0) {
             ForEach(categories) { category in
                 CategoryContentView(category: category, searchText: searchText)
-                    .frame(width: width, height: height)
+                    .frame(width: width)
             }
         }
         .offset(x: -CGFloat(selectedIndex) * width + dragOffset)
         .animation(.spring(response: 0.6, dampingFraction: 0.65, blendDuration: 0.15), value: selectedIndex)
         .gesture(
-            DragGesture()
+            DragGesture(minimumDistance: 20)
                 .onChanged { value in
+                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
                     dragOffset = value.translation.width
                 }
                 .onEnded { value in
+                    guard abs(value.translation.width) > abs(value.translation.height) else {
+                        withAnimation(.spring(response: 0.6, dampingFraction: 0.65, blendDuration: 0.15)) {
+                            dragOffset = 0
+                        }
+                        return
+                    }
                     let threshold = width * 0.25
                     var newIndex = selectedIndex
                     if value.translation.width < -threshold && selectedIndex < categories.count - 1 {

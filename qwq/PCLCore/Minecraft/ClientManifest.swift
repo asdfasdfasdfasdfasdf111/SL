@@ -178,22 +178,9 @@ public class ClientManifest {
                 return []
             }
         }
-        
-        public class JvmArgument {
-            public let string: String?
-            public let rules: RuleTag?
 
-            public init(json: JSON) {
-                if let str = json.string { string = str; rules = nil }
-                else { string = nil; rules = RuleTag(json: json) }
-            }
-            public func match() -> Bool { rules?.match() ?? true }
-            public func values() -> [String] {
-                if let string { return [string] }
-                if let rules, rules.match() { return rules.value }
-                return []
-            }
-        }
+        /// game / jvm 参数结构完全相同（string 或 规则组），共用一类
+        public typealias JvmArgument = GameArgument
         
         public class RuleTag {
             public let rules: [Rule]
@@ -293,8 +280,14 @@ public class ClientManifest {
     /// 尝试解析与自动合并客户端清单，不会对实例进行操作
     /// - Parameter url: 清单路径
     /// - Parameter minecraftDirectory: 若需自动合并，该参数的值为实例所在的 minecraft 目录，否则为空
-    public static func parse(url: URL, minecraftDirectory: MinecraftDirectory? = nil) throws -> ClientManifest? {
-        let data = try FileHandle(forReadingFrom: url).readToEnd() ?? Data()
+    public static func parse(url: URL, minecraftDirectory: MinecraftDirectory? = nil, depth: Int = 0) throws -> ClientManifest? {
+        guard depth < 16 else {
+            err("inheritsFrom 递归深度超过 16，疑似循环引用")
+            return nil
+        }
+        let fh = try FileHandle(forReadingFrom: url)
+        defer { try? fh.close() }
+        let data = (try? fh.readToEnd()) ?? Data()
         let json = try JSON(data: data)
         
         if json["loader"].exists() && json["intermediary"].exists() && !json["id"].exists() { // 旧版 PCL.Mac Fabric 安装逻辑
@@ -315,7 +308,7 @@ public class ClientManifest {
             let parent: ClientManifest
             guard let manifest = ClientManifest(json: json) else { return nil }
             do {
-                guard let manifest = try ClientManifest.parse(url: parentURL, minecraftDirectory: minecraftDirectory) else { return nil }
+                guard let manifest = try ClientManifest.parse(url: parentURL, minecraftDirectory: minecraftDirectory, depth: depth + 1) else { return nil }
                 parent = manifest
             } catch {
                 err("无法解析 inheritsFrom: \(error.localizedDescription)")

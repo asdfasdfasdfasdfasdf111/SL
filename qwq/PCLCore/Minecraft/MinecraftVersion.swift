@@ -62,7 +62,7 @@ public enum VersionType: String, Codable {
             return .release
         }
         
-        guard let version = manifest.versions.find({ $0.id == displayVersion }) else {
+        guard let version = manifest.versions.first(where: { $0.id == displayVersion }) else {
             return .release
         }
         

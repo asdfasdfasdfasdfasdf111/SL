@@ -30,7 +30,11 @@ enum LocalModCatalog {
     static let readyNotification = Notification.Name("localCatalogReady")
 
     /// 本地目录是否已解析完成（主线程据此决定是否直接走全量目录模式）
-    static var isReady: Bool { localCatalogReady }
+    static var isReady: Bool {
+        localCatalogLock.lock()
+        defer { localCatalogLock.unlock() }
+        return localCatalogReady
+    }
 
     /// 应用启动时预热本地全量目录（对应 PCL 的 PageLoaderInit：在用户打开下载页之前就后台解析，
     /// 让 mod/资源包/光影/整合包页首帧即有数据，消除「空白→填充」的延迟感）
@@ -81,14 +85,18 @@ enum LocalModCatalog {
 
     /// 后台预加载四类本地目录，避免首次切页时阻塞主线程
     private static func preload() {
-        guard !localCatalogReady else { return }
+        localCatalogLock.lock()
+        let ready = localCatalogReady
+        localCatalogLock.unlock()
+        guard !ready else { return }
         Task.detached(priority: .userInitiated) {
             _ = items(for: .mod)
             _ = items(for: .resourcePack)
             _ = items(for: .shader)
             _ = items(for: .modpack)
+            localCatalogLock.lock()
             localCatalogReady = true
-            // 本地目录就绪后通知界面：若当前停在 mod/资源包/光影/整合包页，自动刷新为全量本地目录
+            localCatalogLock.unlock()
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: readyNotification, object: nil)
             }

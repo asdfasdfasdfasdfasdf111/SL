@@ -37,10 +37,8 @@ public class ModFileDownloadTask: InstallTask {
     }
 
     public override func start() {
-        Task { @MainActor in
-            self.state = .inprogress
-        }
         Task {
+            await MainActor.run { self.state = .inprogress }
             do {
                 try await SingleFileDownloader.download(
                     task: self,

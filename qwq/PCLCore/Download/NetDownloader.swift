@@ -66,34 +66,26 @@ public struct FileChecker {
         return nil
     }
 
-    private nonisolated static func md5OfFile(_ path: URL) -> String? {
-        var hasher = Insecure.MD5()
+    private nonisolated static func hashOfFile<H: HashFunction>(_ path: URL, _ hasher: H) -> String? {
+        var hasher = hasher
         guard let handle = try? FileHandle(forReadingFrom: path) else { return nil }
         defer { try? handle.close() }
         while let data = try? handle.read(upToCount: 1 << 20), !data.isEmpty {
             hasher.update(data: data)
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    private nonisolated static func md5OfFile(_ path: URL) -> String? {
+        hashOfFile(path, Insecure.MD5())
     }
 
     private nonisolated static func sha256OfFile(_ path: URL) -> String? {
-        var hasher = SHA256()
-        guard let handle = try? FileHandle(forReadingFrom: path) else { return nil }
-        defer { try? handle.close() }
-        while let data = try? handle.read(upToCount: 1 << 20), !data.isEmpty {
-            hasher.update(data: data)
-        }
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        hashOfFile(path, SHA256())
     }
 
     private nonisolated static func sha1OfFile(_ path: URL) -> String? {
-        var hasher = Insecure.SHA1()
-        guard let handle = try? FileHandle(forReadingFrom: path) else { return nil }
-        defer { try? handle.close() }
-        while let data = try? handle.read(upToCount: 1 << 20), !data.isEmpty {
-            hasher.update(data: data)
-        }
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        hashOfFile(path, Insecure.SHA1())
     }
 }
 
@@ -625,6 +617,7 @@ public actor NetManager {
         var counter = 0
         var bytesSinceCheck: Int64 = 0
         var lastCheckTime = Date()
+        let sliceStartTime = Date()
 
         for try await byte in stream {
             try Task.checkCancellation()
@@ -636,6 +629,10 @@ public actor NetManager {
             if counter >= 1024 {
                 counter = 0
                 let now = Date()
+                // 总超时：分片下载超过 5 分钟视为网络异常（TCP 半开连接间歇传少量数据可绕过慢速检测）
+                if now.timeIntervalSince(sliceStartTime) > 300 {
+                    throw NetDownloadError.fileFailed("分片下载超时（5 分钟）")
+                }
                 let dt = now.timeIntervalSince(lastCheckTime)
                 if dt > 1.0 {
                     let speed = Double(bytesSinceCheck) / dt

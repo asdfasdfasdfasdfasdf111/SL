@@ -30,18 +30,13 @@ public struct Response {
     public let json: JSON?
     public let error: Error?
     
-    public func getDataOrThrow() throws -> Data {
+    public func getJSONOrThrow() throws -> JSON {
         // 注意：不能写成 `guard let self.data else` —— SE-0345 简写仅支持简单标识符，
         // 属性路径（self.data）会编译报错 "unwrap condition requires a valid identifier"
         guard let data = self.data else {
             throw self.error ?? NSError(domain: "data 为空", code: -1)
         }
-        
-        return data
-    }
-    
-    public func getJSONOrThrow() throws -> JSON {
-        return try JSON(data: getDataOrThrow())
+        return try JSON(data: data)
     }
 }
 

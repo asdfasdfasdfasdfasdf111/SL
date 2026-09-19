@@ -50,7 +50,8 @@ public class MinecraftDirectory: Codable, Identifiable, Hashable {
     
     public func loadInnerInstances(callback: (([InstanceInfo]) -> Void)? = nil) {
         instances.removeAll()
-        Task {
+        Task { [weak self] in
+            guard let self else { return }
             do {
                 let contents = try FileManager.default.contentsOfDirectory(at: versionsURL, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles])
                 let instanceDirectories = contents.filter { url in

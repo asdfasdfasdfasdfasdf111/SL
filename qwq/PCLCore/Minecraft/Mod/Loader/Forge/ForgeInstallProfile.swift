@@ -35,7 +35,7 @@ public struct ForgeInstallProfile {
             let sides = json["sides"].arrayValue.map { $0.stringValue }
             self.isAvailableOnClient = sides.contains("server") && sides.count == 1 ? false : true
             self.jarPath = Util.toPath(mavenCoordinate: json["jar"].stringValue)
-            self.classpath = json["classpath"].arrayValue.map { Util.toPath(mavenCoordinate: $0.stringValue) }.union([jarPath])
+            self.classpath = json["classpath"].arrayValue.map { Util.toPath(mavenCoordinate: $0.stringValue) } + [jarPath]
             self.args = json["args"].arrayValue.map { $0.stringValue }
         }
     }

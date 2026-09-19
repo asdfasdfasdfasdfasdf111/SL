@@ -78,8 +78,4 @@ struct CloseSessionButton: View {
             }
         }
     }
-
-    private func stopPopAnimation() {
-        popTask?.cancel()
-    }
 }

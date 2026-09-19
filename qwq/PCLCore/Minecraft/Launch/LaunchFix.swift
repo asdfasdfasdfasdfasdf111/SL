@@ -24,12 +24,17 @@ public enum LaunchFix {
         }
         let dir = instance.minecraftDirectory
         var items: [DownloadItem] = []
-        
+
+        let libraries = manifest.getNeededLibraries()
+        let libTotal = max(1, libraries.count)
         // 1) 缺失支持库分析（PCL2 McLibFix）：已存在且 sha1 匹配 → 跳过，仅收集缺失项
-        for library in manifest.getNeededLibraries() {
+        for (i, library) in libraries.enumerated() {
             guard let artifact = library.artifact else { continue }
             let dest = dir.librariesURL.appendingPathComponent(artifact.path)
-            if fileIsValid(dest, hash: artifact.sha1) { continue }
+            if fileIsValid(dest, hash: artifact.sha1) {
+                onProgress(Double(i + 1) / Double(libTotal) * 0.5)
+                continue
+            }
             if let url = DownloadSourceManager.shared.getLibraryURL(library) {
                 items.append(.init(url, dest, sha1: artifact.sha1))
             }
@@ -53,18 +58,26 @@ public enum LaunchFix {
         }
         
         // 3) 缺失资源分析（PCL2 McAssetsFixList CheckHash）：asset 以 hash 命名，直接用 hash 校验
-        for object in assetsObjects {
+        let assetTotal = max(1, assetsObjects.count)
+        for (i, object) in assetsObjects.enumerated() {
             let dest = object.appendTo(dir.assetsURL.appendingPathComponent("objects"))
-            if fileIsValid(dest, hash: object.hash) { continue }
-            let src = object.appendTo(URL(string: "https://resources.download.minecraft.net")!)
-            items.append(.init(src, dest, sha1: object.hash))
+            if fileIsValid(dest, hash: object.hash) {
+                onProgress(0.5 + Double(i + 1) / Double(assetTotal) * 0.5)
+                continue
+            }
+            items.append(.init(
+                DownloadSourceManager.shared.getDownloadSource(),
+                { $0.getAssetURL(hash: object.hash) ?? URL(string: "https://resources.download.minecraft.net/\(object.hash.prefix(2))/\(object.hash)")! },
+                destination: dest,
+                sha1: object.hash
+            ))
         }
         
         // 4) 下载缺失项（NetManager 引擎：多源回退 + 分片 + 重试 + 校验）
         if !items.isEmpty {
             let total = Double(items.count)
-            try await MultiFileDownloader(items: items, concurrentLimit: 32) { completedCount, _ in
-                onProgress(Double(completedCount) / total)
+            try await MultiFileDownloader(items: items, concurrentLimit: 32) { progress, _ in
+                onProgress(progress)
             }.start()
             // 若资源索引是本次刚下载的，现在补上资源分析
             if assetsObjects.isEmpty, let assetIndexInfo = manifest.assetIndex {
@@ -75,13 +88,17 @@ public enum LaunchFix {
                     for object in index.objects {
                         let dest = object.appendTo(dir.assetsURL.appendingPathComponent("objects"))
                         if fileIsValid(dest, hash: object.hash) { continue }
-                        let src = object.appendTo(URL(string: "https://resources.download.minecraft.net")!)
-                        assetItems.append(.init(src, dest, sha1: object.hash))
+                        assetItems.append(.init(
+                            DownloadSourceManager.shared.getDownloadSource(),
+                            { $0.getAssetURL(hash: object.hash) ?? URL(string: "https://resources.download.minecraft.net/\(object.hash.prefix(2))/\(object.hash)")! },
+                            destination: dest,
+                            sha1: object.hash
+                        ))
                     }
                     if !assetItems.isEmpty {
                         let total = Double(assetItems.count)
-                        try await MultiFileDownloader(items: assetItems, concurrentLimit: 32) { completedCount, _ in
-                            onProgress(Double(completedCount) / total)
+                    try await MultiFileDownloader(items: assetItems, concurrentLimit: 32) { progress, _ in
+                        onProgress(progress)
                         }.start()
                     }
                 }

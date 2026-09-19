@@ -135,9 +135,15 @@ public class JavaVirtualMachine: Identifiable, Equatable {
             process.standardError = pipe
 
             try process.run()
-            process.waitUntilExit()
-            
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+
+            let sem = DispatchSemaphore(value: 0)
+            process.terminationHandler = { _ in sem.signal() }
+            var data = Data()
+            DispatchQueue.global().async { data = pipe.fileHandleForReading.readDataToEndOfFile() }
+            if sem.wait(timeout: .now() + 10) == .timedOut {
+                process.terminate()
+                return (0, "未知")
+            }
             guard let output = String(data: data, encoding: .utf8) else {
                 throw MyLocalizedError(reason: "Output decoding failed")
             }

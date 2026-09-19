@@ -35,10 +35,6 @@ class JavaManager {
         cache.setObject(path, forKey: "cachedJavaPath")
     }
 
-    func clearCachedJavaPath() {
-        cache.removeObject(forKey: "cachedJavaPath")
-    }
-
     func preScanJavaAsync() {
         DispatchQueue.global(qos: .background).async {
             let list = self.scanInstalledJava(useCache: false)

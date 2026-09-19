@@ -127,10 +127,23 @@ struct CategoryContentView: View {
             }
             // 延迟到渲染事务外：onAppear 同步写 @Published 会触发
             // "Modifying state during view update"（UAF 崩溃前兆）
-            DispatchQueue.main.async {
-                // 确保 skinImageURL 存在（启动进游戏时皮肤包方案需要），完成后 onChange 刷新缓存
-                loadSkinImageIfNeeded()
+        DispatchQueue.main.async {
+            let isLaunching = sessionManager.isLaunching
+            let mcVersion = settings.selectedMinecraftVersion
+            let gameDirPath = settings.selectedGameRoot.isEmpty ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "") : settings.selectedGameRoot
+            let offlineUUID = settings.fixedOfflineUUID.components(separatedBy: "-").joined().lowercased()
+            Task.detached(priority: .userInitiated) {
+                let result = await Self.loadSkinImageIfNeededAsync(
+                    isLaunching: isLaunching,
+                    selectedMinecraftVersion: mcVersion,
+                    gameDirPath: gameDirPath,
+                    offlineUUID: offlineUUID
+                )
+                if let url = result {
+                    await MainActor.run { settings.skinImageURL = url }
+                }
             }
+        }
         }
         .onChange(of: settings.skinImageURL) { _ in
             reloadSkinDataFromFile()
@@ -181,42 +194,35 @@ struct CategoryContentView: View {
         return nil
     }
 
-    /// 确保 skinImageURL 存在，不存在则从缓存/JAR/内置皮肤加载
-    private func loadSkinImageIfNeeded() {
-        guard !sessionManager.isLaunching else { return }
-        if settings.skinImageURL != nil, FileManager.default.fileExists(atPath: settings.skinImageURL!.path) { return }
-
+    /// 后台异步加载皮肤 URL（JAR 提取等重 IO 在后台执行，返回 URL 由调用方在主线程写入）
+    private static func loadSkinImageIfNeededAsync(
+        isLaunching: Bool,
+        selectedMinecraftVersion: String,
+        gameDirPath: String,
+        offlineUUID: String
+    ) async -> URL? {
+        guard !isLaunching else { return nil }
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let skinDir = appSupport.appendingPathComponent("SL启动器/Skins")
         try? FileManager.default.createDirectory(at: skinDir, withIntermediateDirectories: true)
         let skinDestURL = skinDir.appendingPathComponent("selected_skin.png")
 
-        // 1. 优先从皮肤文件系统缓存加载
-        let offlineUUID = settings.fixedOfflineUUID.components(separatedBy: "-").joined().lowercased()
         if let cachedSkinData = MinecraftSkinManager.shared.getSkinData(forUUID: offlineUUID) {
-            try? cachedSkinData.write(to: skinDestURL)
-            settings.skinImageURL = skinDestURL
-            return
+            try? cachedSkinData.write(to: skinDestURL, options: .atomic)
+            return skinDestURL
         }
 
-        // 2. 从 JAR 提取
-        let gameDirPath = settings.selectedGameRoot.isEmpty ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "") : settings.selectedGameRoot
-        if !settings.selectedMinecraftVersion.isEmpty && !gameDirPath.isEmpty,
+        if !selectedMinecraftVersion.isEmpty && !gameDirPath.isEmpty,
            let gameDirURL = Optional(URL(fileURLWithPath: gameDirPath)),
-           let skinURL = SkinExtractor.extractFromGameJar(version: settings.selectedMinecraftVersion, gameDir: gameDirURL) {
+           let skinURL = SkinExtractor.extractFromGameJar(version: selectedMinecraftVersion, gameDir: gameDirURL) {
             if let skinData = try? Data(contentsOf: skinURL) {
-                try? skinData.write(to: skinDestURL)
-                settings.skinImageURL = skinDestURL
-            } else {
-                settings.skinImageURL = skinURL
+                try? skinData.write(to: skinDestURL, options: .atomic)
+                return skinDestURL
             }
-            return
+            return skinURL
         }
 
-        // 3. 使用内置皮肤
-        if let builtinURL = Bundle.main.url(forResource: "stf", withExtension: "png") {
-            settings.skinImageURL = builtinURL
-        }
+        return Bundle.main.url(forResource: "stf", withExtension: "png")
     }
 
     private var usernameField: some View {

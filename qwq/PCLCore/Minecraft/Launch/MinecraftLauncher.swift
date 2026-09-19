@@ -65,12 +65,12 @@ public class MinecraftLauncher {
             guard completionGate.claim() else { return }
             DispatchQueue.main.async { callback(status) }
         }
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        var logHandle: FileHandle?
         do {
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
-
-            let logHandle = try FileHandle(forWritingTo: logURL)
+            logHandle = try FileHandle(forWritingTo: logURL)
             // 管道字节可能含非法 UTF-8（Java/模组输出非 UTF-8 编码时不崩溃）；解码失败行丢弃。
             // readabilityHandler 在 FileHandle 专用串行队列回调，缓冲区无需加锁；
             // 跨回调保留尾部字节，避免多字节 UTF-8 字符/长日志行被 availableData 边界截断产生乱码或拆行。
@@ -84,8 +84,10 @@ public class MinecraftLauncher {
                     logBuffer.removeSubrange(0...nl)
                     guard let line = String(data: lineData, encoding: .utf8) else { continue }
                     raw(line.replacingOccurrences(of: "\t", with: "    "))
-                    try? logHandle.write(contentsOf: (line + "\n").data(using: .utf8)!)
-                    logHandle.seekToEndOfFile()
+                    if let logHandle {
+                        try? logHandle.write(contentsOf: (line + "\n").data(using: .utf8)!)
+                        logHandle.seekToEndOfFile()
+                    }
                 }
             }
 
@@ -128,6 +130,9 @@ public class MinecraftLauncher {
                 }
             }
             log("\(instance.name) 进程已退出, 退出代码 \(process.terminationStatus)")
+            // 清理 readabilityHandler（否则闭包持有 logBuffer+logHandle，每次启动泄漏）
+            pipe.fileHandleForReading.readabilityHandler = nil
+            try? logHandle?.close()
             if process.terminationStatus == 0 {
                 debug("检测到退出代码为 0，已删除日志")
                 try? FileManager.default.removeItem(at: self.logURL)
@@ -139,6 +144,8 @@ public class MinecraftLauncher {
             }
         } catch {
             err(error.localizedDescription)
+            pipe.fileHandleForReading.readabilityHandler = nil
+            try? logHandle?.close()
             // 启动失败也走一次性门控回调（exitCode 非 0），UI 才能复位「启动中」状态；
             // terminationHandler 在 run() 前已设置，若 run 抛错则其绝不会触发。
             if instance.process === process {
@@ -308,7 +315,7 @@ public class MinecraftLauncher {
             args.append("--demo")
         }
         
-        return Util.replaceTemplateStrings(instance.manifest.getArguments().getAllowedGameArguments(), with: values).union(args)
+        return Util.replaceTemplateStrings(instance.manifest.getArguments().getAllowedGameArguments(), with: values) + args
     }
     
     public static func downloadAuthlibInjector() async throws {
@@ -328,8 +335,4 @@ public class MinecraftLauncher {
         }
         log("authlib-injector 下载完成")
     }
-}
-
-public class LaunchState: ObservableObject {
-    @Published public var isLaunched: Bool = false
 }

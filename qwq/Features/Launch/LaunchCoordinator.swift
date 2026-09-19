@@ -181,26 +181,22 @@ enum LaunchCoordinator {
             guard !gameDirPath.isEmpty, !version.isEmpty else { return nil }
             return URL(fileURLWithPath: gameDirPath + "/versions/" + version)
         }()
-        if let skin = settings.skinImageURL, let versionGameDir {
+        if let versionGameDir {
             DispatchQueue.global(qos: .utility).async {
-                do {
-                    try SkinResourcePackApplier.apply(
-                        skinURL: skin,
-                        toVersion: version,
-                        gameDir: versionGameDir,
-                        settings: settings
-                    )
-                } catch {
-                    let err = "皮肤资源包应用失败: \(error.localizedDescription)"
-                    NSLog(err)
+                // 仅当存在自定义皮肤时才生成资源包；语言注入无条件执行
+                if let skin = settings.skinImageURL {
+                    do {
+                        try SkinResourcePackApplier.apply(
+                            skinURL: skin,
+                            toVersion: version,
+                            gameDir: versionGameDir,
+                            settings: settings
+                        )
+                    } catch {
+                        let err = "皮肤资源包应用失败: \(error.localizedDescription)"
+                        NSLog(err)
+                    }
                 }
-                GameLanguageSetter.applyChinese(gameDir: versionGameDir)
-                DispatchQueue.main.async {
-                    startGame()
-                }
-            }
-        } else if let versionGameDir {
-            DispatchQueue.global(qos: .utility).async {
                 GameLanguageSetter.applyChinese(gameDir: versionGameDir)
                 DispatchQueue.main.async {
                     startGame()

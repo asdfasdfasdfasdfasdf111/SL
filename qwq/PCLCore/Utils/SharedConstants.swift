@@ -19,7 +19,6 @@ public struct SharedConstants {
     
     public let dateFormatter = DateFormatter()
     
-    public let isDevelopment: Bool
     public let version = "Beta 0.1.1"
     public let branch: String
     
@@ -33,7 +32,6 @@ public struct SharedConstants {
         self.dateFormatter.dateFormat = "yyyy/MM/dd HH:mm"
         self.dateFormatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
         
-        self.isDevelopment = true
         let branch = Bundle.main.object(forInfoDictionaryKey: "BRANCH") as? String
         self.branch = (branch?.isEmpty ?? true) ? "本地构建" : branch!
     }

@@ -30,22 +30,6 @@ public class Util {
         return nil
     }
     
-    public static func formatJSON(_ jsonString: String) -> String? {
-        guard let data = jsonString.data(using: .utf8) else { return nil }
-        
-        do {
-            let jsonObject = try JSONSerialization.jsonObject(with: data)
-            let prettyData = try JSONSerialization.data(
-                withJSONObject: jsonObject,
-                options: [.prettyPrinted]
-            )
-            return String(data: prettyData, encoding: .utf8)
-        } catch {
-            err("JSON格式化失败: \(error.localizedDescription)")
-            return nil
-        }
-    }
-    
     public static func parse(mavenCoordinate: String) -> MavenCoordinate {
         let pattern = #"^([^:]+):([^:]+):([^:@]+)(?::([^@]+))?(?:@(.+))?$"#
         // 旧实现强解包：外部 JSON（版本清单/Forge 安装配置）中任何畸形库名都会直接崩溃。
@@ -142,25 +126,23 @@ public class Util {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
     
-    public static func getFileName(url: URL) -> String? {
-        var urlString = url.absoluteString
-        if urlString.hasSuffix("/") { return nil }
-        
-        if let qIndex = urlString.firstIndex(of: "?") {
-            urlString = String(urlString[..<qIndex])
-        }
-        
-        if let lastBackslash = urlString.lastIndex(of: "/") {
-            let fileNameStart = urlString.index(after: lastBackslash)
-            urlString = String(urlString[fileNameStart...])
-        }
-        return urlString
-    }
-    
     public static func replaceRoot(url: any URLConvertible, root: String, target: String) -> any URLConvertible {
         // 替换后字符串可能非法（URL 特殊字符），强解包会崩；失败时返回原始 URL
         let replaced = url.url.absoluteString.replacingOccurrences(of: root, with: target)
         return URL(string: replaced) ?? url
+    }
+
+    /// 运行进程并等待退出，超时后强制终止（防止 Forge 处理器/glfw-patcher 挂起导致安装线程永久阻塞）
+    public static func runProcessWithTimeout(_ process: Process, timeout: TimeInterval) throws {
+        let sem = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in sem.signal() }
+        try process.run()
+        if sem.wait(timeout: .now() + timeout) == .timedOut {
+            process.terminate()
+            Thread.sleep(forTimeInterval: 0.5)
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+            throw MyLocalizedError(reason: "进程超时（\(Int(timeout))秒），已强制终止")
+        }
     }
 }
 

@@ -84,7 +84,7 @@ public class VersionManifest: Codable {
     
     public static func getReleaseDate(_ version: MinecraftVersion) -> Date? {
         if let manifest = DataManager.shared.versionManifest {
-            return manifest.versions.find { $0.id == version.displayName }?.releaseTime // 需要缓存
+            return manifest.versions.first { $0.id == version.displayName }?.releaseTime // 需要缓存
         } else {
             warn("正在获取 \(version.displayName) 的发布日期，但版本清单未初始化完成") // 哦天呐，不会吧哥们
         }

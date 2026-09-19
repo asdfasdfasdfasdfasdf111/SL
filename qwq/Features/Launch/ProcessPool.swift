@@ -24,11 +24,6 @@ final class ProcessPool {
         self.semaphore = DispatchSemaphore(value: maxConcurrent)
     }
 
-    /// 响应内存警告时清理缓存
-    func clearMemoryCaches() {
-        // ProcessPool 不需要额外清理，但为扩展预留接口
-    }
-
     /// 同步执行命令，返回 stdout 内容
     /// - Parameters:
     ///   - command: 命令绝对路径
@@ -50,7 +45,7 @@ final class ProcessPool {
               command.hasPrefix("/Library/") ||
               command.hasPrefix("/opt/") ||
               command.hasPrefix(NSHomeDirectory()) else {
-            print("[ProcessPool] 拒绝执行非白名单命令: \(command)")
+            debug("[ProcessPool] 拒绝执行非白名单命令: \(command)")
             return nil
         }
 
@@ -73,9 +68,18 @@ final class ProcessPool {
             return nil
         }
 
-        // 先读数据，再等待（防止管道死锁）
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        // 先读数据，再等待（防止管道死锁）。读放在后台队列避免阻塞主线程。
+        let sem = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in sem.signal() }
+        var stdoutData = Data()
+        DispatchQueue.global().async { stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile() }
+
+        if sem.wait(timeout: .now() + timeout) == .timedOut {
+            process.terminate()
+            Thread.sleep(forTimeInterval: 0.5)
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+            return nil
+        }
 
         guard process.terminationStatus == 0 || captureStderr else { return nil }
         return String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -115,9 +119,16 @@ final class ProcessPool {
         process.standardError = FileHandle.nullDevice
 
         do { try process.run() } catch { return nil }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-
+        let sem = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in sem.signal() }
+        var data = Data()
+        DispatchQueue.global().async { data = pipe.fileHandleForReading.readDataToEndOfFile() }
+        if sem.wait(timeout: .now() + timeout) == .timedOut {
+            process.terminate()
+            Thread.sleep(forTimeInterval: 0.5)
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+            return nil
+        }
         return data.isEmpty ? nil : data
     }
 }

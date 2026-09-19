@@ -12,7 +12,7 @@ final class GameSession: ObservableObject, Identifiable {
     let index: Int
     let launcher: MinecraftLauncher
     @Published var logs: [String] = []
-    @Published var isProcessRunning: Bool = true
+    @Published var isProcessRunning: Bool = false
     @Published var isLaunching: Bool = true
     init(index: Int, launcher: MinecraftLauncher) {
         self.index = index
