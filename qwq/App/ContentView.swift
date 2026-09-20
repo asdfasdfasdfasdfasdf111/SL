@@ -3,30 +3,19 @@ import AppKit
 import UniformTypeIdentifiers
 
 struct ContentView: View {
-    @State private var selectedCategory: Category = Category.all.first!
     @State private var searchText = ""
     @StateObject private var settings = LauncherSettings.shared
-    private let categories = Category.all
-    private var selectedIndex: Int { categories.firstIndex(of: selectedCategory) ?? 0 }
+    // 页面导航状态（当前分类 / 画布拖拽位移 / 下载详情页开关）统一由 NavigationState 持有
+    @StateObject private var navigation = NavigationState()
 
-    // 旧版导航切换动画：所有分类页横向完整排布，dragOffset 提供拖拽实时跟手，
-    // 点击分类与拖拽结束统一使用旧版 spring 参数平滑滑动。
-    @State private var dragOffset: CGFloat = 0
-
-    @State private var showModInstallSheet = false
-    @State private var showModpackInstallSheet = false
-    @State private var modInstallInstances: [GameInstance] = []
-    @State private var pendingModURL: URL?
-    @State private var pendingModVersion: String = ""
-    @State private var pendingModName: String = ""
-    @State private var pendingModpackURL: URL?
-    @State private var pendingModpackName: String = ""
+    // 拖拽安装的业务决策（文件分流 / 实例匹配 / 安装 / 提示）全部收在协调器内，
+    // 本视图只转发拖拽事件、按协调器状态渲染弹窗。
+    @StateObject private var dropInstall = DropInstallCoordinator()
+    // 启动相关界面状态（Java 提示气泡、启动失败提示）
+    @ObservedObject private var launchPanel = LaunchPanelState.shared
     @State private var isDropTargeted = false
-    private let dragDropHandler = DragDropHandler()
-    private let versionDetector = ModVersionDetector()
     // 下载详情页独立页面 + 全局圆形下载按钮（对标 PCL.Mac AppRouter：
     // 详情页为整页替换渲染的独立页面，圆按钮为 ContentView 顶层全局 overlay）
-    @ObservedObject private var downloadDetail = DownloadDetailManager.shared
     
     var body: some View {
         ZStack {
@@ -35,35 +24,33 @@ struct ContentView: View {
             mainContent
 
             // 全局弹窗/提示/圆按钮：放在页面切换层之外，不随页面卸载
-            JavaSelectionPopup(message: settings.javaPopupMessage, isPresented: $settings.showJavaPopup)
+            JavaSelectionPopup(message: launchPanel.javaPopupMessage, isPresented: $launchPanel.showJavaPopup)
                 .position(x: 450, y: 200)
                 .zIndex(100)
 
-            if showModInstallSheet {
+            if dropInstall.showModInstallSheet {
                 ModInstallSelectionView(
-                    modName: pendingModName,
-                    modVersion: pendingModVersion,
-                    instances: modInstallInstances,
+                    modName: dropInstall.pendingModName,
+                    modVersion: dropInstall.pendingModVersion,
+                    instances: dropInstall.modInstallInstances,
                     onConfirm: { selected in
-                        installModToInstances(modURL: pendingModURL, instances: selected)
-                        showModInstallSheet = false
+                        dropInstall.confirmModInstall(instances: selected)
                     },
                     onCancel: {
-                        showModInstallSheet = false
+                        dropInstall.cancelModInstall()
                     }
                 )
                 .zIndex(200)
             }
 
-            if showModpackInstallSheet {
+            if dropInstall.showModpackInstallSheet {
                 ModpackFolderPickerView(
-                    packName: pendingModpackName,
+                    packName: dropInstall.pendingModpackName,
                     onConfirm: { folderURL in
-                        installModpack(packURL: pendingModpackURL, to: folderURL)
-                        showModpackInstallSheet = false
+                        dropInstall.confirmModpackInstall(folderURL: folderURL)
                     },
                     onCancel: {
-                        showModpackInstallSheet = false
+                        dropInstall.cancelModpackInstall()
                     }
                 )
                 .zIndex(200)
@@ -84,7 +71,7 @@ struct ContentView: View {
             // 圆形毛玻璃下载按钮：全局顶层（对标 PCL.Mac installTaskButtonOverlay），
             // 任何页面可见可点；点击 toggle 进/出详情页（无返回键，再次点击回到刚才的页面）。
             // zIndex(40) 高于详情页(30)：详情页打开时按钮仍可见可点。
-            if downloadDetail.showCircleButton {
+            if navigation.isDownloadCircleVisible {
                 ZStack {
                     Circle()
                         .fill(.ultraThinMaterial)
@@ -99,15 +86,15 @@ struct ContentView: View {
                         .font(.system(size: 19, weight: .medium))
                         .foregroundColor(.white)
                 }
-                .scaleEffect(downloadDetail.circleScale)
-                .opacity(downloadDetail.circleOpacity)
+                .scaleEffect(navigation.downloadCircleScale)
+                .opacity(navigation.downloadCircleOpacity)
                 .padding(.trailing, 12)
                 .padding(.bottom, 12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 .zIndex(40)
                 .onTapGesture {
                     // 动画由 DownloadDetailManager.toggle 内部统一触发（弹簧曲线）
-                    downloadDetail.toggle()
+                    navigation.toggleDownloadDetail()
                 }
             }
         }
@@ -117,13 +104,11 @@ struct ContentView: View {
         .overlay { NoticeOverlay() }
         .environmentObject(settings)
         // 切换分类时自动收起下载详情（下载与圆按钮保持，仅关闭覆盖层）
-        .onChange(of: selectedCategory) { _ in
-            if downloadDetail.isPresented && dragOffset == 0 {
-                downloadDetail.toggle()
-            }
+        .onChange(of: navigation.selectedCategory) { _ in
+            navigation.handleSelectedCategoryChange()
         }
-        .alert("启动失败", isPresented: $settings.showLaunchAlert, presenting: settings.launchErrorMessage) { _ in
-            Button("确定") { settings.launchErrorMessage = nil }
+        .alert("启动失败", isPresented: $launchPanel.showLaunchAlert, presenting: launchPanel.launchErrorMessage) { _ in
+            Button("确定") { launchPanel.clearLaunchError() }
         } message: { error in
             Text(error)
         }
@@ -133,7 +118,8 @@ struct ContentView: View {
                 window.styleMask.insert(.fullSizeContentView)
                 window.minSize = NSSize(width: 800, height: 550)
             }
-            JavaManager.shared.preScanJavaAsync()
+            // Java 预扫描经 Java 模块入口触发，根视图不再直接持有 JavaManager
+            DefaultJavaRepository.shared.preScan()
         }
     }
 
@@ -144,15 +130,7 @@ struct ContentView: View {
         ZStack {
             BlurView(material: .fullScreenUI, blendingMode: .behindWindow).ignoresSafeArea()
                 .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
-                    return dragDropHandler.handleDrop(providers: providers)
-                }
-                .onAppear {
-                    dragDropHandler.onJarDropped = { url in
-                        handleModDrop(url: url)
-                    }
-                    dragDropHandler.onModpackDropped = { url in
-                        handleModpackDrop(url: url)
-                    }
+                    return dropInstall.handle(providers: providers)
                 }
             VStack(alignment: .leading, spacing: 0) {
                 // 标题栏（早期版本样式）：
@@ -168,7 +146,7 @@ struct ContentView: View {
                     .padding(.top, 12)
                     .padding(.bottom, 6)
                     // 第二行：分类导航靠左对齐
-                    AnimatedCategoryPicker(selectedCategory: $selectedCategory, categories: categories)
+                    AnimatedCategoryPicker(selectedCategory: $navigation.selectedCategory, categories: navigation.categories)
                         .padding(.horizontal, 16)
                         .padding(.bottom, 8)
                         .zIndex(20)
@@ -178,7 +156,7 @@ struct ContentView: View {
                 GeometryReader { geometry in
                     let width = geometry.size.width
                     ZStack {
-                        if downloadDetail.isPresented {
+                        if navigation.isShowingDownloadDetail {
                             DownloadDetailView()
                                 .transition(.move(edge: .trailing).combined(with: .opacity))
                         } else {
@@ -193,101 +171,42 @@ struct ContentView: View {
     }
     /// 旧版分类画布：所有分类页完整横向排布，点击导航或拖拽时整页连续滑动；
     /// 从第 1 项跳到第 5 项会真实经过中间页面，拖拽中内容实时跟手。
+    /// 位置状态（当前下标 + 拖拽位移）由 NavigationState 持有，本函数只做渲染与手势转发。
     private func categoryCanvas(width: CGFloat) -> some View {
         HStack(spacing: 0) {
-            ForEach(categories) { category in
+            ForEach(navigation.categories) { category in
                 CategoryContentView(category: category, searchText: searchText)
                     .frame(width: width)
             }
         }
-        .offset(x: -CGFloat(selectedIndex) * width + dragOffset)
-        .animation(.spring(response: 0.6, dampingFraction: 0.65, blendDuration: 0.15), value: selectedIndex)
+        .offset(x: -CGFloat(navigation.selectedIndex) * width + navigation.dragOffset)
+        .animation(.spring(response: 0.6, dampingFraction: 0.65, blendDuration: 0.15), value: navigation.selectedIndex)
         .gesture(
             DragGesture(minimumDistance: 20)
                 .onChanged { value in
                     guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                    dragOffset = value.translation.width
+                    navigation.dragOffset = value.translation.width
                 }
                 .onEnded { value in
                     guard abs(value.translation.width) > abs(value.translation.height) else {
                         withAnimation(.spring(response: 0.6, dampingFraction: 0.65, blendDuration: 0.15)) {
-                            dragOffset = 0
+                            navigation.dragOffset = 0
                         }
                         return
                     }
                     let threshold = width * 0.25
-                    var newIndex = selectedIndex
-                    if value.translation.width < -threshold && selectedIndex < categories.count - 1 {
-                        newIndex = selectedIndex + 1
-                    } else if value.translation.width > threshold && selectedIndex > 0 {
-                        newIndex = selectedIndex - 1
+                    var newIndex = navigation.selectedIndex
+                    if value.translation.width < -threshold && navigation.selectedIndex < navigation.categories.count - 1 {
+                        newIndex = navigation.selectedIndex + 1
+                    } else if value.translation.width > threshold && navigation.selectedIndex > 0 {
+                        newIndex = navigation.selectedIndex - 1
                     }
                     withAnimation(.spring(response: 0.6, dampingFraction: 0.65, blendDuration: 0.15)) {
-                        selectedCategory = categories[newIndex]
-                        dragOffset = 0
+                        navigation.selectedCategory = navigation.categories[newIndex]
+                        navigation.dragOffset = 0
                     }
                 }
         )
-    }
-
-    private func handleModDrop(url: URL) {
-        let modName = url.deletingPathExtension().lastPathComponent
-
-        guard let versionInfo = versionDetector.detectVersion(from: url) else {
-            settings.launchErrorMessage = "无法检测模组「\(modName)」的 Minecraft 版本"
-            settings.showLaunchAlert = true
-            return
-        }
-
-        let instances = findMatchingInstances(for: versionInfo.versionRange)
-        if instances.isEmpty {
-            settings.launchErrorMessage = "未找到与模组「\(modName)」（需要 \(versionInfo.versionRange)）匹配的游戏版本"
-            settings.showLaunchAlert = true
-            return
-        }
-
-        pendingModURL = url
-        pendingModName = modName
-        pendingModVersion = versionInfo.versionRange
-        modInstallInstances = instances
-        showModInstallSheet = true
-    }
-
-    private func handleModpackDrop(url: URL) {
-        let packName = url.deletingPathExtension().lastPathComponent
-        pendingModpackURL = url
-        pendingModpackName = packName
-        showModpackInstallSheet = true
-    }
-
-    private func findMatchingInstances(for versionRange: String) -> [GameInstance] {
-        ModDragInstaller.findInstances(for: versionRange, savedRoot: settings.selectedGameRoot)
-    }
-
-    private func installModToInstances(modURL: URL?, instances: [GameInstance]) {
-        guard let modURL = modURL else { return }
-        let count = ModDragInstaller.install(modURL: modURL, to: instances)
-        settings.javaPopupMessage = "模组已安装到 \(count) 个实例"
-        settings.showJavaPopup = true
-    }
-
-    private func installModpack(packURL: URL?, to folderURL: URL) {
-        guard let packURL = packURL else { return }
-
-        Task.detached(priority: .userInitiated) {
-            do {
-                try await ModpackInstaller().install(packURL: packURL, to: folderURL)
-                await MainActor.run {
-                    settings.javaPopupMessage = "整合包安装完成"
-                    settings.showJavaPopup = true
-                }
-            } catch {
-                await MainActor.run {
-                    settings.launchErrorMessage = "整合包安装失败: \(error.localizedDescription)"
-                    settings.showLaunchAlert = true
-                }
-            }
-        }
     }
 }
 
