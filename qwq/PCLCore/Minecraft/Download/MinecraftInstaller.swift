@@ -33,6 +33,81 @@ import SwiftyJSON
 public class MinecraftInstaller {
     private init() {}
     
+    // MARK: 单文件下载（经 DownloadEngine 提交，后端仍为 NetManager）
+
+    /// 单文件下载，替代原 `SingleFileDownloader.download(task:urls:destination:...)` 调用点。
+    ///
+    /// 行为等价要点：
+    /// - 候选源顺序逐点保留：调用方已用 `DownloadSourceManager.downloadURLs` 解析出
+    ///   「主源 + 互补源」有序数组，这里把首位作主源、其余作顺序备用源，
+    ///   不重新解析（避免默认解析器按 host 再补一次镜像源，或丢失镜像主源场景下的官方备用源）；
+    /// - 校验：`expectedSHA1` → `DownloadRequest.sha1`，与旧链路 `FileChecker(hash:)` 同义
+    ///   （都为 actualSize = -1，算法按长度自动判定）；
+    /// - 覆盖策略由调用方显式传入，与旧调用点逐一对应（旧实现缺省 `.skip`）；
+    /// - 进度口径为 0…1 比例，路由方式与旧实现一致：指定 `stage` 时写并行阶段进度，否则写
+    ///   `currentStagePercentage`；成功（含「已存在且校验通过而跳过」）固定回调终值 `1.0`
+    ///   并调用一次 `completeOneFile()`；
+    /// - 失败抛出携带旧链路原始描述的错误，调用方取 `error.localizedDescription` 的文案不变。
+    private static func downloadSingleFile(
+        task: MinecraftInstallTask?,
+        urls: [URL],
+        destination: URL,
+        replaceMethod: ReplaceMethod,
+        expectedSHA1: String? = nil,
+        stage: InstallStage? = nil,
+        progress: ((Double) -> Void)? = nil
+    ) async throws {
+        // 调用方在构造 urls 后均已判空；此处仅作边界兜底。
+        guard let primary = urls.first else {
+            throw MyLocalizedError(reason: "无可用下载源。")
+        }
+
+        let engine = NetDownloaderDownloadEngine(
+            resolver: SequentialDownloadSourceResolver(fallbacks: Array(urls.dropFirst()))
+        )
+        var request = DownloadRequest(url: primary, destinationURL: destination)
+        request.sha1 = expectedSHA1
+        let handle = try await engine.submit(request, replaceMethod: replaceMethod)
+
+        for await state in engine.observe(taskID: handle.taskID) {
+            switch state {
+            case .downloading(let snapshot):
+                // 旧链路进度回调由 NetManager 派发到 @MainActor，这里保持同样的隔离。
+                let fraction = snapshot.fraction
+                await MainActor.run {
+                    if let stage {
+                        task?.updateParallelStage(stage, progress: fraction)
+                    } else {
+                        task?.currentStagePercentage = fraction
+                    }
+                    progress?(fraction)
+                }
+            case .completed:
+                await MainActor.run {
+                    if let stage {
+                        task?.updateParallelStage(stage, progress: 1)
+                    } else {
+                        task?.currentStagePercentage = 1
+                    }
+                    progress?(1.0)
+                }
+                // 旧 `SingleFileDownloader` 在下载返回后固定调用一次，跳过分支同样计数。
+                task?.completeOneFile()
+                return
+            case .failed(let error):
+                // 结构化错误会归一化文案，优先回放旧链路的原始描述。
+                let reason = engine.legacyFailureReason(taskID: handle.taskID)
+                    ?? error.errorDescription
+                    ?? "下载失败。"
+                throw MyLocalizedError(reason: reason)
+            case .cancelled:
+                throw CancellationError()
+            case .idle, .preparing, .verifying, .merging:
+                break
+            }
+        }
+    }
+    
     // MARK: 下载客户端清单
     private static func downloadClientManifest(_ task: MinecraftInstallTask) async throws {
         task.updateStage(.clientJson)
@@ -43,7 +118,7 @@ public class MinecraftInstaller {
         }
         let destination = task.versionURL.appendingPathComponent("\(task.name).json")
         
-        try await SingleFileDownloader.download(task: task, urls: urls, destination: destination, replaceMethod: .replace)
+        try await downloadSingleFile(task: task, urls: urls, destination: destination, replaceMethod: .replace)
         
         if let manifest: ClientManifest = try .parse(url: destination, minecraftDirectory: nil) {
             task.manifest = manifest
@@ -70,10 +145,11 @@ public class MinecraftInstaller {
             throw MyLocalizedError(reason: "无法获取 \(task.minecraftVersion.displayName) 的客户端下载 URL。")
         }
         
-        try await SingleFileDownloader.download(
+        try await downloadSingleFile(
             task: task,
             urls: urls,
             destination: task.versionURL.appendingPathComponent("\(task.name).jar"),
+            replaceMethod: .skip, // 旧链路未显式传 replaceMethod，缺省为 .skip
             expectedSHA1: manifest.clientDownload?.sha1,
             stage: parallel ? .clientJar : nil
         )
@@ -105,7 +181,7 @@ public class MinecraftInstaller {
             throw MyLocalizedError(reason: "无法获取 \(task.minecraftVersion.displayName) 的 assetIndex 下载 URL。")
         }
         let destination: URL = task.minecraftDirectory.assetsURL.appendingPathComponent("indexes").appendingPathComponent("\(assetIndex.id).json")
-        try await SingleFileDownloader.download(task: task, urls: urls, destination: destination, expectedSHA1: assetIndex.sha1, stage: parallel ? .clientIndex : nil)
+        try await downloadSingleFile(task: task, urls: urls, destination: destination, replaceMethod: .skip, expectedSHA1: assetIndex.sha1, stage: parallel ? .clientIndex : nil)
         do {
             let data = try Data(contentsOf: destination)
             task.assetIndex = try .parse(data)
