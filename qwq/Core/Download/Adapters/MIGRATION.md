@@ -1,7 +1,8 @@
 # Adapters 迁移说明
 
 本目录只放**适配器**：把 `qwq/Core/Download/` 的协议接到现有实现上，不改变任何下载行为，也不切换调用方。
-当前状态：`NetDownloader.swift`（`NetManager`）仍是唯一实际生效的下载路径，`DownloadEngine` 尚无调用方。
+当前状态：`NetDownloader.swift`（`NetManager`）仍是唯一实际生效的下载路径；`DownloadEngine` 已由
+`Features/Download/ModFileDownloadTask.swift` 首个接入（见「六、切换记录」），其余调用方仍走旧链路。
 
 ## 一、新增文件与职责
 
@@ -130,3 +131,87 @@ NetManager.shared.downloadAll(_ files: [PCLNetFile], overallProgress: ((Double, 
 - 每文件速度旧引擎按全局统计，适配器一律填 0，`DownloadProgress.estimatedRemaining` 在迁移完成前恒为 nil；
 - 总大小未知时适配器用固定分母 1000 承载比例（`syntheticTotalBytes`），仅保证 `fraction` 口径不变，
   不等价于真实字节数。
+
+## 六、切换记录
+
+### 2026-09-20 · 第 1 步：`ModFileDownloadTask`（#1）
+
+**改动文件**
+
+- `qwq/Features/Download/ModFileDownloadTask.swift`（唯一调用方改动）
+- `qwq/Core/Download/Adapters/NetDownloaderDownloadEngine.swift`（补「旧文案回放」能力，见下）
+
+**改动要点**
+
+1. 对外接口不变：`init(url:destination:title:)`、`getTitle()`、`getProgress()`、`start()`、
+   `getInstallStates()`、`failureReason`、`onComplete(_:)` 全部保持原样，调用方
+   `ModFileDownloadStarter` 与 `DownloadDetailView` 无需改动。
+2. 内部改为：构造 `DownloadRequest(url:destinationURL:)` → `engine.submit(_:replaceMethod:.replace)`
+   → `for await` 消费 `engine.observe(taskID:)` → 按状态更新进度并映射终态。
+3. 引擎实例为任务私有属性；其 `run` 仍调用 `NetManager.shared.download`，全局分片额度、
+   慢速检测、磁盘预检、临时文件清理等调度状态不变。
+4. 适配器新增 `legacyFailureReason(taskID:)`：终态发布时一并保留旧链路原始描述
+   （`(error as? LocalizedError)?.errorDescription ?? error.localizedDescription`），
+   与终态回放缓存同生命周期（上限 256）。原因是结构化 `DownloadError` 会归一化文案，
+   见下一条。
+
+**行为一致性：已确认等价**
+
+- **提交形态**：单 URL + 固定 `.replace`。`DefaultDownloadSourceResolver` 仅在 host 属官方
+  域名族且 `fileDownloadSource == .both` 时追加互补源；本任务 URL 来自 Modrinth / CurseForge CDN
+  （`DownloadFileResolver` → `ModDownloader` / `ModpackDownloader`），候选列表恒为单元素，
+  与旧 `SingleFileDownloader` 的单 URL 传参一致。
+- **覆盖与校验**：旧链路 `checker: nil` + `.replace`；新链路 `DefaultDownloadVerifier.checker(for:)`
+  在无 `expectedSize` / 哈希时返回 `FileChecker(actualSize: -1, hash: nil)`。`.replace` 下
+  `precheck` 恒为 `.download`，合并后的 `checker.check` 对空期望值返回 `nil`，两者均不产生
+  跳过、删除或校验失败分支，行为等价。
+- **进度口径**：旧回调为 0…1 比例；`DownloadProgress.fraction` 在无 `expectedSize` 时以
+  `syntheticTotalBytes = 1000` 为分母，`fraction` 即同一比例（适配器已 clamp）。进度节流
+  （旧 `reportProgress` 约 200ms 一次）与回调节流位置（`NetManager` 内切 `@MainActor`）均未改变。
+- **进度终值**：旧链路成功前固定回调 `progress(1.0)`；新链路在 `.completed` 分支显式
+  `currentStagePercentage = 1`，终值一致。
+- **成功路径**：`.completed` → `state = .finished` → `completeOneFile()` → `complete()`，
+  与原实现的调用与顺序一致。差异仅为 `completeOneFile()` 的调用次数由 2 次降为 1 次
+  （旧 `SingleFileDownloader` 内部还会再调一次），`remainingFiles` 由 `max(0, …)` 兜底，
+  1 → 0 的结果不变，仅少一次无值变化的 `objectWillChange`。
+- **失败文案**：旧实现取 `error.localizedDescription`。`NetManager.download` 在本任务可达的
+  失败仅两类：`NetDownloadError.fileFailed(x)`（`x` 为 "所有下载源均不可用" / "远程服务器返回了 NNN" /
+  "分片下载超时（5 分钟）" / "磁盘空间不足，需要至少 A B，当前仅剩余 B B" / 底层错误描述）与
+  `CancellationError`。新链路通过 `legacyFailureReason(taskID:)` 回放同一描述，逐字一致。
+  **这是本次唯一需要补能力的地方**：适配器原有的 `map(_:)` 会把 http 状态码、超时、磁盘不足
+  归一化为 `DownloadError.httpStatus` / `.timeout` / `.diskFull`，其 `errorDescription`
+  （如「远程服务器返回了 404。」）与旧文案（「下载失败：远程服务器返回了 404」）不同，且
+  `.diskFull` / `.timeout` 已丢失原始字节数与超时类型，无法反向还原；若直接使用结构化文案，
+  404、磁盘不足、慢速三类失败的用户可见文案会发生变化。故以原始描述为准，结构化错误仅在
+  原始描述缺失时兜底。`map(_:)` 自身的分类规则未改动，`DownloadState.failed` 仍是结构化错误。
+- **失败即上报**：两类路径都在终态调用 `complete()`，与旧实现一致（失败也会触发 `onComplete`
+  → 关闭详情页 + 弹窗，`failureReason` 非 nil）。
+
+**行为一致性：无法完全确认**
+
+- `observe` 与 `submit` 之间存在并发窗口（下载可能在 `observe` 调用前已终结）。适配器以
+  终态回放缓存覆盖该窗口，理论上不会漏终态；未做运行时压测验证。
+- `.cancelled` 分支在本任务不可达（新旧均无对外取消入口），仅作兜底：映射为失败呈现，
+  `failureReason` 取旧文案或「下载已取消。」。缺少旧链路对照，属新增行为，但无触发路径。
+
+**取消路径**
+
+- `ModFileDownloadTask` 改造前后均**未提供**对外取消入口，调用方 `ModFileDownloadStarter`
+  也未持有取消能力，因此本次不存在需要保持的取消路径，接口未新增 `cancel`。
+- 代码路径层面确认穿透成立：`NetDownloaderDownloadEngine.cancel(taskID:)` → `markCancelRequested`
+  + 取消承载下载的 `Task` → `NetManager.waitForCompletion` 内 `try Task.checkCancellation()`
+  抛出 → `download` 的 `catch` 执行 `cancelRecords`（取消全部分片 + `cleanupTemps`）后重抛 →
+  适配器 `catch` 判定 `isCancellation` → 发布 `.cancelled`。**未做运行时验证**（无调用入口）。
+
+**验证**
+
+- `xcrun swiftc -typecheck -target arm64-apple-macosx13.0 -I /tmp/deps $(find qwq -name "*.swift")`
+  → `exit=0`，`grep -c "error:"` = 0（改造前基线同为 0）。
+- `git diff` 仅涉及上述两个 Swift 文件与本节文档，未改动 `NetDownloader.swift`、其它调用方或无关代码。
+
+**下一个建议切换目标**
+
+- 按第三节顺序，第 2 步为 `FabricInstaller`（#9）与 `ForgeInstaller`（#7）的**单文件**下载：
+  同为「单文件 + `.replace`」形态，可直接复用本步模式，但需注意 `ForgeInstaller.swift:172`
+  的进度回调按 `progress * 0.2` 折算，须在状态流上做同样折算。
+- `MinecraftInstaller` 的前置小文件（#2/#3/#4）顺延其后，原因是需与 `stage` 计数配对。

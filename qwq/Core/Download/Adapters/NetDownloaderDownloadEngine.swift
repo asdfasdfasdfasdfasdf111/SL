@@ -46,7 +46,8 @@ public final class NetDownloaderDownloadEngine: DownloadEngine, @unchecked Senda
     private let lock = NSLock()
     private var entries: [UUID: Entry] = [:]
     /// 已终结任务的终态，供「下载结束后才调用 observe」的场景回放。
-    private var terminalHistory: [(id: UUID, state: DownloadState)] = []
+    /// `legacyFailureReason` 仅在失败终态非 nil，见 `legacyFailureReason(taskID:)`。
+    private var terminalHistory: [(id: UUID, state: DownloadState, legacyFailureReason: String?)] = []
 
     public init(
         resolver: DownloadSourceResolver = DefaultDownloadSourceResolver(),
@@ -126,6 +127,19 @@ public final class NetDownloaderDownloadEngine: DownloadEngine, @unchecked Senda
         markCancelRequested(taskID)?.cancel()
     }
 
+    /// 旧链路的失败文案（`NetManager` 抛出错误的 `localizedDescription`），供迁移期调用方取用。
+    ///
+    /// 迁移期调用方（如 `ModFileDownloadTask`）把失败原因直接展示给用户，其文案必须与改造前逐字一致；
+    /// 而结构化 `DownloadError` 会归一化文案（`httpStatus` → 「远程服务器返回了 404。」等），
+    /// 部分原始细节（HTTP 状态码外的描述、磁盘剩余空间、超时类型）无法从结构化类型还原，
+    /// 因此在终态发布时一并保留原始描述。任务终结后仍可查询（与终态回放同生命周期）。
+    /// 非失败终态或未知 taskID 返回 nil。
+    public func legacyFailureReason(taskID: UUID) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return terminalHistory.first { $0.id == taskID }?.legacyFailureReason
+    }
+
     // MARK: - 台账读写（同步方法内持锁，避免在异步上下文中直接操作 NSLock）
 
     private func insertEntry(_ taskID: UUID) {
@@ -173,13 +187,17 @@ public final class NetDownloaderDownloadEngine: DownloadEngine, @unchecked Senda
             if Self.isCancellation(error) || isCancelRequested(taskID) {
                 publish(.cancelled, for: taskID)
             } else {
-                publish(.failed(Self.map(error)), for: taskID)
+                publish(
+                    .failed(Self.map(error)),
+                    for: taskID,
+                    legacyFailureReason: Self.legacyDescription(of: error)
+                )
             }
         }
     }
 
     /// 发布状态。终态发布后任务从台账移除并进入终态回放缓存；此后再来的观察者只能拿到终态。
-    private func publish(_ state: DownloadState, for taskID: UUID) {
+    private func publish(_ state: DownloadState, for taskID: UUID, legacyFailureReason: String? = nil) {
         lock.lock()
         guard var entry = entries[taskID] else { lock.unlock(); return }
         entry.lastState = state
@@ -187,7 +205,7 @@ public final class NetDownloaderDownloadEngine: DownloadEngine, @unchecked Senda
         if state.isTerminal {
             entry.continuations = []
             entries.removeValue(forKey: taskID)
-            terminalHistory.append((taskID, state))
+            terminalHistory.append((taskID, state, legacyFailureReason))
             if terminalHistory.count > Self.terminalHistoryLimit {
                 terminalHistory.removeFirst(terminalHistory.count - Self.terminalHistoryLimit)
             }
@@ -227,6 +245,12 @@ public final class NetDownloaderDownloadEngine: DownloadEngine, @unchecked Senda
         if error is CancellationError { return true }
         if let urlError = error as? URLError, urlError.code == .cancelled { return true }
         return false
+    }
+
+    /// 旧链路失败文案：`LocalizedError.errorDescription` 优先，否则 `localizedDescription`，
+    /// 与旧实现「调用方取 `error.localizedDescription` 作为失败原因」的结果逐字一致。
+    private static func legacyDescription(of error: Error) -> String {
+        (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
     }
 
     /// `NetDownloadError` 与字符串失败原因 → `DownloadError`。
