@@ -112,6 +112,9 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 800, minHeight: 550)
+        // 全局用户提示层（PopupManager / hint 的唯一可见出口）：仅顶部横幅区域可点，
+        // 其余区域点击穿透到下方界面；不参与、不改变原有视图层级。
+        .overlay { NoticeOverlay() }
         .environmentObject(settings)
         // 切换分类时自动收起下载详情（下载与圆按钮保持，仅关闭覆盖层）
         .onChange(of: selectedCategory) { _ in

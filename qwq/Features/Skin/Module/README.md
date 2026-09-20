@@ -1,0 +1,78 @@
+# Skin 模块
+
+皮肤能力的**目标结构**。当前阶段只做「建立结构」：
+仅新增文件，未修改 / 删除任何既有文件，未接线，行为零变化。
+
+## 一、现状
+
+`qwq/Features/Skin/` 现有 6 个文件，皮肤有**两条应用路径**并存：
+
+| 文件 | 行数 | 职责 |
+| --- | --- | --- |
+| `MinecraftSkinManager.swift` | 41 | 皮肤文件持久化（`~/Library/Application Support/SL启动器/Skins/<uuid>.png`） |
+| `SkinResourcePackApplier.swift` | 156 | 离线皮肤主路径：生成 `resourcepacks/SL 皮肤.zip` + 注入 options.txt |
+| `SkinAvatarCropper.swift` | 86 | 尺寸校验与头像裁剪（64×64 / 64×32 / 128×128） |
+| `SkinExtractor.swift` | 72 | 从游戏版本 JAR 提取默认皮肤 |
+| `OfflineSkinService.swift` | 192 | 交互入口：选择面板、默认皮肤恢复（依赖 `LauncherSettings` 单例） |
+| `OfflineUsernameValidator.swift` | 22 | 离线用户名提示文案 |
+
+注：历史遗留的 authlib-injector / JAR 改写路径已在前序批次删除，注释保留在
+`MinecraftSkinManager.swift` 头部，离线皮肤统一走资源包方案。
+
+## 二、文件与职责
+
+| 文件 | 内容 | 说明 |
+| --- | --- | --- |
+| `SkinDecoder.swift` | `SkinError`、`SkinImageInfo`、`SkinDecoder`、`DefaultSkinDecoder` | 图像解码与尺寸校验，基于 ImageIO，可任意线程调用 |
+| `SkinResourcePackBuilder.swift` | `SkinResourcePackBuilder`、`DefaultSkinResourcePackBuilder` | 资源包构建协议 + `SkinResourcePackApplier` 的适配实现 |
+| `SkinService.swift` | `SkinService`、`DefaultSkinService` | 对外唯一门面：校验 / 落盘 / 读取 / 资源包 |
+| `SkinModule.swift` | `SkinModule` | `SLModule` 实现，注册 `skin.service` 与 `skin.decoder` |
+
+依赖方向：`SkinService` → （`SkinDecoder` / `SkinResourcePackBuilder`）→ 既有实现。
+
+## 三、协议与既有实现的对应关系
+
+| 协议方法 | 既有实现 | 行为差异 |
+| --- | --- | --- |
+| `SkinDecoder.inspect(_:)` | `SkinAvatarCropper.validateSkin(at:)` | 尺寸白名单相同；改为 `CGImageSource` 直读像素尺寸，不经 `NSImage`，因此可脱离主线程调用 |
+| `SkinService.saveSkin` / `skinData` | `MinecraftSkinManager.saveSkin` / `getSkinData` | 无 |
+| `SkinService.applyResourcePack` / `removeResourcePack` | `SkinResourcePackApplier.apply` / `remove` | 无；幂等判断仍依赖 `LauncherSettings.appliedSkinHash`，故适配层传入 `LauncherSettings.shared` |
+
+## 四、刻意没有纳入协议的东西
+
+- **交互**：`OfflineSkinService.selectSkinImage` 里的 `NSOpenPanel` / `NSAlert` / 放文件位置，
+  属 UI 职责，模块只覆盖「校验 → 落盘 → 资源包」三步数据操作。
+- **用户名提示**：`OfflineUsernameValidator.hint(for:)` 是纯展示文案，与皮肤数据无关。
+- **从 JAR 提取默认皮肤**：`SkinExtractor.extractFromGameJar` 依赖 `AppContext.processPool` 与游戏目录结构，
+  接入前需要先确定「提取结果归属哪个模块」（皮肤本体还是资源补全），本轮不纳入。
+- **`LauncherSettings` 的收窄**：资源包幂等标记目前写在 `LauncherSettings`，属设置模块职责；
+  迁到 `AppSettingsStore` 后再去掉适配层对 `LauncherSettings.shared` 的依赖
+  （**`AppSettingsStore.swift` 本轮不允许修改**）。
+
+## 五、迁移步骤（后续执行，当前未做任何改动）
+
+**第 1 步：头像与展示改走解码器**
+`CategoryContentView` 等处的皮肤尺寸校验改调 `SkinDecoder`。
+验收：非法尺寸的提示文案与现状一致（与 `LauncherError.skinValidationFailed` 的文案对齐）。
+
+**第 2 步：皮肤应用改走门面**
+`OfflineSkinService.selectSkinImage` 中的保存 + 资源包生成两步改为调用 `SkinService`，
+面板与弹窗留在 UI 层。
+验收：`resourcepacks/SL 皮肤.zip` 内容、options.txt 的 resourcePacks 取值、
+`appliedSkinHash` 幂等行为与现状一致。
+
+**第 3 步：把 `SkinModule` 登记进模块清单**
+`ModuleRegistry.swift` 的 `AppModuleBootstrap.makeRegistry()` 中加入 `SkinModule()`
+（**该文件本轮不允许修改，故此项留待接线时执行**）。
+验收：`context.require(ModuleCapabilityKey<SkinService>("skin.service"))` 可取到实例。
+
+**第 4 步：幂等标记迁移**
+`appliedSkinHash` 从 `LauncherSettings` 迁至 `AppSettingsStore`，适配层去掉 `LauncherSettings` 依赖。
+
+## 六、测试挂载点
+
+- `DefaultSkinDecoder.inspect`：64×64 / 64×32 / 128×128 通过，其余尺寸抛
+  `SkinError.unsupportedDimensions`，非图像数据抛 `SkinError.unreadableImage`；
+- `SkinImageInfo.isLegacyFormat`：仅 64×32 为 true；
+- `DefaultSkinService(decoder:packBuilder:)`：注入桩实现，验证门面只做转发、不吞错误；
+- `DefaultSkinResourcePackBuilder.packURL(in:)`：路径为 `<gameDir>/resourcepacks/SL 皮肤.zip`。

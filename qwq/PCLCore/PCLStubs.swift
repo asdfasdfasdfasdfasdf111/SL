@@ -20,8 +20,17 @@ public extension Optional {
 }
 
 // MARK: - Hint function
+/// 轻量提示。**已接入真实提示通道**（`NoticeCenter` → 根视图上的 `NoticeOverlay`）。
+///
+/// 行为：写一条日志，并把消息按级别转成 `Notice` 投递到 `NoticeCenter`，
+/// 用户会在界面顶部看到对应横幅（`info` / `success` 自动消失，`warning` / `error` 需手动关闭）。
+/// 投递是异步且线程安全的，因此本函数可从任意线程调用，调用后不会阻塞等待。
 public func hint(_ message: String, _ type: HintType = .info) {
     log("[Hint] \(message)")
+    let level = NoticeLevel(type)
+    NoticeCenter.shared.post(
+        Notice(level: level, title: level.defaultTitle, message: message)
+    )
 }
 public enum HintType { case info, finish, critical }
 
@@ -151,10 +160,45 @@ public func validateOfflineUsername(_ raw: String) -> String {
     return ""
 }
 
+/// 账号相关错误。
+/// 语义约定：本条枚举只用于表达「能力尚未实现」或「运行环境不可用」，
+/// 不得用于表达「已实现但因为密码/令牌错误而失败」——后者不属于本枚举范围。
+/// 因此 `errorDescription` 一律直述「尚未实现」，不写成「登录失败」，避免误导用户以为重试即可成功。
+public enum AccountError: LocalizedError {
+    case microsoftLoginNotImplemented
+    case yggdrasilLoginNotImplemented
+    case networkUnavailable
+    case popupNotAvailable
+
+    public var errorDescription: String? {
+        switch self {
+        case .microsoftLoginNotImplemented:
+            return "微软账号登录尚未实现：本启动器当前仅支持离线账号，请使用离线模式启动游戏。"
+        case .yggdrasilLoginNotImplemented:
+            return "Yggdrasil 外置登录尚未实现：本启动器当前仅支持离线账号，请使用离线模式启动游戏。"
+        case .networkUnavailable:
+            return "网络不可用：当前无法建立网络连接，请检查网络后重试。"
+        case .popupNotAvailable:
+            return "弹窗不可用：弹窗管理器尚未实现，该提示无法显示。"
+        }
+    }
+}
+
+/// 账号种类的统一包装。
+///
+/// 重要说明（治理约定）：
+///  - `.offline` 为真实实现，离线账号可正常使用。
+///  - `.microsoft` / `.yggdrasil` **仅保留枚举形状**，用于兼容历史持久化数据
+///    （`CodableAppStorage("accounts")` 以 JSON 存储，删除 case 会导致旧数据解码失败）。
+///    两者的登录流程尚未实现，运行期会被当作离线账号处理，不存在任何 OAuth / 外置认证行为。
+///  - 消费方在启动或展示账号前，应先用 `isFullyImplemented` / `unimplementedError` 判断，
+///    不得依据枚举 case 名称推断该账号具备联网认证能力。
 public enum AnyAccount: Account, Identifiable, Equatable {
     case offline(OfflineAccount)
-    case microsoft(OfflineAccount) // stub: treat as OfflineAccount
-    case yggdrasil(OfflineAccount) // stub: treat as OfflineAccount
+    /// 尚未实现：类型层保留，实际按离线账号处理（无 OAuth 流程、无 accessToken 交换）。
+    case microsoft(OfflineAccount)
+    /// 尚未实现：类型层保留，实际按离线账号处理（无 Yggdrasil 认证、无会话服务器交互）。
+    case yggdrasil(OfflineAccount)
 
     private var account: any Account {
         switch self {
@@ -166,6 +210,35 @@ public enum AnyAccount: Account, Identifiable, Equatable {
     public var name: String { account.name }
     public static func == (lhs: AnyAccount, rhs: AnyAccount) -> Bool { lhs.id == rhs.id }
     public func putAccessToken(options: LaunchOptions) async { await account.putAccessToken(options: options) }
+
+    /// 该账号种类是否已完整实现。
+    /// 仅 `.offline` 返回 true；`.microsoft` / `.yggdrasil` 登录流程尚未实现，返回 false。
+    public var isFullyImplemented: Bool {
+        switch self {
+        case .offline: return true
+        case .microsoft, .yggdrasil: return false
+        }
+    }
+
+    /// 账号种类的中文描述，供 UI / 日志展示。
+    /// 未实现的种类显式标注「尚未实现」，避免 UI 把它呈现为可用的登录方式。
+    public var accountKindDescription: String {
+        switch self {
+        case .offline: return "离线账号"
+        case .microsoft: return "微软账号（尚未实现，当前按离线账号处理）"
+        case .yggdrasil: return "Yggdrasil 外置登录（尚未实现，当前按离线账号处理）"
+        }
+    }
+
+    /// 未实现种类的对应错误；已实现种类返回 nil。
+    /// 供调用方在发现未实现账号时给出明确提示，而非静默降级。
+    public var unimplementedError: AccountError? {
+        switch self {
+        case .offline: return nil
+        case .microsoft: return .microsoftLoginNotImplemented
+        case .yggdrasil: return .yggdrasilLoginNotImplemented
+        }
+    }
 }
 
 public class AccountManager: ObservableObject {
@@ -201,12 +274,38 @@ public struct PopupModel {
     }
 }
 
+/// 弹窗管理器。**已接入真实提示通道**（`NoticeCenter` → 根视图上的 `NoticeOverlay`）。
+///
+/// 实现约定：
+///  - `show(_:)` 把 `PopupModel` 转成 `Notice` 投递到 `NoticeCenter`，随即返回（不等待用户）；
+///  - `showAsync(_:)` 同样投递，但会**真正等待用户点选按钮**，并返回被点按钮的下标；
+///  - 两者签名与调用点保持不变，旧调用方无需改动。
 @MainActor
 public class PopupManager: ObservableObject {
     public static let shared = PopupManager()
+    /// 弹窗能力是否可用：取决于 UI 承载者（`NoticeOverlay`）是否已挂载。
+    /// 未挂载时 `show` 仍会记入 `NoticeCenter.history`，但不会有任何可见 UI，
+    /// 且 `showAsync` 会立即返回默认下标 0（不会阻塞调用方）。
+    public var isAvailable: Bool { NoticeCenter.shared.hasPresenter }
     private init() {}
-    public func show(_ model: PopupModel) async {}
-    public func showAsync(_ model: PopupModel) async -> Int { 0 }
+
+    /// 展示弹窗：转成 `Notice` 投递到统一提示通道。不等待用户操作，调用后立即返回。
+    public func show(_ model: PopupModel) async {
+        NoticeCenter.shared.post(Notice(model))
+    }
+
+    /// 展示弹窗并等待用户点选，返回被点击按钮在 `model.buttons` 中的**下标**。
+    ///
+    /// 返回值约定（重要，调用方据此分支）：
+    ///  - `0` —— 用户点了第 0 个按钮，或直接关闭了提示，或 UI 承载者未挂载（兜底），
+    ///           或等待超过兜底超时（300s）。即「默认 / 取消」语义。
+    ///  - `n > 0` —— 用户点击了第 n 个按钮（例如 `MinecraftInstance` 中下标 1 的「导出错误报告」）。
+    ///
+    /// 注意：仅在 `NoticeOverlay` 已挂载时才会真正等待；否则立即返回 0，
+    /// 与非阻塞场景保持兼容，绝不会把调用方永久挂起。
+    public func showAsync(_ model: PopupModel) async -> Int {
+        await NoticeCenter.shared.presentAndWait(Notice(model))
+    }
 }
 
 // MARK: - CodableAppStorage (simplified)
@@ -234,7 +333,12 @@ public struct CodableAppStorage<Value: Codable> {
     }
 }
 
-// MARK: - Theme (stub)
+// MARK: - Theme（桩实现）
+/// 主题模型（**桩实现**）。
+/// 当前只保留 `id` 字段，`load(id:)` 仅按 id 构造对象，不读取任何主题文件、
+/// 不解析配色/字体，也不参与渲染。因此「切换主题」在本类型层面不产生任何视觉效果。
+/// 真实主题渲染由 `qwq/Features/Settings/ThemeManager.swift` 负责，
+/// 本类型为历史遗留接口，调用方不应据此判断主题是否生效。
 public class Theme {
     public var id: String
     public init(id: String) { self.id = id }

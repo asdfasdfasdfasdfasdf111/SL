@@ -283,6 +283,11 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
             return
         }
         if let account = launchOptions.account {
+            // 显式暴露未实现能力（治理约定）：microsoft / yggdrasil 登录流程尚未实现，
+            // 运行期只会退化为离线账号。此处输出明确告警，避免用户误以为已完成联网登录。
+            if let unimplemented = account.unimplementedError {
+                warn("\(account.accountKindDescription)：\(unimplemented.errorDescription ?? "该功能尚未实现")")
+            }
             // 防御性校验（PCL2 风格）：非法用户名直接终止启动，
             // 否则 1.20.5+ 会因 hello 包 writeUtf(name,16) 抛 EncoderException 而进服失败
             let nameError = validateOfflineUsername(account.name)
@@ -295,6 +300,8 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
             log("正在登录")
             await account.putAccessToken(options: launchOptions)
             if case .yggdrasil = account {
+                // 注意：Yggdrasil 认证尚未实现，此处仅预置 authlib-injector，
+                // 不代表已完成外置登录（不产生认证会话，游戏按离线模式进入）。
                 try? await MinecraftLauncher.downloadAuthlibInjector() // 后面改成可抛出 + 多阶段
             }
         }

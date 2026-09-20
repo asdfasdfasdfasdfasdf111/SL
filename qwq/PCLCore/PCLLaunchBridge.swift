@@ -3,10 +3,14 @@ import Cocoa
 
 /// 兼容层：桥接旧 UI 代码到 PCL.Mac 启动核心
 extension MinecraftLauncher {
-    /// 取消标志（兼容旧 UI 的关闭按钮逻辑，当前为桩实现）
+    /// 取消标志（兼容旧 UI 的关闭按钮逻辑，**当前为 no-op 桩**）。
+    /// 读恒为 false，写不产生任何效果：同步 launch 调用无法中途取消。
+    /// 调用方不得据此判断「已取消」，也不得依赖赋值来终止启动；
+    /// 需要终止运行中的进程请使用 `terminate()`（真实生效）。
+    /// 当前代码库中无任何调用点，详见 `qwq/PCLCore/STUBS_AUDIT.md`。
     public var isCancelled: Bool {
         get { false }
-        set { /* no-op stub: 同步 launch 调用无法中途取消 */ }
+        set { /* no-op 桩：同步 launch 调用无法中途取消，赋值被静默忽略 */ }
     }
     /// 用户主动终止标志：terminate() 时置 true，completion 回调据此判断不报异常
     public var isUserTerminated: Bool {

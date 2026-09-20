@@ -38,8 +38,15 @@ public class InstallTask: ObservableObject, Identifiable, Hashable, Equatable {
         hasher.combine(id)
     }
     
+    /// 启动任务。基类为空实现：只有可独立启动的任务（MinecraftInstallTask /
+    /// CustomFileDownloadTask / ModFileDownloadTask）覆写了本方法；
+    /// FabricInstallTask / LoaderInstallTask 属于子任务，由 MinecraftInstaller 通过
+    /// `install(_:)` 驱动，**不经过 start()**，故沿用空实现。
+    /// 调用方若对子任务调用 start()，将不会有任何动作——请改用 install(_:)。
     public func start() { }
+    /// 各阶段安装状态。基类返回空字典：子任务需覆写，否则下载详情页无进度可显示。
     public func getInstallStates() -> [InstallStage : InstallState] { [:] }
+    /// 任务标题。基类返回空串：具体任务需覆写，否则下载详情页标题为空。
     public func getTitle() -> String { "" }
     public func onComplete(_ callback: @escaping () -> Void) {
         self.callback = callback
