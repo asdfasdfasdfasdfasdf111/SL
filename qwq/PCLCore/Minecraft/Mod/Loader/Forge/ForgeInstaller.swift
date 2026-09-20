@@ -113,6 +113,48 @@ public class ForgeInstaller {
         try Util.runProcessWithTimeout(process, timeout: 120)
     }
     
+    // MARK: - 单文件下载（经 DownloadEngine 提交，后端仍为 NetManager）
+
+    /// 单文件下载，替代原 `SingleFileDownloader.download(url:destination:)` 调用点。
+    ///
+    /// 行为等价要点：
+    /// - 候选源固定为传入的单个 URL：旧调用只传一个 URL，此处用无备用源的顺序解析器，
+    ///   不因 `fileDownloadSource == .both` 额外追加镜像源，源尝试顺序与旧链路一致；
+    /// - 进度回调口径为 0…1 比例；下载成功与「已存在且校验通过而跳过」两条分支均回调 `1.0`，
+    ///   与旧引擎一致；
+    /// - 覆盖策略由调用方显式传入，与旧调用点逐一对应；
+    /// - 失败时抛出携带旧链路原始描述的错误，调用侧取 `error.localizedDescription` 的文案不变。
+    private func downloadSingleFile(
+        from url: URL,
+        to destination: URL,
+        replaceMethod: ReplaceMethod,
+        progress: ((Double) -> Void)? = nil
+    ) async throws {
+        let engine = NetDownloaderDownloadEngine(resolver: SequentialDownloadSourceResolver())
+        let request = DownloadRequest(url: url, destinationURL: destination)
+        let handle = try await engine.submit(request, replaceMethod: replaceMethod)
+
+        for await state in engine.observe(taskID: handle.taskID) {
+            switch state {
+            case .downloading(let snapshot):
+                progress?(snapshot.fraction)
+            case .completed:
+                // 旧链路在成功路径末尾固定回调 progress(1.0)，此处保持终值一致。
+                progress?(1.0)
+            case .failed(let error):
+                // 结构化错误会归一化文案，优先回放旧链路的原始描述。
+                let reason = engine.legacyFailureReason(taskID: handle.taskID)
+                    ?? error.errorDescription
+                    ?? "下载失败。"
+                throw MyLocalizedError(reason: reason)
+            case .cancelled:
+                throw CancellationError()
+            case .idle, .preparing, .verifying, .merging:
+                break
+            }
+        }
+    }
+
     // MARK: - 修改 DOWNLOAD_MOJMAPS 任务
     private func patchMojangMappingsDownloadTask(_ processor: ForgeInstallProfile.Processor) async throws -> Bool {
         // 若参数中不存在 --output，或 --output 后没有参数，返回
@@ -131,7 +173,7 @@ public class ForgeInstaller {
         let destination = URL(fileURLWithPath: replaceWithValue(processor.args[index + 1]))
         
         try? FileManager.default.createDirectory(at: destination.parent(), withIntermediateDirectories: true)
-        try await SingleFileDownloader.download(url: url.url, destination: destination, replaceMethod: .replace)
+        try await downloadSingleFile(from: url.url, to: destination, replaceMethod: .replace)
         debug("已修改 DOWNLOAD_MOJMAPS 任务")
         
         return true
@@ -169,7 +211,8 @@ public class ForgeInstaller {
             let url = getInstallerDownloadURL(minecraftVersion, version)
             let dest = temp.getURL(path: "installer.jar")
             log("正在下载安装器 \(url.lastPathComponent)")
-            try await SingleFileDownloader.download(url: url, destination: dest) { progress in
+            // 覆盖策略沿用旧链路缺省值 .skip；进度按 0.2 折算，下载占整体进度的 20%。
+            try await downloadSingleFile(from: url, to: dest, replaceMethod: .skip) { progress in
                 Task { @MainActor in self.setProgress(progress * 0.2) }
             }
             log("安装器下载完成")

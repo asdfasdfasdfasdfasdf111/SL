@@ -2,7 +2,9 @@
 
 本目录只放**适配器**：把 `qwq/Core/Download/` 的协议接到现有实现上，不改变任何下载行为，也不切换调用方。
 当前状态：`NetDownloader.swift`（`NetManager`）仍是唯一实际生效的下载路径；`DownloadEngine` 已由
-`Features/Download/ModFileDownloadTask.swift` 首个接入（见「六、切换记录」），其余调用方仍走旧链路。
+`Features/Download/ModFileDownloadTask.swift` 首个接入，并由
+`PCLCore/Minecraft/Mod/Loader/Forge/ForgeInstaller.swift` 的两处**单文件**下载第二个接入
+（均见「六、切换记录」），其余调用方仍走旧链路。
 
 ## 一、新增文件与职责
 
@@ -215,3 +217,82 @@ NetManager.shared.downloadAll(_ files: [PCLNetFile], overallProgress: ((Double, 
   同为「单文件 + `.replace`」形态，可直接复用本步模式，但需注意 `ForgeInstaller.swift:172`
   的进度回调按 `progress * 0.2` 折算，须在状态流上做同样折算。
 - `MinecraftInstaller` 的前置小文件（#2/#3/#4）顺延其后，原因是需与 `stage` 计数配对。
+
+### 2026-09-20 · 第 2 步：`ForgeInstaller` 的单文件下载（#7）
+
+**改动文件**
+
+- `qwq/PCLCore/Minecraft/Mod/Loader/Forge/ForgeInstaller.swift`（唯一调用方改动，+45/-2）
+- 适配器未改动：`legacyFailureReason(taskID:)`（第 1 步补齐）已足够覆盖本调用方的错误文案回放。
+
+**本次排除的调用方**
+
+- `Features/Download/ModpackDownloader.swift:106`（`downloadLatest`）与
+  `Features/Download/ModpackInstaller.swift:152`（`downloadMod`）经确认**均不调用 `NetManager`**：
+  二者走 `URLSession.download`（`AppContext.shared.apiSession`），属第二节 #13 已登记的绕过路径。
+  按「只切换确实直接调用 `NetManager` 的调用方」的约束，本轮不切换——改走 `DownloadEngine` 会由
+  直连 URLSession 变为多源分片引擎，覆盖策略、错误文案与「校验失败删除已落盘文件」三点都无法保持等价。
+- 同文件内的批量依赖下载（第二节 #8，原 `:236` 的 `MultiFileDownloader`）仍走旧链路，不在「单文件」范围内。
+
+**改动要点**
+
+1. 对外接口零变化：`install(minecraftVersion:forgeVersion:)`、`updateProgress` 回调、
+   子类 `NeoforgeInstaller`（仅覆写下载 URL 与 groupId，自动继承本改动）均无需改动，
+   调用方 `LoaderInstallTask` / `ForgeInstallTask` / `InstallTask` 全部零改动。
+2. 新增私有方法 `downloadSingleFile(from:to:replaceMethod:progress:)`：
+   `DownloadRequest(url:destinationURL:)` → `engine.submit(_:replaceMethod:)` → `for await` 消费
+   `observe(taskID:)`，`.downloading` → 进度回调、`.completed` → 回调 `1.0`、`.failed` / `.cancelled` → 抛错。
+3. 两个单文件调用点逐点替换：
+   - `patchMojangMappingsDownloadTask`（原 `:134`，mappings）：`.replace`，无进度回调；
+   - `downloadInstaller`（原 `:172`，installer）：`.skip`（沿用旧调用未显式传 `replaceMethod` 的缺省值）。
+4. 引擎实例为方法内局部变量，其 `run` 仍调用 `NetManager.shared.download`，全局分片额度与调度状态不变。
+
+**行为一致性：已确认等价**
+
+- **×0.2 折算已保住**：`downloadInstaller` 的闭包体逐字保留
+  `Task { @MainActor in self.setProgress(progress * 0.2) }`，仅把上游进度源由 `SingleFileDownloader` 的
+  `((Double) -> Void)` 换成 `DownloadProgress.fraction`。两者同为 0…1 比例（无 `expectedSize` 时适配器以
+  `syntheticTotalBytes = 1000` 承载比例），因此 `progress * 0.2` 在每个采样点上的取值均不变，下载仍占整体进度的 20%；
+  其后的固定 `await setProgress(0.2)` 亦未改动。
+- **进度终值**：旧链路在成功路径末尾固定回调 `progress(1.0)`；新链路在 `.completed` 分支显式回调 `1.0`，
+  折算后同为 `setProgress(0.2)`，且「已存在且校验通过而跳过」同样产生 `.completed`，与旧链路一致。
+- **覆盖策略**：两处分别为 `.replace` / `.skip`，与旧调用逐点对应。`installer` 目标位于每次安装新建的
+  `TemperatureDirectory`，`.skip` 正常不触发跳过分支；一旦文件已存在，旧链路 `checker == nil` 走「存在即跳过」，
+  新链路 `DefaultDownloadVerifier.checker(for:)` 返回 `FileChecker(actualSize: -1, hash: nil)`，
+  `canUseExistsFile == true` 且 `check` 返回 `nil`，同样跳过并回调 `1.0`。
+- **候选源——本次唯一显式指定项**：旧调用 `SingleFileDownloader.download(url:)` 只传一个 URL，
+  `PCLNetFile.urls` 恒为单元素。新链路显式注入 `SequentialDownloadSourceResolver()`（备用源为空），
+  候选列表同样恒为 `[request.url]`。若沿用引擎缺省的 `DefaultDownloadSourceResolver`，mappings 的 URL
+  一旦落在 `launcher.mojang.com` 等官方域名族，就会在 `fileDownloadSource == .both` 时追加 BMCLAPI 备用源，
+  构成旧链路不存在的兜底路径，故不采用。`installer` 的 URL 为 `bmclapi2.bangbang93.com`，不在官方域名族内，
+  两种解析器结果相同。
+- **错误语义**：旧调用失败时向上抛 `NetDownloadError.fileFailed(reason)`，其 `localizedDescription` 为
+  「下载失败：\(reason)」。新链路 `.failed` 分支抛 `MyLocalizedError(reason:)`，reason 取
+  `engine.legacyFailureReason(taskID:)`（按第 1 步的实现，即同一原始描述，逐字一致），
+  `error.localizedDescription` 结果不变。唯一消费者 `LoaderInstallTask.install`（`InstallTask.swift:352-361`）
+  只读取 `error.localizedDescription` 用于弹窗与日志，不做错误类型匹配，故更换错误类型无行为差异。
+
+**行为一致性：无法完全确认**
+
+- 进度回调的到达时机多一次调度跳步：旧链路由 `NetManager` 直接派发到 `@MainActor`（调用方闭包再跳一次），
+  新链路多经一次 `AsyncStream` 转发（无界缓冲、FIFO，不丢事件、不乱序），采样点与顺序不变，
+  但未做运行时逐点比对。
+- 取消路径不可达：`ForgeInstaller.install` 由 `LoaderInstallTask.install` 直接 `await`，全链路无取消入口
+  （`InstallTask.swift:188` 的 `cancel()` 作用于 Combine `cancellables`，与 Task 取消无关），
+  故 `.cancelled` → `CancellationError` 分支仅为兜底，缺少旧链路对照。
+
+**验证**
+
+- `xcrun swiftc -typecheck -target arm64-apple-macosx13.0 -I /tmp/deps $(find qwq -name "*.swift")`
+  → `exit=0`，`grep -c "error:"` = 0（改造前基线同为 0）；警告数 16 → 16，未新增。
+- `git diff --stat` 仅 `ForgeInstaller.swift`（+45/-2）与本记录文档，未改动 `NetDownloader.swift`、
+  `ModpackDownloader.swift`、`ModpackInstaller.swift` 或其它调用方。
+
+**下一个建议切换目标**
+
+- 第 3 步仍按第三节顺序：`FabricInstaller`（#9）与本次形态完全一致（单文件 + `.replace` + 单一 URL），
+  可直接复用 `downloadSingleFile` 的写法，建议与 `MinecraftInstaller` 的三个前置小文件（#2/#3/#4）合并为一批；
+  后者带 `sha1`，需连同 `stage` 的 `beginParallelStage` / `finishParallelStage` 配对一起验证。
+- `ForgeInstaller` 的批量依赖（#8，现 `:279`）顺延至第一条批量路径（第 4 步）一并处理。
+- 整合包两处 `URLSession` 直连（#13）仍是独立一步，需先补齐 `expectedSize` / `sha1` 与
+  「校验失败删除已落盘文件」的语义才能保证等价。
