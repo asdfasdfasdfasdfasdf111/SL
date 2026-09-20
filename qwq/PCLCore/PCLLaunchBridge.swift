@@ -178,11 +178,21 @@ private func pclLaunchInternal(
         log("沿用缓存 Java: \(cached.path) (major=\(major))")
     } else {
         if cachedJavaURL != nil { log("缓存 Java 失效或版本不足，重新选择") }
-        // 尝试通过 DataManager 选择（已被 JavaManager.syncJavaVirtualMachines 填充）
-        if let jvm = MinecraftInstance.findSuitableJava(instance.version, minJavaVersion: minJavaVersion, manifest: instance.manifest) {
+        // 优先走统一的 Java 解析器（Features/Java/JavaResolver）：
+        // 候选来源、排序策略与兼容性判断集中在模块内一处，不再依赖多级 fallback 各自为政
+        if let resolved = JavaResolverBridge.resolveSynchronously(
+            minimumMajor: minJavaVersion,
+            mcVersion: instance.version.displayName
+        ) {
+            selectedJavaURL = resolved
+            log("JavaResolver 命中: \(resolved.path)")
+        }
+
+        // 回退：尝试通过 DataManager 选择（已被 JavaManager.syncJavaVirtualMachines 填充）
+        if selectedJavaURL == nil, let jvm = MinecraftInstance.findSuitableJava(instance.version, minJavaVersion: minJavaVersion, manifest: instance.manifest) {
             selectedJavaURL = jvm.executableURL
             log("通过 DataManager 自动选择 Java: \(jvm.executableURL.path) (major=\(jvm.version), callMethod=\(jvm.callMethod))")
-        } else {
+        } else if selectedJavaURL == nil {
             // 兜底：直接使用 JavaManager.selectBestJava（基于 LauncherSettings.availableJavaList）
             var scanned = LauncherSettings.shared.availableJavaList
             if scanned.isEmpty {
