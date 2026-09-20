@@ -7,6 +7,7 @@
 
 import Foundation
 import zlib
+import os
 
 enum LocalModCatalog {
 
@@ -25,15 +26,23 @@ enum LocalModCatalog {
     private nonisolated(unsafe) static var localCatalogItemsByType: [String: [DownloadedItem]] = [:]
     /// 本地全量目录是否已在后台解析完成。主线程只在它为 true 时才调用 items，
     /// 从而杜绝「切到 mod 页时主线程同步读盘+解压 12 万条目录 → 卡死/动画丢失/翻译失效」。
-    private nonisolated(unsafe) static var localCatalogReady = false
+    ///
+    /// 该标志由 `Task.detached` 后台写入、由主线程渲染路径读取，因此不再用裸 `var` 承接，
+    /// 改由 `OSAllocatedUnfairLock` 承载：它是 Sendable 的引用类型，其 `withLock` 属于
+    /// async 安全的「作用域加锁」。原有的 `NSLock.lock()` / `unlock()` 在新版 SDK 中被标注
+    /// `noasync`，在 async 闭包内直接调用会产生「unavailable from asynchronous contexts」
+    /// 告警，并在 Swift 6 语言模式下升级为错误。
+    ///
+    /// 显式标注 `nonisolated`：工程开启了 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`，
+    /// 未标注隔离的静态成员会被推断为 `@MainActor`；本属性必须能被 `Task.detached` 的
+    /// 后台上下文访问，且其自身是 Sendable 不可变引用，不需要主 actor 保护。
+    private nonisolated static let localCatalogReadyState = OSAllocatedUnfairLock(initialState: false)
     /// 本地目录解析完成通知（用于让已显示的 mod 页自动刷新为全量本地目录）
     static let readyNotification = Notification.Name("localCatalogReady")
 
     /// 本地目录是否已解析完成（主线程据此决定是否直接走全量目录模式）
     static var isReady: Bool {
-        localCatalogLock.lock()
-        defer { localCatalogLock.unlock() }
-        return localCatalogReady
+        localCatalogReadyState.withLock { $0 }
     }
 
     /// 应用启动时预热本地全量目录（对应 PCL 的 PageLoaderInit：在用户打开下载页之前就后台解析，
@@ -85,18 +94,14 @@ enum LocalModCatalog {
 
     /// 后台预加载四类本地目录，避免首次切页时阻塞主线程
     private static func preload() {
-        localCatalogLock.lock()
-        let ready = localCatalogReady
-        localCatalogLock.unlock()
+        let ready = localCatalogReadyState.withLock { $0 }
         guard !ready else { return }
         Task.detached(priority: .userInitiated) {
             _ = items(for: .mod)
             _ = items(for: .resourcePack)
             _ = items(for: .shader)
             _ = items(for: .modpack)
-            localCatalogLock.lock()
-            localCatalogReady = true
-            localCatalogLock.unlock()
+            localCatalogReadyState.withLock { $0 = true }
             DispatchQueue.main.async {
                 NotificationCenter.default.post(name: readyNotification, object: nil)
             }
