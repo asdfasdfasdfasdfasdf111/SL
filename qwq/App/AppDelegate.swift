@@ -7,8 +7,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
         window.minSize = NSSize(width: 800, height: 590)
-        // macOS 12 没有 Scene.defaultSize，手动设置默认窗口尺寸（900×660）并居中；
-        // macOS 13+ 由 qwqApp 里的 .defaultSizeCompat 声明。
+        // 说明：本工程部署目标为 macOS 13.0，下面的 12.x 分支在当前配置下不会执行
+        //（保留以便将来下调部署目标时仍有兜底）。
+        // 窗口默认尺寸实际由根视图的 .frame(minWidth:minHeight:) 与 windowResizability 推导决定，
+        // 参见 docs/APPLE_API_CHECKLIST.md 关于 contentMinSize 优先级的核对结论。
         if #unavailable(macOS 13.0) {
             let size = NSSize(width: 900, height: 660)
             let screenFrame = NSScreen.main?.visibleFrame ?? .zero

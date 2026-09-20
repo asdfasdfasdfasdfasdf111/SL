@@ -23,80 +23,14 @@ struct ContentView: View {
             // 不能在这里整页替换，否则会把用户要求保留的导航栏一并卸载。
             mainContent
 
-            // 全局弹窗/提示/圆按钮：放在页面切换层之外，不随页面卸载
-            JavaSelectionPopup(message: launchPanel.javaPopupMessage, isPresented: $launchPanel.showJavaPopup)
-                .position(x: 450, y: 200)
-                .zIndex(100)
-
-            if dropInstall.showModInstallSheet {
-                ModInstallSelectionView(
-                    modName: dropInstall.pendingModName,
-                    modVersion: dropInstall.pendingModVersion,
-                    instances: dropInstall.modInstallInstances,
-                    onConfirm: { selected in
-                        dropInstall.confirmModInstall(instances: selected)
-                    },
-                    onCancel: {
-                        dropInstall.cancelModInstall()
-                    }
-                )
-                .zIndex(200)
-            }
-
-            if dropInstall.showModpackInstallSheet {
-                ModpackFolderPickerView(
-                    packName: dropInstall.pendingModpackName,
-                    onConfirm: { folderURL in
-                        dropInstall.confirmModpackInstall(folderURL: folderURL)
-                    },
-                    onCancel: {
-                        dropInstall.cancelModpackInstall()
-                    }
-                )
-                .zIndex(200)
-            }
-
-            if interaction.isDropTargeted {
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(ThemeManager.shared.accentColor, lineWidth: 3)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(ThemeManager.shared.accentColor.opacity(0.08))
-                    )
-                    .padding(8)
-                    .allowsHitTesting(false)
-                    .zIndex(150)
-            }
-
-            // 圆形毛玻璃下载按钮：全局顶层（对标 PCL.Mac installTaskButtonOverlay），
-            // 任何页面可见可点；点击 toggle 进/出详情页（无返回键，再次点击回到刚才的页面）。
-            // zIndex(40) 高于详情页(30)：详情页打开时按钮仍可见可点。
-            if navigation.isDownloadCircleVisible {
-                ZStack {
-                    Circle()
-                        .fill(.ultraThinMaterial)
-                        .frame(width: 48, height: 48)
-                        .overlay(
-                            Circle()
-                                .stroke(.white.opacity(0.2), lineWidth: 1)
-                        )
-                        .shadow(color: .black.opacity(0.3), radius: 15, y: 6)
-
-                    Image(systemName: "arrow.down.to.line")
-                        .font(.system(size: 19, weight: .medium))
-                        .foregroundColor(.white)
-                }
-                .scaleEffect(navigation.downloadCircleScale)
-                .opacity(navigation.downloadCircleOpacity)
-                .padding(.trailing, 12)
-                .padding(.bottom, 12)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                .zIndex(40)
-                .onTapGesture {
-                    // 动画由 DownloadDetailManager.toggle 内部统一触发（弹簧曲线）
-                    navigation.toggleDownloadDetail()
-                }
-            }
+            // 全局弹窗/提示/圆按钮：放在页面切换层之外，不随页面卸载。
+            // 必须置于 mainContent 之后：本层与 mainContent 的 zIndex 同为默认值，
+            // 由声明顺序决定上下关系，调换位置会使全部叠加层落到主内容之下。
+            // 各叠加层之间的层级与顺序由 RootOverlays 内部保留。
+            RootOverlays(launchPanel: launchPanel,
+                         dropInstall: dropInstall,
+                         interaction: interaction,
+                         navigation: navigation)
         }
         .frame(minWidth: 800, minHeight: 550)
         // 全局用户提示层（PopupManager / hint 的唯一可见出口）：仅顶部横幅区域可点，
@@ -130,26 +64,8 @@ struct ContentView: View {
                     return dropInstall.handle(providers: providers)
                 }
             VStack(alignment: .leading, spacing: 0) {
-                // 标题栏（早期版本样式）：
-                // 整个头部（标题行 + 分类行）共享毛玻璃背景，与早期版本一致
-                VStack(alignment: .leading, spacing: 0) {
-                    // 第一行：应用大标题 + 右侧留白，左侧对齐，顶部留出窗口可拖拽区域空间
-                    HStack {
-                        Text("SL启动器")
-                            .font(.largeTitle.bold())
-                        Spacer()
-                    }
-                    .padding(.horizontal, 32)
-                    .padding(.top, 12)
-                    .padding(.bottom, 6)
-                    // 第二行：分类导航靠左对齐
-                    AnimatedCategoryPicker(selectedCategory: $navigation.selectedCategory, categories: navigation.categories)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 8)
-                        .zIndex(20)
-                }
-                .background(BlurView(material: .contentBackground, blendingMode: .withinWindow).ignoresSafeArea(edges: .top))
-                Rectangle().fill(Color.secondary.opacity(0.3)).frame(height: 0.5).padding(.horizontal, 32)
+                // 标题栏（早期版本样式）：标题行 + 分类导航 + 底部分隔线，整体由 HomeHeader 负责
+                HomeHeader(selectedCategory: $navigation.selectedCategory, categories: navigation.categories)
                 GeometryReader { geometry in
                     let width = geometry.size.width
                     ZStack {

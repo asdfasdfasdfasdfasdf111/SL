@@ -1,9 +1,9 @@
 //
 //  CrashReporter.swift
 //  崩溃自捕获：挂 SIGSEGV/SIGBUS/SIGILL/SIGABRT/SIGTRAP handler，
-//  崩溃时把当前线程 backtrace 写到 ~/Library/Logs/qwq_crash.log。
+//  崩溃时把当前线程 backtrace 写到 ~/Library/Logs/SL_crash.log。
 //  目的：用户 Xcode Run 崩溃时 LLDB 拦截不会落系统 .ips，导致崩溃堆栈丢失；
-//  有了这个文件，下次崩溃后直接读 qwq_crash.log 即可拿到调用栈定位。
+//  有了这个文件，下次崩溃后直接读 SL_crash.log 即可拿到调用栈定位。
 //  同时注册 NSSetUncaughtExceptionHandler（Swift fatalError / ObjC 异常）写入同一文件。
 //
 
@@ -12,7 +12,7 @@ import Darwin
 
 enum CrashReporter {
     private static var installed = false
-    private static let logPath = NSHomeDirectory() + "/Library/Logs/qwq_crash.log"
+    private static let logPath = NSHomeDirectory() + "/Library/Logs/SL_crash.log"
 
     static func install() {
         guard !installed else { return }
@@ -41,7 +41,7 @@ enum CrashReporter {
         // 信号上下文只能用 async-signal-safe 函数：write/backtrace_symbols_fd/strsignal/time
         // 不用 Date()/String 拼接（会 malloc，信号期间 malloc 可死锁）
         var t = time(nil)
-        let header = "===== qwq crash =====\nsignal: \(signal) (\(String(cString: strsignal(signal))))\ntime: \(String(cString: ctime(&t)))--- backtrace ---\n"
+        let header = "===== SL crash =====\nsignal: \(signal) (\(String(cString: strsignal(signal))))\ntime: \(String(cString: ctime(&t)))--- backtrace ---\n"
         writeStr(fd, header)
 
         var callstack = [UnsafeMutableRawPointer?](repeating: nil, count: 128)
