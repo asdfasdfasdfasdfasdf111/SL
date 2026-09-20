@@ -51,6 +51,11 @@ private final class FakeJavaRepository: JavaRepository, @unchecked Sendable {
         callLog.append("save")
         saved.append(installation)
     }
+
+    /// 预扫描在本 fake 中只记录调用，不触发真实扫描。
+    func preScan() {
+        callLog.append("preScan")
+    }
 }
 
 // MARK: - 测试数据构造

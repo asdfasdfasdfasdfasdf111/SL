@@ -1,6 +1,7 @@
 # qwq 单元测试说明
 
-本目录是给 `qwq` 工程补的第一批单元测试，覆盖三个新模块：`Features/Java/`、`Core/Download/`、`Features/Launch/`。
+本目录是给 `qwq` 工程补的单元测试，覆盖 `Core/`（下载、模块内核）、`Features/Java/`、
+`Features/Launch/`、`App/ViewModels/`、`UI/Notices/` 与下载适配器层。
 
 **当前状态：工程里还没有 XCTest target，本目录下的文件也尚未加入任何 target，现在直接 Cmd+U 不会跑起来。** 需要先按下一节建 target 并手动把文件加进去。
 
@@ -15,7 +16,7 @@
    - `SWIFT_VERSION` = 5.0（与 app target 一致）
    - `MACOSX_DEPLOYMENT_TARGET` = 13.0（与 app target 一致）
    - `ENABLE_TESTABILITY`（Debug）= Yes，否则 `@testable import qwq` 取不到 internal 类型
-6. 建好 target 后，把本目录的 5 个文件拖进 Xcode 的 `qwqTests` 目录，并在 `File Inspector` 的
+6. 建好 target 后，把本目录的 13 个测试文件拖进 Xcode 的 `qwqTests` 目录，并在 `File Inspector` 的
    Target Membership 中勾选 **qwqTests**（不要勾 qwq，否则测试代码会打进 app）
 
 需要加入 target 的文件：
@@ -27,38 +28,104 @@
 | `DownloadMergerTests.swift` | DownloadMerger 契约 | 协议无默认实现，用测试替身验证契约 |
 | `DownloadStateTests.swift` | DownloadProgress / DownloadState / DownloadError | 纯值类型 |
 | `LaunchStateTests.swift` | LaunchState / LaunchError / LaunchResult | 纯值类型 |
+| `ModuleRegistryTests.swift` | SLModule / ModuleContext / ModuleRegistry / ModuleCapabilityKey | 用 `SLModule` 替身，不触发真实模块副作用 |
+| `JavaResolverBridgeTests.swift` | JavaResolverBridge | 只覆盖超时/边界；无 resolver 注入点，见缺口 §4.3 |
+| `NoticeCenterTests.swift` | NoticeCenter / Notice / NoticeLevel / NoticeButton | MainActor 单例，用例内复位承载者状态 |
+| `NavigationStateTests.swift` | NavigationState | 断言已复位 `DownloadDetailManager.shared` |
+| `LaunchPanelStateTests.swift` | LaunchPanelState | 断言已复位 `LauncherSettings` 四个内存字段 |
+| `HomeInteractionStateTests.swift` | HomeInteractionState | 纯视图级状态容器 |
+| `DropInstallCoordinatorTests.swift` | DropInstallCoordinator | 只覆盖分流与失败分支；成功安装分支见缺口 §4.5 |
+| `DownloadAdapterTests.swift` | DownloadSourceResolver / DefaultDownloadSourceResolver / NetDownloaderDownloadEngine / DefaultDownloadVerifier.checker | 经构造参数注入 resolver，`precheck` 跳过路径无需网络 |
 
-每个测试文件顶部都有 `@testable import qwq`，因为 `JavaInstallation`、`JavaRequirement`、
-`DefaultJavaResolver`、`JavaResolutionError` 是 internal，不加这一行编译不过。
+每个测试文件顶部都有 `@testable import qwq`，因为多数被测类型（`JavaInstallation`、
+`JavaRequirement`、`DefaultJavaResolver`、`SLModule`、`ModuleContext`、
+`NetDownloaderDownloadEngine` 等）是 internal 或依赖 internal 类型，不加这一行编译不过。
 
 ## 二、不建 target 也能做的类型检查
 
 没有 target 时可用下面的命令做编译期校验（只做 `-typecheck`，不链接、不运行）。
-`XCTest` 的 Swift 模块不在 SDK 里，需要显式指定平台 Frameworks 与 `usr/lib` 路径：
+
+> **注意：正文里给出的最简命令（`xcrun swiftc -typecheck -target arm64-apple-macosx13.0 -I /tmp/deps $(find qwq -name "*.swift") qwqTests/*.swift`）跑不通**，
+> 实测缺三个必要条件，见下面各条。可用命令如下：
 
 ```bash
-cd /path/to/Swim111Launcher
+cd /path/to/Swim111Launcher_副本
 SDK=$(xcrun --show-sdk-path)
 DEV=$(xcode-select -p)
 FW="$DEV/Platforms/MacOSX.platform/Developer/Library/Frameworks"
 LIB="$DEV/Platforms/MacOSX.platform/Developer/usr/lib"
 
-# 例：校验下载状态测试
 xcrun swiftc -typecheck \
-  -sdk "$SDK" -F "$FW" -I "$LIB" \
+  -sdk "$SDK" -F "$FW" -I "$LIB" -I /tmp/deps \
   -target arm64-apple-macosx13.0 -module-name qwq \
-  qwqTests/DownloadStateTests.swift \
-  qwq/Core/Download/DownloadState.swift \
-  qwq/Core/Download/DownloadProgress.swift \
-  qwq/Core/Download/DownloadError.swift
+  $(find qwq -name "*.swift") qwqTests/*.swift
 ```
 
-其它文件对应的源文件集合：
+三个 flag 的必要性（逐个实测确认，缺一即失败）：
 
+| 缺什么 | 报错 | 原因 |
+| --- | --- | --- |
+| `-sdk` / `-F "$FW"` / `-I "$LIB"` | `no such module 'XCTest'` | `XCTest` 的 Swift 模块不在 SDK 里，位于 Xcode 的 MacOSX Platform Developer 目录 |
+| `-module-name qwq` | `no such module 'qwq'` | 不加时所有源文件被视为无模块名，`@testable import qwq` 无从解析 |
+| `-I /tmp/deps` | `no such module 'SwiftyJSON'`（`PCLCore/Utils/Requests.swift`） | 第三方依赖（SwiftyJSON / ZIPFoundation）以预编译模块放在 `/tmp/deps` |
+
+单模块编译下，`@testable import qwq` 会产生一条
+`file ... is part of module 'qwq'; ignoring import` 警告，属预期，不影响结果。
+把全部源文件与测试文件放进同一次 `swiftc` 调用，等价于「测试代码与生产代码同属 qwq 模块」，
+因此顶层的 `internal` 类型可直接访问，不需要 `@testable` 的额外可见性提升。
+
+### 2.1 已知的改前缺陷：`JavaResolverTests` 无法通过类型检查
+
+**状态：这是本轮改动之前就存在的缺陷，本轮未修复（按任务约束不修改既有测试文件）。**
+
+```
+qwqTests/JavaResolverTests.swift:23:21: error: type 'FakeJavaRepository' does not conform to protocol 'JavaRepository'
+```
+
+原因：`Features/Java/JavaRepository.swift` 后续新增了 `preScan()` 要求，
+而 `JavaResolverTests` 里的替身 `FakeJavaRepository` 未实现该方法（测试文件早于协议变更提交）。
+因此**全量** typecheck 的退出码为 1，且只有这一条 error。
+
+修复方式（一行，建议单独提交）：
+
+```swift
+// qwqTests/JavaResolverTests.swift，FakeJavaRepository 内补：
+func preScan() {}
+```
+
+在修复之前，若要得到「新增测试是否干净」的信号，可把该文件从调用中排除：
+
+```bash
+# 其余 12 个测试文件全部通过（0 error）
+xcrun swiftc -typecheck -sdk "$SDK" -F "$FW" -I "$LIB" -I /tmp/deps \
+  -target arm64-apple-macosx13.0 -module-name qwq \
+  $(find qwq -name "*.swift") \
+  qwqTests/ModuleRegistryTests.swift qwqTests/JavaResolverBridgeTests.swift \
+  qwqTests/NoticeCenterTests.swift qwqTests/NavigationStateTests.swift \
+  qwqTests/LaunchPanelStateTests.swift qwqTests/HomeInteractionStateTests.swift \
+  qwqTests/DropInstallCoordinatorTests.swift qwqTests/DownloadAdapterTests.swift \
+  qwqTests/DownloadStateTests.swift qwqTests/DownloadVerifierTests.swift \
+  qwqTests/DownloadMergerTests.swift qwqTests/LaunchStateTests.swift
+```
+
+各文件对应的源文件集合（供单独校验时参考）：
+
+- `DownloadStateTests.swift` → `Core/Download/DownloadState.swift`、`DownloadProgress.swift`、`DownloadError.swift`
 - `DownloadVerifierTests.swift` → `Core/Download/DownloadVerifier.swift`、`DownloadError.swift`
 - `DownloadMergerTests.swift` → `Core/Download/DownloadMerger.swift`、`DownloadSliceStore.swift`
 - `LaunchStateTests.swift` → `Features/Launch/LaunchState.swift`、`LaunchError.swift`、`LaunchResult.swift`
-- `JavaResolverTests.swift` → `Features/Java/` 下的 `JavaResolver.swift`、`JavaInstallation.swift`、
+- `ModuleRegistryTests.swift` → `Core/Module/SLModule.swift`、`ModuleRegistry.swift`、`Features/Settings/AppSettingsStore.swift`
+- `JavaResolverBridgeTests.swift` → `Features/Java/` 下 `JavaResolverBridge.swift`、`JavaResolver.swift`、
+  `JavaRepository.swift`、`JavaRequirement.swift`、`JavaInstallation.swift`、`JavaInfo.swift`
+- `NoticeCenterTests.swift` → `UI/Notices/NoticeCenter.swift`、`PCLCore/PCLStubs.swift`
+- `NavigationStateTests.swift` → `App/ViewModels/NavigationState.swift`、`Features/ModBrowser/Category.swift`、`Features/Download/DownloadDetailManager.swift`
+- `LaunchPanelStateTests.swift` → `App/ViewModels/LaunchPanelState.swift`、`Features/Settings/ThemeManager.swift`
+- `HomeInteractionStateTests.swift` → `App/ViewModels/HomeInteractionState.swift`
+- `DropInstallCoordinatorTests.swift` → `App/ViewModels/DropInstallCoordinator.swift`、`Features/ModBrowser/ModVersionDetector.swift`、`Services/DragDropHandler.swift`
+- `DownloadAdapterTests.swift` → `Core/Download/DownloadSourceResolver.swift`、`Adapters/` 下
+  `DefaultDownloadSourceResolver.swift`、`DefaultDownloadVerifier.swift`、`NetDownloaderDownloadEngine.swift`、
+  `PCLCore/Download/NetDownloader.swift`、`MultiFileDownloader.swift`、`DownloadSourceManager.swift`
+- `JavaResolverTests.swift` → `Features/Java/` 下 `JavaResolver.swift`、`JavaInstallation.swift`、
   `JavaRequirement.swift`、`JavaInfo.swift`，外加 `PCLCore` 的 `Architecture.swift`、
   `Java/JavaVirtualMachine.swift`、`Utils/MyLocalizedError.swift`、`Utils/PropertiesParser.swift`
 
@@ -69,53 +136,158 @@ xcrun swiftc -typecheck \
 > `MinecraftDirectory`；全局 `err()` 所在的 `LogManager.swift` 依赖 `SharedConstants`）。
 > 替身放在 `/tmp`，不入库；在 Xcode 里跑真身 target 时不受此影响。
 
-单模块编译下 `@testable import qwq` 会产生一条
-`file ... is part of module 'qwq'; ignoring import` 警告，属预期，不影响结果。
+## 三、测试用例分布与真实断言说明
 
-## 三、已知覆盖率缺口与后续计划
+| 文件 | 用例数 | 断言性质 |
+| --- | --- | --- |
+| `JavaResolverTests.swift` | 24 | 真实断言（注入 fake 仓储） |
+| `DownloadVerifierTests.swift` | 14 | 真实断言（临时目录真实文件） |
+| `DownloadMergerTests.swift` | 8 | 契约断言（测试替身） |
+| `DownloadStateTests.swift` | 10 | 真实断言（纯值类型） |
+| `LaunchStateTests.swift` | 9 | 真实断言（纯值类型） |
+| `ModuleRegistryTests.swift` | 13 | 真实断言（`SLModule` 替身 + 真实 `AppModuleBootstrap`） |
+| `JavaResolverBridgeTests.swift` | 8 | **部分为条件断言**，见下方说明 |
+| `NoticeCenterTests.swift` | 21 | 真实断言 |
+| `NavigationStateTests.swift` | 16 | 真实断言 |
+| `LaunchPanelStateTests.swift` | 11 | 真实断言 |
+| `HomeInteractionStateTests.swift` | 5 | 真实断言 |
+| `DropInstallCoordinatorTests.swift` | 16 | 真实断言（失败/分流分支） |
+| `DownloadAdapterTests.swift` | 25 | 真实断言（注入 resolver + `precheck` 跳过路径） |
+| **合计** | **180** | |
 
-本轮只覆盖纯值类型、纯计算逻辑与可在临时目录内闭环的文件校验。
-以下高风险行为**尚未覆盖**，按优先级列出后续计划：
+关于「非纯真实断言」的两处，均为无法消除的环境约束，已在对应文件注释中写明：
 
-1. **下载器的真实并发与断点续传（最高优先级）**
-   - 未覆盖：`DownloadScheduler` 的分片切分与并发额度、`DownloadSliceStore` 的续传台账、
-     `DownloadEngine` 的状态流发布。
-   - 阻塞原因：三者都只有协议声明，无实现；且真实验证需要受控 HTTP 服务端。
-   - 计划：引入进程内 mock HTTP server（`Swifter` 或基于 `Network.framework` 的最小实现），
-     支持返回 206 + `Content-Range`、可控限速、中途断连，再补：
-     - 分片切分边界（文件大小不能被分片数整除、单分片、0 字节）
-     - 续传：写入半片后中断 → 重连带 `Range` → 合并结果哈希一致
-     - 源切换：主源 5xx → 落到备用源（配合 `SequentialDownloadSourceResolver`）
-     - 取消：`.cancelled` 终态后临时文件被清理
+1. `JavaResolverBridgeTests.testNonNilResultIsAnExistingLocalFile` 是**条件断言**：
+   桥接层内部硬编码 `DefaultJavaResolver()`，没有 resolver 注入点，
+   「解析成功」与「解析失败」无法与本机是否装有 Java 解耦，因此断言写成
+   `if let url = result { 断言它必须是真实存在的本地文件 }`；结果为 nil 时不做断言。
+   其余 7 条（timeout=0 / 极小 / 负数超时、超时耗时有上界、`minimumMajor` 取 `Int.min`/`Int.max`、
+   `mcVersion` 为 nil/空串、并发不死锁）都是确定性的真实断言。
+2. `DownloadAdapterTests` 中涉及引擎终态的用例依赖 `NetDownloaderDownloadEngine` 的
+   `precheck` 分支（目标文件已存在且无校验要求 → `.skip`），因此**不触网**即可稳定得到
+   `completed`；失败终态则用 `replaceMethod = .throw` + 已存在目标文件构造
+   `NetDownloadError.fileExists`，期望值直接取自旧错误类型的 `errorDescription`，
+   断言的是「与旧描述同源」而非手写字符串。
 
-2. **`DownloadMerger` 的真实实现**
-   - 协议注释已约定「单分片允许直接移动临时文件」，但工程内无实现（旧逻辑在 `NetManager.merge`）。
-   - 计划：落地 `FileManagerDownloadMerger` 后，把 `DownloadMergerTests` 里的
-     `OffsetOrderingMerger` 替换为真实实现，保留现有断言（乱序/倒序拼接、目录自动创建、
-     分片缺失报错、空分片列表）。
+**因缺注入点而跳过（不是硬测）的主要行为**，逐条记录在各测试文件末尾的注释中，
+汇总见下一节。
 
-3. **`LaunchService` 全链路**
-   - `LaunchService` / `LaunchArgumentBuilder` / `GameProcessController` 均为纯协议，无实现、无注入点。
-   - 计划：落地 `DefaultLaunchService` 时把参数组装器与进程控制器作为构造参数注入，
-     用 fake 断言参数顺序（JVM 参数 → 主类 → 游戏参数）、classpath 拼接符与 `-Xmx` 生成。
+## 四、已知覆盖率缺口与后续计划
 
-4. **`DefaultLaunchPreflight`**
-   - 已有可注入的四个校验器（`ClientFileVerifier` / `LibraryFileVerifier` /
-     `AssetFileVerifier` / `NativeInstaller`），具备可测性，本轮未覆盖。
-   - 计划：补 `LaunchPreflightTests`，断言 `skipResourceCheck` 短路、四段调用顺序、
-     进度区间映射（支持库 0~0.5、资源 0.5~1）。
+本节按「最该补」的优先级排列。
 
-5. **`GameSessionStore`**
-   - `InMemoryGameSessionStore` 有实现，但 `register` 需要 `ManagedProcess`，
-     而 `ManagedProcess` 直接持有 `Process`，缺少协议抽象。
-   - 建议改造：把 `ManagedProcess` 抽成协议（如 `GameProcess`），
-     或在测试中以 `/bin/sleep` 作为受控进程验证 register → observe → terminate。
+### 4.1 下载器的真实并发与断点续传（最高优先级）
 
-6. **`JavaModule`**
-   - 依赖 `SLModule` / `ModuleContext` / `ModuleCapabilityKey`，Core/Module 层尚未落地，当前无法编译。
-   - 计划：`SLModule.swift` 就位后补测「注册后可从 ModuleContext 取到 java.resolver」。
+- 未覆盖：`DownloadScheduler` 的分片切分与并发额度、`DownloadSliceStore` 的续传台账、
+  `DownloadEngine` 的状态流发布。
+- 阻塞原因：三者都只有协议声明，无实现；且真实验证需要受控 HTTP 服务端。
+- 计划：引入进程内 mock HTTP server（`Swifter` 或基于 `Network.framework` 的最小实现），
+  支持返回 206 + `Content-Range`、可控限速、中途断连，再补：
+  - 分片切分边界（文件大小不能被分片数整除、单分片、0 字节）
+  - 续传：写入半片后中断 → 重连带 `Range` → 合并结果哈希一致
+  - 源切换：主源 5xx → 落到备用源（配合 `SequentialDownloadSourceResolver`）
+  - 取消：`.cancelled` 终态后临时文件被清理
 
-7. **CI**
-   - 工程当前没有任何 CI。计划：target 建好后接一条
-     `xcodebuild -scheme qwq -destination 'platform=macOS' test` 的流水线，
-     并逐步给出覆盖率门禁。
+### 4.2 `legacyFailureReason` 的**网络失败**文案回放
+
+- 现状：`DownloadAdapterTests` 已覆盖「失败终态回放旧错误描述（`NetDownloadError.fileExists`，
+  不触网）」「成功/取消终态与未知 taskID 返回 nil」两侧。
+- 未覆盖：真实线上最常见的失败来自 HTTP 层（`<name>：无可用下载源。`、慢速断开、
+  分片校验失败、`远程服务器返回了 4xx。`）。这些文案能否被
+  `NetDownloaderDownloadEngine.map(_:)` 正确归类、以及归类后 `legacyFailureReason`
+  是否仍为**原文**（而 `.failed` 是归一化后的结构化错误），尚无断言。
+- 阻塞原因：`NetDownloaderDownloadEngine` 内部直接调用 `NetManager.shared`（actor 单例），
+  无网络后端注入点。
+- 计划：给引擎加 `NetManager` 协议抽象，注入返回「远程服务器返回了 404」一类错误的 fake，
+  断言 `legacyFailureReason` 保留原始文本、`.failed` 为 `.httpStatus(404)`（两者文案不同，
+  正是该接口存在的理由）。
+
+### 4.3 `JavaResolverBridge` 的「解析失败（非超时）」确定性覆盖
+
+- 现状：只覆盖了「超时 → nil」（`timeout <= 0` 的确定性分支）与边界输入。
+- 未覆盖：`JavaResolutionError.scanFailed` / `.noCompatibleVersion` / `.notFound`
+  三条失败原因返回 nil 的正向断言——实现内部硬编码 `DefaultJavaResolver()`，
+  失败与超时都表现为 nil，无法区分。
+- 计划：把 resolver 提为可注入参数（`resolver: JavaResolver = DefaultJavaResolver()`），
+  再用「必抛错的 fake」+ 小 timeout 断言「返回 nil 且耗时远小于 timeout」。
+
+### 4.4 `DefaultDownloadSourceResolver` 的镜像（自动切换）方向
+
+- 未覆盖：`AppSettings.fileDownloadSource == .both` 且主源属于官方域名族时，
+  追加 BMCLAPI 备用源（第二个候选仅 host 被替换，path / query 保持不变）。
+- 阻塞原因：`DownloadSourceManager` 是单例，both 模式下 `getDownloadSource()`
+  会触发真实的官方源测速后台任务，测速结果会改写当前主源，
+  导致候选个数在官方源与镜像源之间漂移，无法稳定断言。
+- 计划：给源管理器加注入点或把「当前源 + 互补源」改成纯函数后再补。
+- 已覆盖的单源一侧：非官方域名、手动限定「仅官方 / 仅镜像」、无 host 的本地路径，
+  均断言只返回一个候选。
+
+### 4.5 `DropInstallCoordinator` 的成功安装分支
+
+- 未覆盖：
+  - `beginModInstall` 的成功分支（`ModVersionDetector.detectVersion` 返回结果 +
+    `ModDragInstaller.findInstances` 命中实例 → 打开模组弹窗）；
+  - `confirmModInstall` 的成功分支（会真实拷贝文件到 `versions/<v>/mods`）；
+  - `confirmModpackInstall` 的成功分支（`ModpackInstaller().install` 真实解压）。
+- 阻塞原因：`versionDetector` / `settings` 是硬编码私有依赖，`ModDragInstaller` /
+  `ModpackInstaller` 无注入点；成功后投递的用户文案
+  「模组已安装到 N 个实例」「整合包安装完成」「整合包安装失败: …」因此仍不受保护。
+- 计划：把三者抽成协议并在 `DropInstallCoordinator` 构造时注入。
+
+### 4.6 `NoticeCenter` 的 300s 兜底超时
+
+- 未覆盖：`responseTimeoutNanos`（300s）到期后按默认按钮（下标 0）应答。
+  真等 5 分钟不现实，时限被 `private static let` 固定，无注入点。
+- 已覆盖的等价分支：`dismiss()` 走同一个 `choose(notice, index: 0)`。
+- 计划：把超时时长改为可注入（`init` 参数或 internal static var）后，用 0.05s 断言。
+
+### 4.7 `DownloadMerger` 的真实实现
+
+- 协议注释已约定「单分片允许直接移动临时文件」，但工程内无实现（旧逻辑在 `NetManager.merge`）。
+- 计划：落地 `FileManagerDownloadMerger` 后，把 `DownloadMergerTests` 里的
+  `OffsetOrderingMerger` 替换为真实实现，保留现有断言（乱序/倒序拼接、目录自动创建、
+  分片缺失报错、空分片列表）。
+
+### 4.8 `LaunchService` 全链路
+
+- `LaunchService` / `LaunchArgumentBuilder` / `GameProcessController` 均为纯协议，无实现、无注入点。
+- 计划：落地 `DefaultLaunchService` 时把参数组装器与进程控制器作为构造参数注入，
+  用 fake 断言参数顺序（JVM 参数 → 主类 → 游戏参数）、classpath 拼接符与 `-Xmx` 生成。
+
+### 4.9 `DefaultLaunchPreflight`
+
+- 已有可注入的四个校验器（`ClientFileVerifier` / `LibraryFileVerifier` /
+  `AssetFileVerifier` / `NativeInstaller`），具备可测性，本轮未覆盖。
+- 计划：补 `LaunchPreflightTests`，断言 `skipResourceCheck` 短路、四段调用顺序、
+  进度区间映射（支持库 0~0.5、资源 0.5~1）。
+
+### 4.10 `GameSessionStore`
+
+- `InMemoryGameSessionStore` 有实现，但 `register` 需要 `ManagedProcess`，
+  而 `ManagedProcess` 直接持有 `Process`，缺少协议抽象。
+- 建议改造：把 `ManagedProcess` 抽成协议（如 `GameProcess`），
+  或在测试中以 `/bin/sleep` 作为受控进程验证 register → observe → terminate。
+
+### 4.11 `JavaModule` 的注册结果
+
+- `SLModule` / `ModuleContext` / `ModuleCapabilityKey` 已就位，`JavaModule` 现在可以编译了，
+  但注册结果仍无法有效断言：其 `register` 直接构造 `DefaultJavaRepository()` →
+  `JavaManager.shared.scanInstalledJava`，只能验证「上下文里存在一个 `DefaultJavaResolver`」，
+  无法验证解析是否可用，而真实磁盘扫描会 fork `java -version`。
+- 另外 `AppModuleBootstrap` 中 `JavaModule()` 目前处于注释状态，即使补测也不会被装配入口覆盖。
+- 计划：`JavaModule` 支持注入仓储后，补「注册后可从 ModuleContext 取到 java.resolver 且行为正确」。
+
+### 4.12 `ModuleRegistry` 的并发安全
+
+- `ModuleRegistry.register(_:)` 与 `ModuleContext.values` 都未加锁，
+  实现假定「装配期单线程、注册完成后只读」。
+- 该约定无法在不改源码的前提下用用例表达：用例若并发调用 `register`，
+  观测到的是数据竞争而非稳定结论，属于不确定性测试，因此**故意不写**。
+
+### 4.13 CI
+
+- 工程当前没有任何 CI。计划：target 建好后接一条
+  `xcodebuild -scheme qwq -destination 'platform=macOS' test` 的流水线，
+  并逐步给出覆盖率门禁。
+- 在此之前，`§2` 的 `swiftc -typecheck` 命令可作为低成本的前置门禁
+  （注意先修掉 `§2.1` 的 `JavaResolverTests` 缺陷，否则退出码恒为 1）。
