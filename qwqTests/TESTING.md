@@ -74,39 +74,36 @@ xcrun swiftc -typecheck \
 把全部源文件与测试文件放进同一次 `swiftc` 调用，等价于「测试代码与生产代码同属 qwq 模块」，
 因此顶层的 `internal` 类型可直接访问，不需要 `@testable` 的额外可见性提升。
 
-### 2.1 已知的改前缺陷：`JavaResolverTests` 无法通过类型检查
+### 2.1 配套修正：`FakeJavaRepository` 补齐 `preScan()`
 
-**状态：这是本轮改动之前就存在的缺陷，本轮未修复（按任务约束不修改既有测试文件）。**
+全量 typecheck 在本轮开始前是**通不过**的，原因不在新增文件，而在既有测试文件：
 
 ```
 qwqTests/JavaResolverTests.swift:23:21: error: type 'FakeJavaRepository' does not conform to protocol 'JavaRepository'
 ```
 
-原因：`Features/Java/JavaRepository.swift` 后续新增了 `preScan()` 要求，
-而 `JavaResolverTests` 里的替身 `FakeJavaRepository` 未实现该方法（测试文件早于协议变更提交）。
-因此**全量** typecheck 的退出码为 1，且只有这一条 error。
-
-修复方式（一行，建议单独提交）：
+`Features/Java/JavaRepository.swift` 后来给协议加了 `preScan()` 要求，
+而 `JavaResolverTests` 里的替身 `FakeJavaRepository` 未跟进（测试文件早于协议变更）。
+该文件是既有文件，本轮已随配套改动一并补齐（5 行，只记录调用、不触发真实扫描）：
 
 ```swift
-// qwqTests/JavaResolverTests.swift，FakeJavaRepository 内补：
-func preScan() {}
+/// 预扫描在本 fake 中只记录调用，不触发真实扫描。
+func preScan() {
+    callLog.append("preScan")
+}
 ```
 
-在修复之前，若要得到「新增测试是否干净」的信号，可把该文件从调用中排除：
+补齐后全量 typecheck 退出码为 0。若需回退这份修正，全量 typecheck 会立刻退回 1 个 error。
 
-```bash
-# 其余 12 个测试文件全部通过（0 error）
-xcrun swiftc -typecheck -sdk "$SDK" -F "$FW" -I "$LIB" -I /tmp/deps \
-  -target arm64-apple-macosx13.0 -module-name qwq \
-  $(find qwq -name "*.swift") \
-  qwqTests/ModuleRegistryTests.swift qwqTests/JavaResolverBridgeTests.swift \
-  qwqTests/NoticeCenterTests.swift qwqTests/NavigationStateTests.swift \
-  qwqTests/LaunchPanelStateTests.swift qwqTests/HomeInteractionStateTests.swift \
-  qwqTests/DropInstallCoordinatorTests.swift qwqTests/DownloadAdapterTests.swift \
-  qwqTests/DownloadStateTests.swift qwqTests/DownloadVerifierTests.swift \
-  qwqTests/DownloadMergerTests.swift qwqTests/LaunchStateTests.swift
-```
+### 2.2 实测结果
+
+- **退出码 0，0 个 error**（全部 13 个测试文件 + 全部生产源码）。
+- 48 条 warning，其中绝大多数是每个测试文件各一条
+  `warning: file '...' is part of module 'qwq'; ignoring import`（单模块编译的预期产物）；
+  其余是生产代码里既有的 warning（未使用的局部变量、Swift 6 并发警告等），与测试无关。
+
+> 注：编辑过程中曾因并发写盘（`input file ... was modified during the build`）出现瞬时失败，
+> 重跑即可。命令本身无随机性。
 
 各文件对应的源文件集合（供单独校验时参考）：
 
@@ -289,5 +286,4 @@ xcrun swiftc -typecheck -sdk "$SDK" -F "$FW" -I "$LIB" -I /tmp/deps \
 - 工程当前没有任何 CI。计划：target 建好后接一条
   `xcodebuild -scheme qwq -destination 'platform=macOS' test` 的流水线，
   并逐步给出覆盖率门禁。
-- 在此之前，`§2` 的 `swiftc -typecheck` 命令可作为低成本的前置门禁
-  （注意先修掉 `§2.1` 的 `JavaResolverTests` 缺陷，否则退出码恒为 1）。
+- 在此之前，`§2` 的 `swiftc -typecheck` 命令可作为低成本的前置门禁（实测退出码 0）。
