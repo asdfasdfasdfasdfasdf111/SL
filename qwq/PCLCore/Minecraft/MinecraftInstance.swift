@@ -327,7 +327,19 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
         }
         
         let launcher = MinecraftLauncher(self)!
-        launcher.launch(launchOptions) { exitCode in
+        launcher.launch(launchOptions) { outcome in
+            let exitCode: Int32
+            switch outcome {
+            case .launchFailed(let error):
+                // 进程未拉起（无退出码）：不能套用「游戏崩溃退出」的错误分析流程，
+                // 否则用户看到的是「Minecraft 出现错误」，无法判断真正原因。
+                let reason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                log("启动失败：\(reason)")
+                hint("启动失败：\(reason)", .critical)
+                return
+            case .exited(let status):
+                exitCode = status
+            }
             if exitCode != 0 {
                 log("检测到非 0 退出代码")
                 hint("检测到 Minecraft 出现错误，错误分析已开始……")

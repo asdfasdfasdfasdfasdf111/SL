@@ -221,6 +221,12 @@ public final class MinecraftInstanceLaunchService: LaunchService, @unchecked Sen
     static func mapFailure(_ error: Error, version: String) -> LaunchError {
         let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
 
+        // 桥接层对「进程未拉起」统一加「启动失败：」前缀（与「游戏异常退出（退出码 N）」区分），
+        // 此处剥掉前缀后交给 .processStartFailed，避免与 errorDescription 的前缀重复。
+        if let range = message.range(of: "启动失败：") {
+            let reason = String(message[range.upperBound...])
+            return .processStartFailed(reason: reason.isEmpty ? message : reason)
+        }
         if message.contains("无法创建实例") {
             return .instanceNotFound(version: version)
         }

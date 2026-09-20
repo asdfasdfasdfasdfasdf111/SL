@@ -23,6 +23,80 @@ private final class LaunchCompletionGate: @unchecked Sendable {
     }
 }
 
+/// 一次启动的最终结局。
+///
+/// 用于区分「进程未能拉起」与「进程已运行后退出」两类语义不同的结果：
+/// 前者不存在真实退出码（原实现统一回传 1，导致与游戏崩溃退出表现完全一致），
+/// 后者才携带进程的真实退出状态。
+public enum MinecraftLaunchOutcome {
+    /// 进程已成功拉起并退出，携带真实退出码。
+    case exited(Int32)
+    /// 进程未能拉起（如 `Process.run()` 抛错、可执行文件无效），携带底层错误。
+    case launchFailed(Error)
+}
+
+/// 游戏进程输出到日志文件的落盘缓冲。
+///
+/// 缓冲区被两处访问：进程运行期间的 `readabilityHandler`（FileHandle 私有串行队列）
+/// 与进程退出后的收尾排空（启动线程），因此缓冲区与文件句柄访问统一加锁。
+/// 锁内只做内存操作与文件写入，不回调外部、不等待其它锁，不存在死锁
+/// （`raw()` 内部为异步投递，不会反向获取本锁）。
+private final class GameLogWriter: @unchecked Sendable {
+    private let lock = NSLock()
+    private let handle: FileHandle
+    /// 未满一行的行尾残留字节：跨回调保留，避免多字节 UTF-8 字符 / 长日志行被读取边界截断。
+    private var buffer = Data()
+    /// 句柄是否已关闭。关闭后到达的字节直接丢弃，
+    /// 避免在途的 readabilityHandler 对已关闭句柄写入 / seek（后者会抛 ObjC 异常）。
+    private var isClosed = false
+
+    init(handle: FileHandle) {
+        self.handle = handle
+    }
+
+    func append(_ data: Data) {
+        guard !data.isEmpty else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isClosed else { return }
+        buffer.append(data)
+        flushCompleteLines()
+    }
+
+    /// 关闭底层日志句柄。调用前必须完成管道排空，否则残留字节无法落盘。
+    func close() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isClosed else { return }
+        isClosed = true
+        try? handle.close()
+    }
+
+    /// 只落盘以 \n 结尾的完整行，行尾残字节留在缓冲区等待后续数据补齐。
+    private func flushCompleteLines() {
+        while let nl = buffer.firstIndex(of: 0x0A) {
+            let lineData = buffer.prefix(upTo: nl)
+            buffer.removeSubrange(0...nl)
+            guard let line = String(data: lineData, encoding: .utf8) else { continue }
+            raw(line.replacingOccurrences(of: "\t", with: "    "))
+            try? handle.write(contentsOf: (line + "\n").data(using: .utf8)!)
+            handle.seekToEndOfFile()
+        }
+    }
+}
+
+/// 排空管道中尚未被 `readabilityHandler` 取走的字节，交给 `writer` 按行落盘。
+///
+/// 循环读取直到读到空数据。进程退出时管道写端已全部关闭（子进程已退出，
+/// 父进程持有的写端由 Foundation 在 `Process.run()` 期间关闭，已实测），
+/// 故读端必然到达 EOF，读取不会阻塞，不存在死锁。
+private func drainPipe(_ pipe: Pipe, into writer: GameLogWriter) {
+    let handle = pipe.fileHandleForReading
+    while let chunk = try? handle.read(upToCount: 64 * 1024), !chunk.isEmpty {
+        writer.append(chunk)
+    }
+}
+
 public class MinecraftLauncher {
     public let instance: MinecraftInstance
     private let id = UUID()
@@ -35,9 +109,12 @@ public class MinecraftLauncher {
         self.logURL = SharedConstants.shared.applicationSupportURL.appendingPathComponent("GameLogs").appendingPathComponent(id.uuidString + ".log")
         try? FileManager.default.createDirectory(at: logURL.parent(), withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: logURL.path, contents: Data())
+        // 日志保留策略：日志文件在退出时不再删除（退出码 0 也保留，供日志面板与 LaunchResult.logURL 读取），
+        // 改为在新建本次日志后按份数上限修剪历史文件（上限见 GameLogRetention.maxCount）。
+        GameLogRetention.prune(in: logURL.parent())
     }
     
-    public func launch(_ options: LaunchOptions, _ callback: @MainActor @escaping (Int32) -> Void = { _ in }) {
+    public func launch(_ options: LaunchOptions, _ callback: @MainActor @escaping (MinecraftLaunchOutcome) -> Void = { _ in }) {
         let process = Process()
         process.executableURL = options.javaPath
         process.environment = ProcessInfo.processInfo.environment
@@ -61,34 +138,21 @@ public class MinecraftLauncher {
         // 正常 terminationHandler、轮询兜底和 run() 抛错共享一次性门控，避免重复复位 UI。
         let terminationSemaphore = DispatchSemaphore(value: 0)
         let completionGate = LaunchCompletionGate()
-        let reportCompletion: (Int32) -> Void = { status in
+        let reportCompletion: (MinecraftLaunchOutcome) -> Void = { outcome in
             guard completionGate.claim() else { return }
-            DispatchQueue.main.async { callback(status) }
+            DispatchQueue.main.async { callback(outcome) }
         }
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
-        var logHandle: FileHandle?
+        var logWriter: GameLogWriter?
         do {
-            logHandle = try FileHandle(forWritingTo: logURL)
+            let writer = GameLogWriter(handle: try FileHandle(forWritingTo: logURL))
+            logWriter = writer
             // 管道字节可能含非法 UTF-8（Java/模组输出非 UTF-8 编码时不崩溃）；解码失败行丢弃。
-            // readabilityHandler 在 FileHandle 专用串行队列回调，缓冲区无需加锁；
-            // 跨回调保留尾部字节，避免多字节 UTF-8 字符/长日志行被 availableData 边界截断产生乱码或拆行。
-            var logBuffer = Data()
+            // 内容切行与落盘由 GameLogWriter 负责（内部加锁，与退出时的收尾排空共用同一缓冲区）。
             pipe.fileHandleForReading.readabilityHandler = { handle in
-                let data = handle.availableData
-                guard !data.isEmpty else { return }
-                logBuffer.append(data)
-                while let nl = logBuffer.firstIndex(of: 0x0A) {
-                    let lineData = logBuffer.prefix(upTo: nl)
-                    logBuffer.removeSubrange(0...nl)
-                    guard let line = String(data: lineData, encoding: .utf8) else { continue }
-                    raw(line.replacingOccurrences(of: "\t", with: "    "))
-                    if let logHandle {
-                        try? logHandle.write(contentsOf: (line + "\n").data(using: .utf8)!)
-                        logHandle.seekToEndOfFile()
-                    }
-                }
+                writer.append(handle.availableData)
             }
 
             // terminationHandler 在 run() 之前设置（消除竞态）：若进程启动后立刻退出
@@ -97,7 +161,7 @@ public class MinecraftLauncher {
             // 回调经一次性门控（与下方轮询兜底互斥），只落一次到 UI。
             process.terminationHandler = { proc in
                 terminationSemaphore.signal()
-                reportCompletion(proc.terminationStatus)
+                reportCompletion(.exited(proc.terminationStatus))
             }
 
             try process.run()
@@ -125,18 +189,20 @@ public class MinecraftLauncher {
             while terminationSemaphore.wait(timeout: .now() + 1) == .timedOut {
                 if !process.isRunning {
                     log("兜底检测到进程已退出（terminationHandler 未触发）")
-                    reportCompletion(process.terminationStatus)
+                    reportCompletion(.exited(process.terminationStatus))
                     break
                 }
             }
             log("\(instance.name) 进程已退出, 退出代码 \(process.terminationStatus)")
-            // 清理 readabilityHandler（否则闭包持有 logBuffer+logHandle，每次启动泄漏）
+            // 收尾顺序：先排空管道残留字节，再解除回调，最后关闭日志句柄。
+            // 原实现先置 readabilityHandler = nil 再关句柄，管道内已到达但尚未被读取的字节
+            // 会随之丢弃（表现为日志尾部缺行）；排空读到 EOF 即返回，不阻塞、不死锁。
+            drainPipe(pipe, into: writer)
+            // 解除回调（否则闭包持有 writer，每次启动泄漏）
             pipe.fileHandleForReading.readabilityHandler = nil
-            try? logHandle?.close()
-            if process.terminationStatus == 0 {
-                debug("检测到退出代码为 0，已删除日志")
-                try? FileManager.default.removeItem(at: self.logURL)
-            }
+            writer.close()
+            // 日志文件一律保留（含退出码 0）：会话日志面板与 LaunchResult.logURL 都指向它，
+            // 提前删除会导致用户点开日志时内容为空。目录容量由 GameLogRetention 按份数上限维护。
             // 归属校验：回调已异步提交主队列，旧 launch 线程可能晚于「回调内快速重启新游戏」执行到这里，
             // 无条件置 nil 会清掉新启动进程的引用。仅当引用仍是本进程时才清理（崩溃 #4 教训）。
             if instance.process === process {
@@ -145,16 +211,16 @@ public class MinecraftLauncher {
         } catch {
             err(error.localizedDescription)
             pipe.fileHandleForReading.readabilityHandler = nil
-            try? logHandle?.close()
-            // 启动失败也走一次性门控回调（exitCode 非 0），UI 才能复位「启动中」状态；
-            // terminationHandler 在 run() 前已设置，若 run 抛错则其绝不会触发。
+            logWriter?.close()
+            // 启动失败同样走一次性门控回调（结局为 .launchFailed），UI 才能复位「启动中」状态并
+            // 展示真实失败原因；terminationHandler 在 run() 前已设置，若 run 抛错则其绝不会触发。
             if instance.process === process {
                 instance.process = nil
             }
             if self.currentProcess === process {
                 self.currentProcess = nil
             }
-            reportCompletion(Int32(1))
+            reportCompletion(.launchFailed(error))
         }
     }
     

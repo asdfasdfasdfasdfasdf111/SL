@@ -1,5 +1,6 @@
 import Foundation
 import Cocoa
+import Combine
 
 /// 兼容层：桥接旧 UI 代码到 PCL.Mac 启动核心
 extension MinecraftLauncher {
@@ -120,6 +121,16 @@ private func pclLaunchInternal(
     options.account = .offline(account)
     options.skipResourceCheck = true
 
+    // 未实现账号告警（与流程 A `MinecraftInstance.launch` 同一治理口径）：
+    // 微软 / Yggdrasil 登录流程尚未实现，运行期一律按离线账号处理，必须显式告知用户，
+    // 避免其误以为本次启动已完成联网登录。本路径只构造离线账号，
+    // 因此未实现账号只可能来自持久化的账号选择（AccountManager）。
+    if let selectedAccount = AccountManager.shared.getAccount(),
+       let unimplemented = selectedAccount.unimplementedError {
+        warn("\(selectedAccount.accountKindDescription)：\(unimplemented.errorDescription ?? "该功能尚未实现")")
+        hint(unimplemented.errorDescription ?? "该账号类型尚未实现，本次启动按离线账号处理。", .critical)
+    }
+
     // MARK: 启动前补全（PCL2 DlClientFix 移植）：分析缺失/损坏的库与资源 → 仅下载缺失项
     // 补全期间 UI 显示 downloading 进度条；完成后才进入 launching（避免相位回退）
     // 补全失败则终止启动（与 PCL2 一致），避免缺文件启动后崩溃
@@ -160,12 +171,15 @@ private func pclLaunchInternal(
     if DataManager.shared.javaVirtualMachines.isEmpty {
         log("DataManager 中暂无 JVM，触发预扫描")
         JavaManager.shared.preScanJavaAsync()
-        // 后台线程短等待扫描结果（最多 3s），避免启动空窗
-        let waitSem = DispatchSemaphore(value: 0)
-        let deadline = Date().addingTimeInterval(3)
-        while DataManager.shared.javaVirtualMachines.isEmpty && Date() < deadline {
-            _ = waitSem.wait(timeout: .now() + 0.1)
-        }
+        // 等待扫描结果：订阅 DataManager 的 JVM 发布流，首个非空值到达即唤醒；
+        // 保留原实现的 3s 等待上限，不再用「无人 signal 的信号量」做 100ms 轮询忙等。
+        // 发布发生在主线程（JavaManager 回写），本函数运行在后台线程，等待方与回写方互不阻塞（R9）。
+        let scanSettled = DispatchSemaphore(value: 0)
+        let scanObserver = DataManager.shared.$javaVirtualMachines
+            .sink { if !$0.isEmpty { scanSettled.signal() } }
+        let hit = scanSettled.wait(timeout: .now() + 3) == .success
+        scanObserver.cancel()
+        log("Java 扫描等待结束（3s 内命中=\(hit)），DataManager JVM 数量=\(DataManager.shared.javaVirtualMachines.count)")
     }
 
     // 2) 读取 manifest.javaVersion（API 后端数据源），推断兜底
@@ -318,12 +332,21 @@ private func pclLaunchInternal(
 
     // 在后台线程调用 launch（会阻塞到进程退出）
     DispatchQueue.global(qos: .userInitiated).async {
-        launcher.launch(options) { exitCode in
+        launcher.launch(options) { outcome in
             logTask.cancel()
             windowTask.cancel()
-            // 窗口检测任务已触发则为幂等跳过；此处兜底保证正常退出也能复位 UI
-            if exitCode == 0 { reportLaunchSuccess() }
-            completion(launcher, .success(exitCode))
+            switch outcome {
+            case .exited(let exitCode):
+                // 窗口检测任务已触发则为幂等跳过；此处兜底保证正常退出也能复位 UI
+                if exitCode == 0 { reportLaunchSuccess() }
+                completion(launcher, .success(exitCode))
+            case .launchFailed(let error):
+                // 进程未拉起与「游戏崩溃退出」必须区分：前者没有退出码，
+                // 统一返回 .failure 让 UI 展示「启动失败：<原因>」而不是「异常退出（退出码 1）」。
+                let reason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                log("启动失败：\(reason)")
+                completion(launcher, .failure(MyLocalizedError(reason: "启动失败：\(reason)")))
+            }
         }
     }
 }

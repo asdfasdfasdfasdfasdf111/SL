@@ -72,6 +72,38 @@ final class LogStore {
     }
 }
 
+/// 游戏日志目录（`GameLogs/`）的保留策略。
+///
+/// 背景：进程以退出码 0 结束时曾直接删除本次日志文件，导致会话日志面板与
+/// `LaunchResult.logURL` 指向一个已不存在的路径。现改为「保留文件 + 按份数上限修剪」：
+/// 每次启动都会新建日志文件，因此在新建之后按最后修改时间修剪，只保留最近 `maxCount` 份。
+public enum GameLogRetention {
+    /// 保留的最近日志份数上限。
+    public static let maxCount = 20
+
+    /// 修剪日志目录：按最后修改时间倒序保留最近 `maxCount` 份，其余删除。
+    /// 正在运行的游戏日志其修改时间为当前，不会被误删。
+    public static func prune(in directory: URL) {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+
+        let dated: [(url: URL, modified: Date)] = entries.compactMap { url in
+            guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey]),
+                  values.isRegularFile == true else { return nil }
+            return (url, values.contentModificationDate ?? .distantPast)
+        }
+
+        guard dated.count > maxCount else { return }
+        for item in dated.sorted(by: { $0.modified > $1.modified }).dropFirst(maxCount) {
+            try? fm.removeItem(at: item.url)
+        }
+    }
+}
+
 public struct LogManager {
     public static func log(_ message: Any, file: String = #file, line: Int = #line) {
         LogStore.shared.append(String(describing: message), "INFO", file.split(separator: "/").last! + ":" + String(line))

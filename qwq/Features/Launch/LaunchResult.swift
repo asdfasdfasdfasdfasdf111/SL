@@ -5,7 +5,8 @@
 //  字段来源：
 //  - exitCode   ← MinecraftLauncher.launch 回调的 Int32 退出码
 //  - sessionID  ← 本次启动建立的会话标识（对应 GameSessionStore 注册的会话）
-//  - logURL     ← MinecraftLauncher.logURL（退出码 0 时现有实现会删除该文件，故为可选）
+//  - logURL     ← MinecraftLauncher.logURL（日志文件在进程退出后保留，
+//                 目录容量由 GameLogRetention.maxCount 按份数上限维护）
 //  - duration   ← 从 launch 到进程退出的挂钟时长
 //
 
@@ -17,7 +18,7 @@ public struct LaunchResult: Sendable, Equatable {
     public let exitCode: Int
     /// 本次启动的会话标识，用于日志订阅与进程终止。
     public let sessionID: UUID
-    /// 日志文件位置（可能被现有实现在成功退出后清理）。
+    /// 日志文件位置（进程退出后仍保留，可随时读取）。
     public let logURL: URL?
     /// 从启动到进程退出的时长（秒）。
     public let duration: TimeInterval
