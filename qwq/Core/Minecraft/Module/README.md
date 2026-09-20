@@ -97,7 +97,28 @@ Minecraft 实例领域的**只读抽象**。当前阶段只做「建立结构」
 而不是让 UI 直接调 `MinecraftInstance.create`。写方法必须显式承担副作用，
 届时单独评审。
 
-## 七、测试挂载点
+## 七、接线状态
+
+**本轮 0 处接线**。`DirectoryScanningMinecraftRepository` 与两个镜像枚举未改动，
+只做只读核对（`MinecraftLoaderKind` / `MinecraftVersionKind` 的取值与
+`ClientBrand`（`MinecraftInstance.swift:479-484`）、`VersionType`
+（`MinecraftVersion.swift:49-57`）逐字一致，无偏差）。
+
+| 目标 | 调用点 | 状态 |
+| --- | --- | --- |
+| 实例列表 / 单实例查询 | `MinecraftDirectory.loadInnerInstances` 全库**调用点 0 处**；`MinecraftInstance.create` 的调用点集中在 `qwq/PCLCore/**` 与 `qwq/Features/Launch/Adapters/**` | 未接线：没有落在 `qwq/Core/Minecraft/Module/**` 内的调用点，而本模块本轮只允许改这一目录 |
+| UI 版本列表 | `Features/Game/GameScanService.swift:14`、`Features/Game/GameCategoryView.swift:169`、`Features/Download/ModDragInstaller.swift:15` | 未接线：走的是 `MinecraftVersionManager.getVersions(from:)`（字符串列表），与本仓储的实例快照不是同一数据结构，且调用点不在允许范围 |
+
+**接线前必须先解决的语义不一致**：`MinecraftRepository` 的默认根目录来源是
+`AppSettings.shared.currentMinecraftDirectory`（`resolveRoots()`），该字段全库无写入点、
+恒为 `MinecraftDirectory.default`（即 `~/Library/Application Support/minecraft`）；
+而 UI 实际的游戏根目录是 `LauncherSettings.selectedGameRoot`
+（由 `GameScanService` 扫描结果或 `NSOpenPanel` 选择写入，见 `GameCategoryView.swift:121 / 149 / 172`）。
+两者通常不是同一目录，直接接线会让「实例列表」改从另一路径读取，属行为变化，故本阶段不接。
+建议后续为 `MinecraftRepository` 增加显式根目录注入（已有 `init(roots:)`，只需由调用方传入
+`selectedGameRoot`），再执行迁移步骤第 1 步。
+
+## 八、测试挂载点
 
 `MinecraftRepository` 可实现为固定数组的内存版本，无需真实磁盘：
 

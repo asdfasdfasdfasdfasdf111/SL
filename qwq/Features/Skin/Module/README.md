@@ -69,7 +69,37 @@
 **第 4 步：幂等标记迁移**
 `appliedSkinHash` 从 `LauncherSettings` 迁至 `AppSettingsStore`，适配层去掉 `LauncherSettings` 依赖。
 
-## 六、测试挂载点
+## 六、接线状态
+
+已接线 4 处（皮肤读取 3、皮肤落盘 1）。`DefaultSkinService` / `DefaultSkinDecoder` /
+`DefaultSkinResourcePackBuilder` 均未改动，仍为既有实现的原样适配。
+
+| 目标 | 调用点 | 状态 |
+| --- | --- | --- |
+| 皮肤读取 | `Features/ModBrowser/CategoryContentView.swift:189 / 211`、`Features/Skin/OfflineSkinService.swift:111` | **已接线**：`MinecraftSkinManager.shared.getSkinData(forUUID:)` → `DefaultSkinService().skinData(forUUID:)`（同步、返回 `Data?`，适配器直接委托同一实现） |
+| 皮肤落盘 | `Features/Skin/OfflineSkinService.swift:67` | **已接线**：`MinecraftSkinManager.shared.saveSkin(_:forUUID:)` → `DefaultSkinService().saveSkin(from:forUUID:)`（同步、抛错原样透传） |
+| 尺寸校验 | `Features/Skin/OfflineSkinService.swift:51` | 未接线：**错误类型与文案都会变**。既有抛 `LauncherError.skinValidationFailed`（展示为「皮肤无效: 不支持的尺寸: 64×63」），服务侧 `inspectSkin(at:)` 抛 `SkinError.unsupportedDimensions`（「不支持的皮肤尺寸：64×63」）；该错误经 `error.localizedDescription` 直接进 `NSAlert`，属可见行为变化 |
+| 资源包生成（选择皮肤） | `Features/Skin/OfflineSkinService.swift:76` | 未接线：既有调用为**同步**；`SkinService.applyResourcePack` 为 `async` 且把错误包成 `SkinError.resourcePackFailed`，既引入异步边界（需 `Task` 包裹，改变时序与取消语义）又改变错误类型 |
+| 资源包生成（启动链路） | `Features/Launch/LaunchCoordinator.swift:186` | 未接线：调用点在 `qwq/Features/Launch/**`，本轮不允许修改 |
+| 从 JAR 提取默认皮肤 | `Features/Skin/OfflineSkinService.swift:128 / 163`、`Features/ModBrowser/CategoryContentView.swift:217` | 未接线：`SkinExtractor` 未纳入协议（第一节已说明），本轮不扩协议 |
+
+其余 `MinecraftSkinManager.shared` 引用只剩 `Skin/Module/SkinService.swift`（适配器自身），
+`ModBrowser`、`Skin` 两目录的 UI 侧已无直接调用。
+
+**顺带发现的缺陷（本阶段只记录，不修改）**：`OfflineSkinService.selectSkinImage` 把**游戏根目录**
+当作 `gameDir` 传给 `SkinResourcePackApplier.apply`（第 69–71 行），而 `LaunchCoordinator.swift:173-186`
+的注释已明确指出「实际游戏运行目录是 `gameRoot/versions/<版本>`，写到这里游戏读不到（潜伏错误）」
+并修正了自身调用点。后果有两条：
+
+1. `apply` 内 `packPackVersion(for: gameDir + "/<version>.jar")` 指向 `<gameRoot>/<version>.jar`，
+   该路径不存在（jar 实际在 `<gameRoot>/versions/<version>/<version>.jar`，见
+   `MinecraftInstance.swift:409`、`MinecraftInstaller.swift:151`），故 `pack_version` 恒为 nil、
+   回落 `pack_format 1`；
+2. `appliedSkinHash` 按 `pack_<version>_<皮肤 sha1>` 计算，与 `LaunchCoordinator` 口径相同；
+   若用户所选皮肤原图与 `selected_skin.png` 字节一致（`saveSkinImage` 为原样复制），
+   启动链路的 `apply` 会因 hash 命中而跳过，资源包最终不会写入版本目录。
+
+## 七、测试挂载点
 
 - `DefaultSkinDecoder.inspect`：64×64 / 64×32 / 128×128 通过，其余尺寸抛
   `SkinError.unsupportedDimensions`，非图像数据抛 `SkinError.unreadableImage`；

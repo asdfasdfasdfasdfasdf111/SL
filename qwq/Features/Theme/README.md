@@ -71,7 +71,28 @@
 **第 4 步：删除兼容层**
 确认无读取点后删除 `ThemeManager`，并处理 `PCLStubs.Theme`（属既有文件，需单独评审）。
 
-## 六、测试挂载点
+## 六、接线状态
+
+**本轮 0 处接线**。`DefaultThemeService` / `AppSettingsThemeRepository` 未改动。
+逐一核对全部强调色读取点后，确认当前不存在「行为完全一致」的接线点：
+
+| 目标 | 调用点 | 状态 |
+| --- | --- | --- |
+| 订阅式读取（允许范围内） | `Features/ModBrowser/CategoryContentView.swift:240 / 293`、`ContentCard.swift:51 / 56`、`CategoryCanvasPlaceholder.swift:18`、`ModDetailView.swift:202`、`Settings/ColorPickerView.swift:27 / 63 / 95` | 未接线：全部是 `@ObservedObject var theme: ThemeManager` 在 View body 内的订阅式读取；`ThemeService.currentTheme()` 是 `async` 一次性取值，接过去会丢掉订阅与同帧更新语义 |
+| 订阅式读取（范围外） | `Features/Game/**`、`Features/Java/JavaPickerView.swift`、`Features/Launch/LaunchButton.swift` 等 | 未接线：调用点不在本轮允许修改范围 |
+| 非订阅读取 | `UI/Shell/RootOverlays.swift:75 / 78`、`Features/Download/DownloadDetailView.swift:84 / 116 / 172` | 未接线：分别落在 `qwq/UI/**`、`qwq/Features/Download/**`，均不在允许范围 |
+| 写入强调色 | `Settings/ColorPickerView.swift:29` `theme.accentColor = color` | 未接线：`ThemeService` 当前只读，无写入方法可承接（写入收窄属设置模块职责） |
+
+额外风险（说明为何不能只改读取点）：`ThemeManager` 与 `AppSettingsStore` 是**两个独立内存副本**，
+仅共用 `UserDefaults[UDK.accentColor]` 且归档格式相同（两处都用 `NSKeyedArchiver` 归档 `NSColor`），
+各自只在 `init` 读一次、之后互不通知。UI 写入只落在 `ThemeManager`，
+而 `AppSettingsThemeRepository.current()` 读的是 `AppSettingsStore`；
+在迁移步骤第 1 步（单一数据源）完成前，任何读取点改走门面都可能拿到**过期颜色**。
+
+结论：Theme 的接线前提是先做第 1 步（`ThemeManager` 退化为 `AppSettingsStore` 的转发）
+并为 SwiftUI 侧补可观察桥接，否则属行为变化。
+
+## 七、测试挂载点
 
 - `AppSettingsThemeRepository`：注入替身存储或直接改 `AppSettingsStore.shared.accentColor`，
   验证返回值随颜色变化；

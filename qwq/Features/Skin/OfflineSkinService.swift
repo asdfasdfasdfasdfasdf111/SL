@@ -62,8 +62,9 @@ enum OfflineSkinService {
                             settings.skinImageURL = skinDestURL
                         }
                         // 保存皮肤到持久化目录（供 authlib-injector 使用）
+                        // 落盘经 Skin 服务层：DefaultSkinService.saveSkin 内部即委托 MinecraftSkinManager，抛错语义不变
                         let offlineUUID = settings.fixedOfflineUUID.components(separatedBy: "-").joined().lowercased()
-                        _ = try MinecraftSkinManager.shared.saveSkin(url, forUUID: offlineUUID)
+                        _ = try DefaultSkinService().saveSkin(from: url, forUUID: offlineUUID)
 
                         let version = settings.selectedMinecraftVersion
                         let gameDirPath = settings.selectedGameRoot.isEmpty ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "") : settings.selectedGameRoot
@@ -105,9 +106,9 @@ enum OfflineSkinService {
             return
         }
 
-        // 优先从皮肤文件系统缓存加载
+        // 优先从皮肤文件系统缓存加载（经 Skin 服务层读取，返回语义与 MinecraftSkinManager 一致）
         let offlineUUID = settings.fixedOfflineUUID.components(separatedBy: "-").joined().lowercased()
-        if let cachedSkinData = MinecraftSkinManager.shared.getSkinData(forUUID: offlineUUID) {
+        if let cachedSkinData = DefaultSkinService().skinData(forUUID: offlineUUID) {
             let skinDestURL = saveSkinImage(cachedSkinData)
 
             let tempDir = FileManager.default.temporaryDirectory

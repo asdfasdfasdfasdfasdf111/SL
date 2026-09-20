@@ -185,7 +185,8 @@ struct CategoryContentView: View {
             return data
         }
         let offlineUUID = settings.fixedOfflineUUID.components(separatedBy: "-").joined().lowercased()
-        if let data = MinecraftSkinManager.shared.getSkinData(forUUID: offlineUUID) {
+        // 皮肤读取经 Skin 服务层（DefaultSkinService 内部即委托 MinecraftSkinManager，返回语义不变）
+        if let data = DefaultSkinService().skinData(forUUID: offlineUUID) {
             return data
         }
         if let builtin = Bundle.main.url(forResource: "stf", withExtension: "png") {
@@ -207,7 +208,7 @@ struct CategoryContentView: View {
         try? FileManager.default.createDirectory(at: skinDir, withIntermediateDirectories: true)
         let skinDestURL = skinDir.appendingPathComponent("selected_skin.png")
 
-        if let cachedSkinData = MinecraftSkinManager.shared.getSkinData(forUUID: offlineUUID) {
+        if let cachedSkinData = DefaultSkinService().skinData(forUUID: offlineUUID) {
             try? cachedSkinData.write(to: skinDestURL, options: .atomic)
             return skinDestURL
         }

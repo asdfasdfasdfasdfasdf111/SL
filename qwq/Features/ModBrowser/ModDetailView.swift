@@ -81,12 +81,14 @@ struct ModDetailView: View {
         isLoadingProject = true
         Task {
             do {
-                let downloader = ModDownloader()
-                let project = try await downloader.getProject(modId: item.id)
+                // 项目详情经 ModBrowser 服务层读取：DefaultModBrowserService.projectDetail
+                // 内部即委托 ModDownloader.getProject，且 gameVersions/loaders 已按 ?? [] 归一。
+                // 此处不取版本列表（fetchVersions 会多发一次请求，属行为变化，故不接入）。
+                let project = try await DefaultModBrowserService().projectDetail(id: item.id)
                 await MainActor.run {
                     guard isViewActive else { return }
-                    projectGameVersions = project.game_versions ?? []
-                    projectLoaders = project.loaders ?? []
+                    projectGameVersions = project.gameVersions
+                    projectLoaders = project.loaders
                     isLoadingProject = false
                     // 模组/光影/资源包页：版本列表规则如下——
                     // 1. 模组(.mod)：版本列表 = 本地已安装版本 ∩ API 返回的兼容版本，

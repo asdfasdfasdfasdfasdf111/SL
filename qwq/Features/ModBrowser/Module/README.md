@@ -99,7 +99,28 @@
 确认无 UI 直接调用后，`ModDownloader` / `ModrinthSearcher` 收敛为 `internal`，
 仅由本目录的适配器引用。
 
-## 六、测试挂载点
+## 六、接线状态
+
+已接线 1 处；`DefaultModBrowserService` 本身未改动，仍为既有实现的原样适配。
+
+| 目标 | 调用点 | 状态 |
+| --- | --- | --- |
+| 详情读取 | `Features/ModBrowser/ModDetailView.swift:79` `fetchProjectDetails()` | **已接线**：`ModDownloader().getProject(modId:)` → `DefaultModBrowserService().projectDetail(id:)`，取 `gameVersions` / `loaders` |
+| 检索 | `Features/Game/GameViews.swift:135 / 164 / 525` | 未接线：调用点在 `qwq/Features/Game/**`，本轮不允许修改 |
+| 安装解析 | `Features/Download/DownloadFileResolver.swift:43 / 52 / 61` | 未接线：调用点在 `qwq/Features/Download/**`，同上 |
+| 离线全量目录预热 | `App/qwqApp.swift:11`、`Features/Game/GameViews.swift:205` | 未接线：属启动期策略，且调用点不在允许范围 |
+
+已接线点的行为一致性依据：
+
+- `ModDownloader.getProject` 不读写 `searchCache`（`searchCache` 仅 `searchMods` 使用），
+  因此由「每次新建实例」改为「`DefaultModBrowserService` 内的共享静态实例」不改变缓存命中与返回值；
+- `ModProject.gameVersions` / `loaders` 在转换时已按 `?? []` 归一，与既有 `project.game_versions ?? []` 同义；
+- 错误仍由同一 `catch` 吞掉并复位 `isLoadingProject`，未新增错误提示。
+
+未采用 `ModSearchUseCase.detail(projectID:)`：它会额外请求一次版本列表，
+而本视图的版本清单来自本地目录扫描，多出的一次往返属行为变化。
+
+## 七、测试挂载点
 
 `ModBrowserService` 可实现为内存版本（固定返回若干 `ModProject` / `ModProjectVersion`），
 无需真实网络：
