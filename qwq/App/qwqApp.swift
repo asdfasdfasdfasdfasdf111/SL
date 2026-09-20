@@ -13,7 +13,7 @@ struct SLApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(launchPanel: LaunchPanelState.shared)
                 .frame(minWidth: 800, minHeight: 590)  // 原 570，再增加 20 点
         }
         .windowStyle(.hiddenTitleBar)

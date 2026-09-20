@@ -12,8 +12,9 @@ struct ContentView: View {
     // 拖拽安装的业务决策（文件分流 / 实例匹配 / 安装 / 提示）全部收在协调器内，
     // 本视图只转发拖拽事件、按协调器状态渲染弹窗。
     @StateObject private var dropInstall = DropInstallCoordinator()
-    // 启动相关界面状态（Java 提示气泡、启动失败提示）
-    @ObservedObject private var launchPanel = LaunchPanelState.shared
+    // 启动相关界面状态（Java 提示气泡、启动失败提示）。由场景入口注入，
+    // 本视图只订阅、不创建（@ObservedObject 不拥有对象，不得写默认值）
+    @ObservedObject var launchPanel: LaunchPanelState
     // 下载详情页独立页面 + 全局圆形下载按钮（对标 PCL.Mac AppRouter：
     // 详情页为整页替换渲染的独立页面，圆按钮为 ContentView 顶层全局 overlay）
     
@@ -35,7 +36,7 @@ struct ContentView: View {
         .frame(minWidth: 800, minHeight: 550)
         // 全局用户提示层（PopupManager / hint 的唯一可见出口）：仅顶部横幅区域可点，
         // 其余区域点击穿透到下方界面；不参与、不改变原有视图层级。
-        .overlay { NoticeOverlay() }
+        .overlay { NoticeOverlay(center: NoticeCenter.shared, theme: ThemeManager.shared) }
         .environmentObject(settings)
         // 切换分类时自动收起下载详情（下载与圆按钮保持，仅关闭覆盖层）
         .onChange(of: navigation.selectedCategory) { _ in
@@ -88,7 +89,10 @@ struct ContentView: View {
     private func categoryCanvas(width: CGFloat) -> some View {
         HStack(spacing: 0) {
             ForEach(navigation.categories) { category in
-                CategoryContentView(category: category, searchText: interaction.searchText)
+                CategoryContentView(category: category,
+                                    searchText: interaction.searchText,
+                                    theme: ThemeManager.shared,
+                                    sessionManager: LaunchSessionManager.shared)
                     .frame(width: width)
             }
         }
@@ -123,6 +127,6 @@ struct ContentView: View {
 
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
-        ContentView().frame(width: 900, height: 650)
+        ContentView(launchPanel: LaunchPanelState.shared).frame(width: 900, height: 650)
     }
 }

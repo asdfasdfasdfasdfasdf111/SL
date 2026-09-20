@@ -18,9 +18,11 @@ struct ModDetailView: View {
     var onNavigateBackFromMod: (() -> Void)? = nil
     var gameSubCategory: GameSubCategory? = nil
 
-    @ObservedObject var theme = ThemeManager.shared
-    @ObservedObject var settings = LauncherSettings.shared
-    @ObservedObject private var downloadDetail = DownloadDetailManager.shared
+    /// 主题与下载详情管理器属全局单例（外部持有），由调用方注入，本视图只订阅、不创建
+    @ObservedObject var theme: ThemeManager
+    @ObservedObject var downloadDetail: DownloadDetailManager
+    /// 启动器设置已由根视图经环境注入，此处复用同一注入点，避免出现第二个来源
+    @EnvironmentObject var settings: LauncherSettings
 
     @State private var selectedVersion: String = ""
     @State private var selectedLoader: String = "fabric"
@@ -509,6 +511,7 @@ struct ModDetailView: View {
         ScrollView(.vertical, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 0) {
             DetailPageHeader(
+                theme: theme,
                 title: pageItem.name,
                 subtitle: translationModel.subtitle(for: pageItem),
                 tags: pageItem.tags,
@@ -517,6 +520,7 @@ struct ModDetailView: View {
 
             VStack(alignment: .leading, spacing: 14) {
                 VersionSelectionSection(
+                    theme: theme,
                     pageType: pageTypeForIndex,
                     sortedVersions: sortedVersions,
                     availableLoaders: availableLoaders,

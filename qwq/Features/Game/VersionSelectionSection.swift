@@ -10,7 +10,8 @@ import SwiftUI
 
 /// 详情页「选择版本/加载器」区块：渲染并交互三类选择器
 struct VersionSelectionSection: View {
-    @ObservedObject var theme = ThemeManager.shared
+    /// 主题来源由调用方注入（全局单例外部持有），本视图不持有、不写默认值
+    @ObservedObject var theme: ThemeManager
 
     let pageType: DetailPageType
     let sortedVersions: [String]
@@ -74,7 +75,8 @@ struct VersionSelectionSection: View {
                                     VersionLoaderCard(
                                         version: item.gameVersion,
                                         isSelected: selectedModpackVersionId == item.version.id,
-                                        loader: LoaderNameResolver.assetName(for: item.version.loaders.first ?? "fabric")
+                                        loader: LoaderNameResolver.assetName(for: item.version.loaders.first ?? "fabric"),
+                                        theme: theme
                                     ) {
                                         withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
                                             selectedModpackVersionId = item.version.id
@@ -167,7 +169,8 @@ struct VersionSelectionSection: View {
                             loader: loader,
                             isSelected: selectedLoader == loader,
                             state: .supported,
-                            onRetry: onRetryLoaders
+                            onRetry: onRetryLoaders,
+                            theme: theme
                         ) {
                             withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
                                 // 再点已选中的卡片 = 取消选中（不装加载器，下载纯原版）
@@ -194,7 +197,8 @@ struct VersionSelectionSection: View {
                     VersionLoaderCard(
                         version: version,
                         isSelected: selectedVersion == version,
-                        loader: assetName(for: projectLoaderName(for: version))
+                        loader: assetName(for: projectLoaderName(for: version)),
+                        theme: theme
                     ) {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
                             selectedVersion = version

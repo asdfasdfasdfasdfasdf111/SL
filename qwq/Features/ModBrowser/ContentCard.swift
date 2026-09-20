@@ -12,7 +12,8 @@ struct ContentCard: View {
     let cardWidth: CGFloat
     var tags: [String] = []
     var action: (() -> Void)? = nil
-    @ObservedObject var theme = ThemeManager.shared
+    /// 主题来源由调用方注入（全局单例外部持有），本视图不持有、不写默认值
+    @ObservedObject var theme: ThemeManager
     @State private var scale: CGFloat = 1.0
     // 入场动画：卡片首次出现在网格中时缩放+淡入弹入（LazyVGrid 复用/滚动时重建会再次触发，
     // 符合「进入可视区弹入」的预期；拆分重构时 searchPopInIds 动画丢失导致「有时没有动画」）

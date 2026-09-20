@@ -10,7 +10,8 @@ import zlib
 
 struct DownloadCategoryView: View {
     @EnvironmentObject var settings: LauncherSettings
-    @ObservedObject var theme = ThemeManager.shared
+    /// 主题来源由调用方注入（全局单例外部持有），本视图仅向下透传
+    @ObservedObject var theme: ThemeManager
     @State private var selectedSection: GameSidebarSection = .game
     @State private var selectedSubCategory: GameSubCategory? = .release
     @State private var subItemOpacity: [GameSubCategory: Double] = [
@@ -300,7 +301,9 @@ struct DownloadCategoryView: View {
                         }
                         pendingReturnSection = nil
                     },
-                    gameSubCategory: selectedSubCategory
+                    gameSubCategory: selectedSubCategory,
+                    theme: theme,
+                    downloadDetail: DownloadDetailManager.shared
                 )
                 .frame(width: contentWidth)
                 .frame(maxHeight: .infinity)
@@ -373,6 +376,7 @@ struct DownloadCategoryView: View {
             Spacer()
         } else {
             CategoryResultsGrid(
+                theme: theme,
                 results: filteredResults,
                 translatedSubtitles: translationModel.translated,
                 cardWidth: cardWidth,

@@ -105,8 +105,7 @@ struct BlurView: NSViewRepresentable {
 struct SponsorCard: View {
     let imageName: String
     let title: String
-    @ObservedObject var theme = ThemeManager.shared
-    
+
     var body: some View {
         VStack(spacing: 12) {
             if let image = NSImage(named: imageName) {
@@ -133,8 +132,6 @@ struct SponsorCard: View {
 }
 
 struct ThanksCard: View {
-    @ObservedObject var theme = ThemeManager.shared
-    
     var body: some View {
         VStack(spacing: 12) {
             Text("致谢")

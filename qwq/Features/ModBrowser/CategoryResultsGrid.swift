@@ -10,6 +10,8 @@ import SwiftUI
 
 /// 分类页「结果卡片网格」：分页渲染 + 滚动锚点 + 触底追加 + 按需翻译
 struct CategoryResultsGrid: View {
+    /// 主题来源由调用方注入；本视图不读取主题，仅透传给卡片，故不订阅
+    let theme: ThemeManager
     let results: [DownloadedItem]
     let translatedSubtitles: [String: String]
     let cardWidth: CGFloat
@@ -41,7 +43,8 @@ struct CategoryResultsGrid: View {
                             subtitle: translatedSubtitles[item.id] ?? item.subtitle,
                             cardWidth: cardWidth,
                             tags: item.tags,
-                            action: { onOpen(item) }
+                            action: { onOpen(item) },
+                            theme: theme
                         )
                         .equatable()
                         .id(item.id)

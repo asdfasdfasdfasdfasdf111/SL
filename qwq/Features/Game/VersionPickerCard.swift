@@ -8,6 +8,8 @@
 import SwiftUI
 
 struct VersionPickerCard: View {
+    /// 主题来源由调用方注入；本视图读取 accentColor，故订阅其变化
+    @ObservedObject var theme: ThemeManager
     let versions: [String]
     let hasVersions: Bool
     let selectedVersion: String
@@ -19,7 +21,6 @@ struct VersionPickerCard: View {
     let onFullDiskScan: () -> Void
 
     @EnvironmentObject var settings: LauncherSettings
-    @ObservedObject var theme = ThemeManager.shared
     @State private var showJavaPicker = false
 
     var body: some View {
@@ -33,7 +34,7 @@ struct VersionPickerCard: View {
                         ScrollView(.vertical, showsIndicators: false) {
                             VStack(alignment: .leading, spacing: 16) {
                                 ForEach(versions, id: \.self) { version in
-                                    VersionButton(title: version, isSelected: selectedVersion == version) {
+                                    VersionButton(title: version, isSelected: selectedVersion == version, theme: theme) {
                                         onSelect(version)
                                     }
                                 }

@@ -12,7 +12,6 @@ struct PrerequisiteModCard: View {
     @State private var scale: CGFloat = 1.0
     @State private var appearOpacity: Double = 0
     @State private var appearOffset: CGFloat = 12
-    @ObservedObject var theme = ThemeManager.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -67,9 +66,10 @@ struct LoaderSelectorCard: View {
     var state: LoaderState = .supported
     /// 结果未知时点击卡片触发整版重试
     var onRetry: (() -> Void)? = nil
+    /// 主题来源由调用方注入（全局单例外部持有），本视图不持有、不写默认值
+    @ObservedObject var theme: ThemeManager
     let action: () -> Void
     @State private var scale: CGFloat = 1.0
-    @ObservedObject var theme = ThemeManager.shared
 
     var body: some View {
         VStack(spacing: 8) {
@@ -135,9 +135,10 @@ struct VersionLoaderCard: View {
     let version: String
     let isSelected: Bool
     let loader: String
+    /// 主题来源由调用方注入（全局单例外部持有），本视图不持有、不写默认值
+    @ObservedObject var theme: ThemeManager
     let action: () -> Void
     @State private var scale: CGFloat = 1.0
-    @ObservedObject var theme = ThemeManager.shared
 
     var body: some View {
         VStack(spacing: 8) {
@@ -181,9 +182,9 @@ struct GameGridCard: View {
     let cardHeight: CGFloat
     let scale: CGFloat
     let brightnessVal: Double
+    /// 主题来源由调用方注入（全局单例外部持有），本视图不持有、不写默认值
+    @ObservedObject var theme: ThemeManager
     let action: () -> Void
-
-    @ObservedObject var theme = ThemeManager.shared
 
     var body: some View {
         Button(action: action) {

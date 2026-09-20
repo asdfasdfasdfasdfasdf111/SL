@@ -7,9 +7,10 @@ struct CategoryContentView: View {
     let category: Category
     let searchText: String
     @EnvironmentObject var settings: LauncherSettings
-    @ObservedObject var theme = ThemeManager.shared
+    /// 主题与启动会话均属全局单例（外部持有），由调用方注入；本视图只订阅，不持有
+    @ObservedObject var theme: ThemeManager
     // 启动会话/日志面板/启动进度统一由全局单例持有（启动回调零 self 捕获，UAF 根治）
-    @ObservedObject var sessionManager = LaunchSessionManager.shared
+    @ObservedObject var sessionManager: LaunchSessionManager
     
     @State private var usernameFieldScale: CGFloat = 1.0
     @FocusState private var isUsernameFocused: Bool
@@ -331,9 +332,9 @@ struct CategoryContentView: View {
             } else if category.name == "启动" {
                 launchView
             } else if category.name == "游戏" {
-                GameCategoryView().frame(maxWidth: .infinity, maxHeight: .infinity).id(category.id)
+                GameCategoryView(theme: theme).frame(maxWidth: .infinity, maxHeight: .infinity).id(category.id)
             } else if category.name == "下载" {
-                DownloadCategoryView().frame(maxWidth: .infinity, maxHeight: .infinity).id(category.id)
+                DownloadCategoryView(theme: theme).frame(maxWidth: .infinity, maxHeight: .infinity).id(category.id)
             } else if category.name == "联机" {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 280))], spacing: 20) { }

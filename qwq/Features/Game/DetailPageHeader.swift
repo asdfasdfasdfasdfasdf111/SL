@@ -9,7 +9,8 @@ import SwiftUI
 
 /// 详情页页头：返回按钮 + 标题 + 副标题 + 标签胶囊
 struct DetailPageHeader: View {
-    @ObservedObject var theme = ThemeManager.shared
+    /// 主题来源由调用方注入（全局单例外部持有），本视图不持有、不写默认值
+    @ObservedObject var theme: ThemeManager
     let title: String
     let subtitle: String
     let tags: [String]

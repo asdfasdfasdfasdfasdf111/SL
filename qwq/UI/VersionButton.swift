@@ -3,9 +3,11 @@ import SwiftUI
 struct VersionButton: View {
     let title: String
     let isSelected: Bool
+    /// 主题来源由调用方注入：本视图不持有对象，仅订阅其 @Published 变化
+    @ObservedObject var theme: ThemeManager
     let action: () -> Void
     @State private var animationScale: CGFloat = 1.0
-    @ObservedObject var theme = ThemeManager.shared
+
     var body: some View {
         Button(action: {
             withAnimation(.punchySpring) { animationScale = 1.08 }

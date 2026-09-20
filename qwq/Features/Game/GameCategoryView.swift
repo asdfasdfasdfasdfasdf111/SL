@@ -12,7 +12,8 @@ import AppKit
 
 struct GameCategoryView: View {
     @EnvironmentObject var settings: LauncherSettings
-    @ObservedObject var theme = ThemeManager.shared
+    /// 主题来源由调用方注入（全局单例外部持有），本视图透传给版本卡片
+    let theme: ThemeManager
     @State private var isLoading = true
     @State private var showCard = false
     @State private var loadingText = "游戏检索中"
@@ -46,6 +47,7 @@ struct GameCategoryView: View {
             }
             if showCard {
                 VersionPickerCard(
+                    theme: theme,
                     versions: versions,
                     hasVersions: hasVersions,
                     selectedVersion: settings.selectedMinecraftVersion,

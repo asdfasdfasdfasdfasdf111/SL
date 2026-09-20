@@ -3,12 +3,14 @@ import SwiftUI
 /// 全局提示展示层。挂在根视图上，订阅 `NoticeCenter.shared.current`，
 /// 以顶部横幅形式显示当前提示（不影响下层布局，仅顶部卡片区域接收点击）。
 struct NoticeOverlay: View {
-    @ObservedObject private var center = NoticeCenter.shared
+    @ObservedObject var center: NoticeCenter
+    /// 按钮强调色来源：本视图不读取，仅向下透传，故不订阅
+    let theme: ThemeManager
 
     var body: some View {
         VStack {
             if let notice = center.current {
-                NoticeCard(notice: notice)
+                NoticeCard(notice: notice, center: center, theme: theme)
                     .padding(.top, 10)
                     .padding(.horizontal, 16)
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -35,7 +37,9 @@ struct NoticeOverlay: View {
 
 private struct NoticeCard: View {
     let notice: Notice
-    @ObservedObject private var center = NoticeCenter.shared
+    @ObservedObject var center: NoticeCenter
+    /// 按钮强调色来源：本视图不读取，仅向下透传，故不订阅
+    let theme: ThemeManager
     @State private var appeared = false
 
     private var accent: Color {
@@ -79,7 +83,7 @@ private struct NoticeCard: View {
                 if !notice.buttons.isEmpty {
                     HStack(spacing: 8) {
                         ForEach(Array(notice.buttons.enumerated()), id: \.element.id) { index, button in
-                            NoticeButtonView(button: button) {
+                            NoticeButtonView(button: button, theme: theme) {
                                 center.choose(notice, index: index)
                             }
                         }
@@ -122,8 +126,8 @@ private struct NoticeCard: View {
 
 private struct NoticeButtonView: View {
     let button: NoticeButton
+    let theme: ThemeManager
     let action: () -> Void
-    @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
         Button(action: action) {

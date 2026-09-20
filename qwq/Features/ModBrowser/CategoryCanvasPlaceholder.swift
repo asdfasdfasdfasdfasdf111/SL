@@ -6,7 +6,8 @@ import SwiftUI
 /// 保证「整页滑过的动画感」与「后台不同时实例化 5 个完整页面」两者兼得。
 struct CategoryCanvasPlaceholder: View {
     let category: Category
-    @ObservedObject var theme = ThemeManager.shared
+    /// 主题来源由调用方注入（全局单例外部持有），本视图不持有、不写默认值
+    @ObservedObject var theme: ThemeManager
 
     var body: some View {
         ZStack {
