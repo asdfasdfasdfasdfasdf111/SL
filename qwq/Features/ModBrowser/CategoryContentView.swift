@@ -92,8 +92,7 @@ struct CategoryContentView: View {
                 onTap: {
                     isUsernameFocused = false
                     guard !settings.selectedMinecraftVersion.isEmpty else {
-                        settings.launchErrorMessage = "请先在「游戏」分类中选择一个版本"
-                        settings.showLaunchAlert = true
+                        LaunchPanelState.shared.presentError("请先在「游戏」分类中选择一个版本")
                         return
                     }
                     guard !sessionManager.isLaunching else { return }

@@ -3,17 +3,17 @@ import AppKit
 import UniformTypeIdentifiers
 
 struct ContentView: View {
-    @State private var searchText = ""
     @StateObject private var settings = LauncherSettings.shared
     // 页面导航状态（当前分类 / 画布拖拽位移 / 下载详情页开关）统一由 NavigationState 持有
     @StateObject private var navigation = NavigationState()
+    // 根视图即时交互状态（搜索词 / 拖入高亮）由 HomeInteractionState 持有
+    @StateObject private var interaction = HomeInteractionState()
 
     // 拖拽安装的业务决策（文件分流 / 实例匹配 / 安装 / 提示）全部收在协调器内，
     // 本视图只转发拖拽事件、按协调器状态渲染弹窗。
     @StateObject private var dropInstall = DropInstallCoordinator()
     // 启动相关界面状态（Java 提示气泡、启动失败提示）
     @ObservedObject private var launchPanel = LaunchPanelState.shared
-    @State private var isDropTargeted = false
     // 下载详情页独立页面 + 全局圆形下载按钮（对标 PCL.Mac AppRouter：
     // 详情页为整页替换渲染的独立页面，圆按钮为 ContentView 顶层全局 overlay）
     
@@ -56,7 +56,7 @@ struct ContentView: View {
                 .zIndex(200)
             }
 
-            if isDropTargeted {
+            if interaction.isDropTargeted {
                 RoundedRectangle(cornerRadius: 12)
                     .stroke(ThemeManager.shared.accentColor, lineWidth: 3)
                     .background(
@@ -112,15 +112,12 @@ struct ContentView: View {
         } message: { error in
             Text(error)
         }
+        // Java 预扫描经 Java 模块入口触发，根视图不再直接持有 JavaManager
         .onAppear {
-            if let window = NSApp.windows.first {
-                window.titlebarAppearsTransparent = true
-                window.styleMask.insert(.fullSizeContentView)
-                window.minSize = NSSize(width: 800, height: 550)
-            }
-            // Java 预扫描经 Java 模块入口触发，根视图不再直接持有 JavaManager
             DefaultJavaRepository.shared.preScan()
         }
+        // 窗口外观（透明标题栏 / 全尺寸内容区 / 最小尺寸 800×550）由独立修饰器负责
+        .launcherWindow()
     }
 
     /// 主内容页（分类导航 + 内容区 + 拖拽背景），与下载详情页互斥整页切换：
@@ -129,7 +126,7 @@ struct ContentView: View {
     private var mainContent: some View {
         ZStack {
             BlurView(material: .fullScreenUI, blendingMode: .behindWindow).ignoresSafeArea()
-                .onDrop(of: [.fileURL], isTargeted: $isDropTargeted) { providers in
+                .onDrop(of: [.fileURL], isTargeted: $interaction.isDropTargeted) { providers in
                     return dropInstall.handle(providers: providers)
                 }
             VStack(alignment: .leading, spacing: 0) {
@@ -175,34 +172,32 @@ struct ContentView: View {
     private func categoryCanvas(width: CGFloat) -> some View {
         HStack(spacing: 0) {
             ForEach(navigation.categories) { category in
-                CategoryContentView(category: category, searchText: searchText)
+                CategoryContentView(category: category, searchText: interaction.searchText)
                     .frame(width: width)
             }
         }
         .offset(x: -CGFloat(navigation.selectedIndex) * width + navigation.dragOffset)
-        .animation(.spring(response: 0.6, dampingFraction: 0.65, blendDuration: 0.15), value: navigation.selectedIndex)
+        .animation(NavigationState.canvasSpring, value: navigation.selectedIndex)
         .gesture(
-            DragGesture(minimumDistance: 20)
+            // 手势构造、逐帧位移写入与 withAnimation 调用点仍留在视图层：迁入状态层
+            // 并不减少视图职责（DragGesture 必须在此构造、translation 必须逐帧回写），
+            // 反而把手势识别与事务语义引入 ViewModel。此处只把曲线/阈值/裁决归口。
+            DragGesture(minimumDistance: NavigationState.canvasDragMinimumDistance)
                 .onChanged { value in
-                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    guard NavigationState.isHorizontalDrag(value.translation) else { return }
                     navigation.dragOffset = value.translation.width
                 }
                 .onEnded { value in
-                    guard abs(value.translation.width) > abs(value.translation.height) else {
-                        withAnimation(.spring(response: 0.6, dampingFraction: 0.65, blendDuration: 0.15)) {
+                    guard NavigationState.isHorizontalDrag(value.translation) else {
+                        withAnimation(NavigationState.canvasSpring) {
                             navigation.dragOffset = 0
                         }
                         return
                     }
-                    let threshold = width * 0.25
-                    var newIndex = navigation.selectedIndex
-                    if value.translation.width < -threshold && navigation.selectedIndex < navigation.categories.count - 1 {
-                        newIndex = navigation.selectedIndex + 1
-                    } else if value.translation.width > threshold && navigation.selectedIndex > 0 {
-                        newIndex = navigation.selectedIndex - 1
-                    }
-                    withAnimation(.spring(response: 0.6, dampingFraction: 0.65, blendDuration: 0.15)) {
-                        navigation.selectedCategory = navigation.categories[newIndex]
+                    let targetIndex = navigation.canvasTargetIndex(translationWidth: value.translation.width,
+                                                                    canvasWidth: width)
+                    withAnimation(NavigationState.canvasSpring) {
+                        navigation.selectedCategory = navigation.categories[targetIndex]
                         navigation.dragOffset = 0
                     }
                 }

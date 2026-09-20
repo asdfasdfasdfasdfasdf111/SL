@@ -22,8 +22,7 @@ enum LaunchCoordinator {
         let nameError = validateOfflineUsername(username)
         guard nameError.isEmpty else {
             sessionManager.resetProgress()
-            settings.launchErrorMessage = nameError
-            settings.showLaunchAlert = true
+            LaunchPanelState.shared.presentError(nameError)
             return
         }
         let finalUsername = username.isEmpty ? "Player" : username
@@ -140,8 +139,7 @@ enum LaunchCoordinator {
                         case .success(let exitCode):
                             let userTerminated = launcher.isUserTerminated
                             if exitCode != 0 && !userTerminated {
-                                settings.launchErrorMessage = "Minecraft 异常退出 (退出码: \(exitCode))，请查看日志"
-                                settings.showLaunchAlert = true
+                                LaunchPanelState.shared.presentError("Minecraft 异常退出 (退出码: \(exitCode))，请查看日志")
                             }
                             if exitCode == 0 || userTerminated {
                                 // 正常退出或被用户终止：自动清掉会话，避免日志面板残留
@@ -161,8 +159,7 @@ enum LaunchCoordinator {
                                 sessionManager.launchPhase = .idle
                                 if sessionManager.sessions.isEmpty { sessionManager.showLogView = false }
                             }
-                            settings.launchErrorMessage = error.localizedDescription
-                            settings.showLaunchAlert = true
+                            LaunchPanelState.shared.presentError(error.localizedDescription)
                         }
                     }
                 }

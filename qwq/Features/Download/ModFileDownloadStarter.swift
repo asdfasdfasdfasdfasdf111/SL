@@ -46,8 +46,7 @@ enum ModFileDownloadStarter {
                     Task { @MainActor in
                         if pageType == .modpack, task.failureReason == nil {
                             // 整合包：zip 下载完成后还需解压安装（含 Minecraft/加载器/模组下载）
-                            settings.javaPopupMessage = "正在安装整合包…"
-                            settings.showJavaPopup = true
+                            LaunchPanelState.shared.presentMessage("正在安装整合包…")
                             Task.detached(priority: .userInitiated) {
                                 do {
                                     try await ModpackInstaller().install(
@@ -58,25 +57,21 @@ enum ModFileDownloadStarter {
                                         // 回调只操作全局单例（DownloadDetailManager）与 settings，
                                         // 不写视图 @State：后台回调晚于视图销毁时写 State storage 会 UAF
                                         DownloadDetailManager.shared.dismiss(ownerID: ownerID)
-                                        settings.javaPopupMessage = "下载完成"
-                                        settings.showJavaPopup = true
+                                        LaunchPanelState.shared.presentMessage("下载完成")
                                     }
                                 } catch {
                                     await MainActor.run {
                                         DownloadDetailManager.shared.dismiss(ownerID: ownerID)
-                                        settings.launchErrorMessage = "整合包安装失败: \(error.localizedDescription)"
-                                        settings.showLaunchAlert = true
+                                        LaunchPanelState.shared.presentError("整合包安装失败: \(error.localizedDescription)")
                                     }
                                 }
                             }
                         } else {
                             DownloadDetailManager.shared.dismiss(ownerID: ownerID)
                             if let reason = task.failureReason {
-                                settings.launchErrorMessage = "下载失败: \(reason)"
-                                settings.showLaunchAlert = true
+                                LaunchPanelState.shared.presentError("下载失败: \(reason)")
                             } else {
-                                settings.javaPopupMessage = "下载完成"
-                                settings.showJavaPopup = true
+                                LaunchPanelState.shared.presentMessage("下载完成")
                             }
                         }
                     }
@@ -92,8 +87,7 @@ enum ModFileDownloadStarter {
                     if let capturedOwner {
                         DownloadDetailManager.shared.dismiss(ownerID: capturedOwner)
                     }
-                    settings.launchErrorMessage = "下载失败: \(error.localizedDescription)"
-                    settings.showLaunchAlert = true
+                    LaunchPanelState.shared.presentError("下载失败: \(error.localizedDescription)")
                 }
             }
         }

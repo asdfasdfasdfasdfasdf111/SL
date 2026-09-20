@@ -141,8 +141,7 @@ struct GameCategoryView: View {
             await MainActor.run {
                 isLoading = false
                 showCard = true
-                settings.javaPopupMessage = "已找到 \(result.count) 个游戏"
-                settings.showJavaPopup = true
+                LaunchPanelState.shared.presentMessage("已找到 \(result.count) 个游戏")
                 if let first = result.first {
                     versions = first.versions
                     settings.selectedGameRoot = first.root
@@ -172,12 +171,10 @@ struct GameCategoryView: View {
                         settings.selectedMinecraftVersion = versions.first ?? ""
                         hasVersions = true
                     } else {
-                        settings.launchErrorMessage = "所选文件夹的 versions 目录下没有找到任何版本"
-                        settings.showLaunchAlert = true
+                        LaunchPanelState.shared.presentError("所选文件夹的 versions 目录下没有找到任何版本")
                     }
                 } else {
-                    settings.launchErrorMessage = "所选文件夹不包含 versions 子目录"
-                    settings.showLaunchAlert = true
+                    LaunchPanelState.shared.presentError("所选文件夹不包含 versions 子目录")
                 }
             }
         }

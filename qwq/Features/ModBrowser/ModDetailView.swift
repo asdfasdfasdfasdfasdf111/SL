@@ -463,8 +463,7 @@ struct ModDetailView: View {
         guard !selectedVersion.isEmpty else { return }
 
         // 点击即提示「下载开始」（此前仅下载完成后才提示「下载完成」）
-        settings.javaPopupMessage = "下载开始"
-        settings.showJavaPopup = true
+        LaunchPanelState.shared.presentMessage("下载开始")
         
         // 下载按钮弹动画（放大 → 缩小回弹，不消失；可取消 Task，视图销毁后不再写 @State）
         playDownloadBounce()

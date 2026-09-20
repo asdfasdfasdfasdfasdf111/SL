@@ -81,11 +81,9 @@ enum GameVersionDownloadStarter {
                         if let reason = (minecraftTask as? MinecraftInstallTask)?.failureReason {
                             // 失败：终止任务 + 明确报错（旧实现失败不 complete() → 不触发本回调，
                             // 详情页永远挂着、既不终止也不报错）
-                            settings.launchErrorMessage = "\(completedName) 下载失败: \(reason)"
-                            settings.showLaunchAlert = true
+                            LaunchPanelState.shared.presentError("\(completedName) 下载失败: \(reason)")
                         } else {
-                            settings.javaPopupMessage = "\(completedName) 下载完成"
-                            settings.showJavaPopup = true
+                            LaunchPanelState.shared.presentMessage("\(completedName) 下载完成")
                         }
                     }
                 }
@@ -101,8 +99,7 @@ enum GameVersionDownloadStarter {
                     // 带 ownerID：若已有其它下载正在进行（start 已把其任务组放进 manager），
                     // 归属不一致 → 拒绝清理，绝对不动正在下载的任务引用
                     manager.dismiss(ownerID: ownerID)
-                    settings.launchErrorMessage = "下载失败: \(error.localizedDescription)"
-                    settings.showLaunchAlert = true
+                    LaunchPanelState.shared.presentError("下载失败: \(error.localizedDescription)")
                 }
             }
         }

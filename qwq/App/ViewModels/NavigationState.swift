@@ -27,6 +27,39 @@ final class NavigationState: ObservableObject {
     /// 当前分类在画布中的下标
     var selectedIndex: Int { categories.firstIndex(of: selectedCategory) ?? 0 }
 
+    // MARK: - 分类画布手势参数
+
+    // 以下取值与抽取前逐字一致（response 0.6 / dampingFraction 0.65 / blendDuration 0.15、
+    // 最小拖拽 20 点、换页阈值占画布宽度 25%）。这些参数直接决定画布手感，
+    // 归口在此仅为消除重复字面量，任何改动都等同于修改动画与手势行为。
+
+    /// 分类画布位移动画：点击导航换页与拖拽换页共用同一曲线
+    static let canvasSpring = Animation.spring(response: 0.6, dampingFraction: 0.65, blendDuration: 0.15)
+
+    /// 画布拖拽的手势识别最小位移
+    static let canvasDragMinimumDistance: CGFloat = 20
+
+    /// 拖拽换页的位移阈值比例（相对画布宽度）
+    static let canvasFlipThresholdRatio: CGFloat = 0.25
+
+    /// 位移是否以横向为主。纵向为主时不触发画布位移，交由页面内滚动消费。
+    static func isHorizontalDrag(_ translation: CGSize) -> Bool {
+        abs(translation.width) > abs(translation.height)
+    }
+
+    /// 画布拖拽松手后的目标分类下标。
+    /// 未超过阈值、或已处在画布首尾边界时返回当前下标（调用方仍按原逻辑执行赋值，不做提前返回）。
+    func canvasTargetIndex(translationWidth: CGFloat, canvasWidth: CGFloat) -> Int {
+        let threshold = canvasWidth * Self.canvasFlipThresholdRatio
+        if translationWidth < -threshold && selectedIndex < categories.count - 1 {
+            return selectedIndex + 1
+        }
+        if translationWidth > threshold && selectedIndex > 0 {
+            return selectedIndex - 1
+        }
+        return selectedIndex
+    }
+
     // MARK: - 下载详情页（状态源在 DownloadDetailManager）
 
     private let downloadDetail = DownloadDetailManager.shared
