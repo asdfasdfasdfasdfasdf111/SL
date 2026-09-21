@@ -11,17 +11,14 @@ struct CategoryContentView: View {
     @ObservedObject var theme: ThemeManager
     // 启动会话/日志面板/启动进度统一由全局单例持有（启动回调零 self 捕获，UAF 根治）
     @ObservedObject var sessionManager: LaunchSessionManager
-    
+
+    /// 头像皮肤数据管道与皮肤生命周期决策归 ViewModels/LaunchAvatarSkinViewModel.swift，
+    /// 本视图只订阅其 @Published 展示状态并转发意图
+    @StateObject private var skinViewModel = LaunchAvatarSkinViewModel()
+
     @State private var usernameFieldScale: CGFloat = 1.0
     @FocusState private var isUsernameFocused: Bool
     @State private var skinButtonScale: CGFloat = 1.0
-    // 头像皮肤数据首帧缓存：视图创建时同步从本地（持久化皮肤 → UUID 皮肤磁盘缓存 → 内置 Steve）预载，
-    // 双层渲染（头+帽）拿到数据后立即裁剪显示，首帧不再空白等待 JAR 提取
-    @State private var avatarSkinData: Data? = CategoryContentView.preloadedSkinData()
-    // 头像成品（头+帽）预裁缓存：后台裁剪，主线程渲染路径零 CoreImage（否则每次布局重算
-    // 同步 new CIContext + createCGImage 会卡住动画帧）
-    @State private var headImage: NSImage?
-    @State private var hatImage: NSImage?
 
     private var launchView: some View {
         GeometryReader { geometry in
@@ -108,12 +105,12 @@ struct CategoryContentView: View {
     private func avatarView(avatarSize: CGFloat) -> some View {
         ZStack {
             // 双层渲染（还原：头 + 帽层叠加消除半透明）。
-            // headImage/hatImage 由 refreshSkinData 后台裁剪，布局重算零 CoreImage
-            if let headImage {
+            // headImage/hatImage 由 ViewModel 后台裁剪，布局重算零 CoreImage
+            if let headImage = skinViewModel.headImage {
                 SkinLayerView(image: headImage, width: 8 * 5.4 / 58 * avatarSize, height: 8 * 5.4 / 58 * avatarSize)
                     .shadow(color: Color.black.opacity(0.2), radius: 1)
             }
-            if let hatImage {
+            if let hatImage = skinViewModel.hatImage {
                 SkinLayerView(image: hatImage, width: 7.99 * 6.1 / 58 * avatarSize, height: 7.99 * 6.1 / 58 * avatarSize)
             }
         }
@@ -121,109 +118,15 @@ struct CategoryContentView: View {
         .clipped()
         .padding(6)
         .onAppear {
-            // 首帧若尚未裁剪（预载 Data 成功但成品未出），后台裁出头/帽
-            if avatarSkinData != nil && headImage == nil {
-                refreshSkinData()
-            }
-            // 延迟到渲染事务外：onAppear 同步写 @Published 会触发
-            // "Modifying state during view update"（UAF 崩溃前兆）
-        DispatchQueue.main.async {
-            let isLaunching = sessionManager.isLaunching
-            let mcVersion = settings.selectedMinecraftVersion
-            let gameDirPath = settings.selectedGameRoot.isEmpty ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "") : settings.selectedGameRoot
-            let offlineUUID = settings.fixedOfflineUUID.components(separatedBy: "-").joined().lowercased()
-            Task.detached(priority: .userInitiated) {
-                let result = await Self.loadSkinImageIfNeededAsync(
-                    isLaunching: isLaunching,
-                    selectedMinecraftVersion: mcVersion,
-                    gameDirPath: gameDirPath,
-                    offlineUUID: offlineUUID
-                )
-                if let url = result {
-                    await MainActor.run { settings.skinImageURL = url }
-                }
-            }
-        }
+            // 首帧裁剪兜底与皮肤 URL 准备（含渲染事务外延迟）均在 ViewModel 内完成
+            skinViewModel.handleAvatarAppear()
         }
         .onChange(of: settings.skinImageURL) { _ in
-            reloadSkinDataFromFile()
+            skinViewModel.reloadSkinDataFromFile()
         }
-        .onChange(of: avatarSkinData) { _ in
-            refreshSkinData()
+        .onChange(of: skinViewModel.avatarSkinData) { _ in
+            skinViewModel.refreshSkinData()
         }
-    }
-
-    /// 皮肤文件变更后后台重读（避免主线程 IO），data 变化触发 refreshSkinData 重裁
-    private func reloadSkinDataFromFile() {
-        guard let url = settings.skinImageURL, FileManager.default.fileExists(atPath: url.path) else { return }
-        Task.detached(priority: .userInitiated) {
-            if let data = try? Data(contentsOf: url) {
-                await MainActor.run { self.avatarSkinData = data }
-            }
-        }
-    }
-
-    /// 后台裁剪头/帽成品，主线程只接收成品（渲染路径零 CoreImage）
-    private func refreshSkinData() {
-        guard let data = avatarSkinData else { return }
-        Task.detached(priority: .userInitiated) {
-            let head = SkinLayerView.cropped(imageData: data, startX: 8, startY: 16)
-            let hat = SkinLayerView.cropped(imageData: data, startX: 40, startY: 16)
-            await MainActor.run {
-                self.headImage = head
-                self.hatImage = hat
-            }
-        }
-    }
-
-    /// 视图创建时同步预载皮肤数据：持久化皮肤原图 → 离线 UUID 皮肤磁盘缓存 → 内置 Steve。
-    /// 均为本地小文件（几 KB~几十 KB），个位数毫秒级，首帧双层裁剪立即有图
-    private static func preloadedSkinData() -> Data? {
-        let settings = LauncherSettings.shared
-        if let url = settings.skinImageURL, FileManager.default.fileExists(atPath: url.path),
-           let data = try? Data(contentsOf: url) {
-            return data
-        }
-        let offlineUUID = settings.fixedOfflineUUID.components(separatedBy: "-").joined().lowercased()
-        // 皮肤读取经 Skin 服务层（DefaultSkinService 内部即委托 MinecraftSkinManager，返回语义不变）
-        if let data = DefaultSkinService().skinData(forUUID: offlineUUID) {
-            return data
-        }
-        if let builtin = Bundle.main.url(forResource: "stf", withExtension: "png") {
-            return try? Data(contentsOf: builtin)
-        }
-        return nil
-    }
-
-    /// 后台异步加载皮肤 URL（JAR 提取等重 IO 在后台执行，返回 URL 由调用方在主线程写入）
-    private static func loadSkinImageIfNeededAsync(
-        isLaunching: Bool,
-        selectedMinecraftVersion: String,
-        gameDirPath: String,
-        offlineUUID: String
-    ) async -> URL? {
-        guard !isLaunching else { return nil }
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let skinDir = appSupport.appendingPathComponent("SL启动器/Skins")
-        try? FileManager.default.createDirectory(at: skinDir, withIntermediateDirectories: true)
-        let skinDestURL = skinDir.appendingPathComponent("selected_skin.png")
-
-        if let cachedSkinData = DefaultSkinService().skinData(forUUID: offlineUUID) {
-            try? cachedSkinData.write(to: skinDestURL, options: .atomic)
-            return skinDestURL
-        }
-
-        if !selectedMinecraftVersion.isEmpty && !gameDirPath.isEmpty,
-           let gameDirURL = Optional(URL(fileURLWithPath: gameDirPath)),
-           let skinURL = SkinExtractor.extractFromGameJar(version: selectedMinecraftVersion, gameDir: gameDirURL) {
-            if let skinData = try? Data(contentsOf: skinURL) {
-                try? skinData.write(to: skinDestURL, options: .atomic)
-                return skinDestURL
-            }
-            return skinURL
-        }
-
-        return Bundle.main.url(forResource: "stf", withExtension: "png")
     }
 
     private var usernameField: some View {
@@ -365,30 +268,18 @@ struct CategoryContentView: View {
         }
         .id(category.id)
         .onChange(of: settings.selectedMinecraftVersion) { _ in
-            if !sessionManager.isLaunching {
-                // 延迟到渲染事务外执行：onChange 处于视图更新事务中，同步写 @Published
-                // 会触发 "Modifying state during view update" → 未定义行为 → UAF 崩溃（EXC_BAD_ACCESS 跳进位图区）
-                DispatchQueue.main.async {
-                    OfflineSkinService.loadAvatarFromGameOrBundle(isLaunching: sessionManager.isLaunching, settings: settings)
-                }
-            }
+            // 非启动中才刷新头像；渲染事务外延迟与刷新编排均在 ViewModel 内
+            skinViewModel.handleSelectedMinecraftVersionChange(isLaunching: sessionManager.isLaunching)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("GameVersionSelected"))) { _ in
-            if !sessionManager.isLaunching {
-                DispatchQueue.main.async {
-                    OfflineSkinService.loadDefaultIfNeeded(isLaunching: sessionManager.isLaunching, settings: settings)
-                }
-            }
+            skinViewModel.handleGameVersionSelected(isLaunching: sessionManager.isLaunching)
         }
         .onAppear {
-            // 同样延迟执行：onAppear 在视图渲染事务中触发，同步改 @Published 会破坏状态机
-            DispatchQueue.main.async {
-                OfflineSkinService.loadAvatarFromGameOrBundle(isLaunching: sessionManager.isLaunching, settings: settings)
-                OfflineSkinService.loadDefaultIfNeeded(isLaunching: sessionManager.isLaunching, settings: settings)
-            }
+            // 准备变体（头像 + 默认皮肤）的渲染事务外延迟在 ViewModel 内，与收口前一致
+            skinViewModel.handleViewAppear()
         }
         .onDisappear {
-            sessionManager.stopDarkBarAnimation()
+            skinViewModel.handleViewDisappear()
         }
     }
     
