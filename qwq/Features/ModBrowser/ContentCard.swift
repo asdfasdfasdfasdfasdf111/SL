@@ -17,6 +17,23 @@ struct ContentCard: View {
     @State private var scale: CGFloat = 1.0
     // 入场动画：卡片首次出现在网格中时缩放+淡入弹入（LazyVGrid 复用/滚动时重建会再次触发，
     // 符合「进入可视区弹入」的预期；拆分重构时 searchPopInIds 动画丢失导致「有时没有动画」）
+    //
+    // 待接线（搜索结果弹入，原设计见提交 5d5769d，读取点丢失于提交 7bf4044）：
+    // 原实现在本视图持有 `isSearchPopIn: Bool` 入参，并在
+    // `.onChange(of: isSearchPopIn) { newValue in ... }` 内把 `popScale` 置 0.6、
+    // `popOpacity` 置 0，再用
+    // `.interpolatingSpring(mass: 0.8, stiffness: 200, damping: 12, initialVelocity: 4)`
+    // 收敛回 1.0（缩放 0.6→1 + 透明度 0→1），通过 `.scaleEffect(popScale)` /
+    // `.opacity(popOpacity)` 施加；触发值由 `searchPopInIds.contains(item.id)` 提供。
+    //
+    // 当前无法在本文件干净回接：本视图不持有 item id（id 由 `CategoryResultsGrid` 以
+    // `.id(item.id)` 施加，修饰符不回传值），而唯一的构造点
+    // `CategoryResultsGrid.swift:41` 本轮不可修改，故 id 判定链路断在该文件。
+    // 环境值注入只能按 title 之类的替代键匹配，无法保证「只在搜索结果出现时触发」。
+    // 恢复方式：在 `CategoryResultsGrid` 透传 `isSearchPopIn` 后按上述原参数接线；
+    // 不得以结果网格的 `.id()` 触发重建来间接出动画（会重置状态、重跑卡片 `.task`）。
+    // 依据条目：SwiftUI《onChange》旧式 `onChange(of:perform:)` 为 macOS 13.0 唯一可用签名。
+    // 官方链接：https://developer.apple.com/documentation/swiftui/view/onchange(of:perform:)
     @State private var appearScale: CGFloat = 0.92
     @State private var appearOpacity: Double = 0
 

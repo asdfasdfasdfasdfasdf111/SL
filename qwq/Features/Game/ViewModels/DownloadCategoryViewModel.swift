@@ -80,6 +80,26 @@ final class DownloadCategoryViewModel: ObservableObject {
     /// 与收口前一致：仅写入、无读取点（结果网格迁到 CategoryResultsGrid 后弹入动画未回接）
     /// 本次死状态清理判定：保留。该字段是「结果弹入动画未回接」这一待办的唯一痕迹
     /// （ContentCard.swift 注释指向同一语义），删除会丢失待接线意图。
+    ///
+    /// 回接尝试与回退记录（本次）：曾以本集合作为结果网格 `.id()` 的身份键，
+    /// 借「identity 变化 → 网格子树重建 → 卡片重新 onAppear」间接播放弹入。
+    /// 该接法已回退，原因是副作用不可接受且动画归属错误：
+    /// 1. 官方 `View.id(_:)` 说明——When the proxy value specified by the `id` parameter
+    ///    changes, the identity of the view — for example, its state — is reset.
+    ///    网格子树重建会重置其内全部 `@State`（含 `CategoryResultsGrid` 的滚动锚点
+    ///    `lastAnchorItemID` 写入链路），并使 `CategoryResultsGrid.swift:74` 的
+    ///    `.task(id: item.id)` 随 identity 变化被取消重建（见官方 task 页的取消语义），
+    ///    即每张卡片重新发起一次翻译请求与图片加载。
+    /// 2. 官方 `StateObject` / `withAnimation` 说明——视图 identity 变化时 SwiftUI
+    ///    不会为视图内部的变化自动加动画；即该接法得到的是「重建 + 卡片自身 onAppear
+    ///    动画」的观感，而非原设计的卡片级弹簧弹入，动画归属从卡片漂移到了网格身份。
+    /// 3. 原设计的读取点位于 `CategoryResultsGrid.swift:41` 的 `ContentCard(...)` 构造处
+    ///    （透传 `isSearchPopIn`），该文件本轮不允许修改，逐卡 id 判定链路无法在允许范围内接通；
+    ///    `ContentCard` 自身不持有 item id，仅凭环境值注入无法做 id 归属判定。
+    /// 官方链接：https://developer.apple.com/documentation/swiftui/view/id(_:)
+    /// 官方链接：https://developer.apple.com/documentation/swiftui/stateobject
+    /// 官方链接：https://developer.apple.com/documentation/swiftui/view/task(priority:_:)
+    /// 官方链接：https://developer.apple.com/documentation/swiftui/withanimation(_:_:)
     private var searchPopInIds: Set<String> = []
 
     // MARK: - 分页
