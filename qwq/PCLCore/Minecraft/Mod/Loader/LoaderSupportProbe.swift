@@ -90,6 +90,8 @@ extension LoaderSupportChecker {
     /// 检查单个加载器对某版本是否可用：单请求（4s 超时）；双源加载器 700ms 延迟并发备用源。
     /// 结论语义：权威源 404/410/空数组 = 明确不支持（notSupported）；网络错误或 5xx = failed（结果未知）。
     /// 快照版本的结果一律视为未知（notSupported 结论不适用于未列出的实验版本）。
+    /// 注意：Forge / NeoForged 当前只有 bmclapi 镜像源，按「镜像非权威」口径二者不再产生
+    /// notSupported 定论——镜像返回空即视为结果未知（unavailable，不入缓存，下次重查）。
     private static func checkLoaderSupport(key: String, version: String) async -> LoaderCheckResult {
         let encoded = version.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? version
         var urls: [(URL, Bool)] = []   // (url, 空结果是否权威：官方源权威，镜像非权威不误伤)
@@ -100,9 +102,13 @@ extension LoaderSupportChecker {
                 (URL(string: "https://bmclapi2.bangbang93.com/fabric-meta/v2/versions/loader/\(encoded)")!, false)
             ]
         case "forge":
-            urls = [(URL(string: "https://bmclapi2.bangbang93.com/forge/minecraft/\(encoded)")!, true)]
+            // 单源即镜像：镜像 404 / 空数组可能来自镜像同步滞后或上游抓取异常，
+            // 不构成「该版本无 Forge」的权威结论，故与 fabric / quilt 的镜像口径一致（false），
+            // 避免镜像空结果被当作 notSupported 长期缓存（7 天）而误报「不支持」。
+            urls = [(URL(string: "https://bmclapi2.bangbang93.com/forge/minecraft/\(encoded)")!, false)]
         case "neoforge":
-            urls = [(URL(string: "https://bmclapi2.bangbang93.com/neoforge/list/\(encoded)")!, true)]
+            // 同上：单源镜像，空结果按结果未知处理。
+            urls = [(URL(string: "https://bmclapi2.bangbang93.com/neoforge/list/\(encoded)")!, false)]
         case "quilt":
             urls = [
                 (URL(string: "https://meta.quiltmc.org/v3/versions/loader/\(encoded)")!, true),

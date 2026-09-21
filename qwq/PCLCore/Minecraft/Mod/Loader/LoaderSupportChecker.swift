@@ -77,9 +77,16 @@ public enum LoaderSupportChecker {
         return result
     }
 
-    /// 静默预加载：已全部定论则 no-op；否则后台触发检测（in-flight 合并，详情页/列表悬停可放心调用）
+    /// 静默预加载：无候选或已全部定论则 no-op；否则后台触发检测（in-flight 合并，详情页/列表悬停可放心调用）
+    ///
+    /// 「无候选」（`candidateDisplayNames` 为空，如远古版与快照——配置层面就没有可检测的加载器）
+    /// 与「确定不支持」（有 notSupported 结论）必须区分：
+    /// - 前者不会产生任何缓存条目，`cachedLoaderStates` 恒为 nil，缓存判据永远不成立，
+    ///   若不在此提前返回，每次调用都会空建一个不含任何请求的 in-flight 任务；
+    /// - 后者结论已落盘，命中缓存后 `isFullyResolved` 为真，自然不再建任务。
     public static func prefetchForVersion(_ version: String) {
         guard !version.isEmpty else { return }
+        guard !candidateDisplayNames(for: version).isEmpty else { return }
         if let states = cachedLoaderStates(for: version), isFullyResolved(states, for: version) { return }
         _ = Task { _ = await checkLoaderStates(for: version) }
     }
