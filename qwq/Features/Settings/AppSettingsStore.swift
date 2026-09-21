@@ -15,6 +15,10 @@ import SwiftUI
 final class AppSettingsStore: ObservableObject {
     static let shared = AppSettingsStore()
 
+    /// 强调色的**唯一存储点与唯一写入口**。
+    /// `ThemeManager.accentColor` 已收敛为对本属性的转发，不再自行写 `UserDefaults[UDK.accentColor]`；
+    /// 读取方（`@ObservedObject var theme = ThemeManager.shared` 的视图、`ThemeRepository`）
+    /// 保持不变，刷新由 `ThemeManager` 桥接本对象的 `objectWillChange` 保证。
     @Published var accentColor: Color {
         didSet { saveColor(accentColor, forKey: UDK.accentColor) }
     }
@@ -72,15 +76,6 @@ final class AppSettingsStore: ObservableObject {
         self.selectedMinecraftVersion = UserDefaults.standard.string(forKey: UDK.selectedMinecraftVersion) ?? ""
         self.selectedGameRoot = UserDefaults.standard.string(forKey: UDK.selectedGameRoot) ?? ""
         self.offlineUsername = UserDefaults.standard.string(forKey: UDK.offlineUsername) ?? "Player"
-
-        // 清理历史遗留脏数据：占位提示串曾被存成真实用户名，长度超过 MC 16 字符上限，
-        // 在 1.20.5+ 进服时 hello 包编码会失败。
-        let legacyPlaceholder = "SL启动器（最好使用英文及下划线）"
-        if self.offlineUsername == legacyPlaceholder {
-            self.offlineUsername = "Player"
-            UserDefaults.standard.set(self.offlineUsername, forKey: UDK.offlineUsername)
-        }
-
         self.cachedJavaPath = UserDefaults.standard.string(forKey: UDK.cachedJavaPath)
         self.appliedSkinHash = UserDefaults.standard.string(forKey: UDK.appliedSkinHash)
         self.selectedJavaPath = UserDefaults.standard.string(forKey: UDK.selectedJavaPath)
@@ -103,6 +98,28 @@ final class AppSettingsStore: ObservableObject {
             self.skinImageURL = URL(fileURLWithPath: path)
         } else {
             self.skinImageURL = nil
+        }
+
+        // 清理历史遗留脏数据：占位提示串曾被存成真实用户名，长度超过 MC 16 字符上限，
+        // 在 1.20.5+ 进服时 hello 包编码会失败。
+        //
+        // 位置约束：该分支必须放在全部存储属性初始化完成之后。`offlineUsername` 是属性包装
+        // 属性，读写都要经 `_offlineUsername` 存储，属于「引用 self」；而 `fixedOfflineUUID`
+        // `avatarImageURL`、`skinImageURL` 在本分支之后才被赋值。官方《Initialization》
+        // Safety check 4：「An initializer cannot
+        // call any instance methods, read the values of any instance properties, or refer to
+        // self as a value until after the first phase of initialization is complete.」
+        // 该规则由 SIL 阶段的确定初始化（Definite Initialization）诊断执行，`swiftc -typecheck`
+        // 不产生 SIL 因而看不到；真实构建会直接报错
+        // 「'self' used in property access 'offlineUsername' before all stored properties are initialized」。
+        // https://docs.swift.org/swift-book/documentation/the-swift-programming-language/initialization/
+        //
+        // 与本类型其他逻辑无依赖：只改写 offlineUsername，读写的 UserDefaults key 与其他属性不重合，
+        // 因此从上方移到此处不改变任何行为，只是满足初始化顺序约束。
+        let legacyPlaceholder = "SL启动器（最好使用英文及下划线）"
+        if self.offlineUsername == legacyPlaceholder {
+            self.offlineUsername = "Player"
+            UserDefaults.standard.set(self.offlineUsername, forKey: UDK.offlineUsername)
         }
     }
 

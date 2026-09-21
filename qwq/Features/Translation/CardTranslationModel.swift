@@ -65,8 +65,12 @@ final class CardTranslationModel: ObservableObject {
     ///
     /// 关键修复：原先在主线程直接调用 `cachedTranslation`（会同步读盘），
     /// 滚动时每个进入可视区的卡片都触发一次磁盘读取，造成主线程阻塞、列表卡顿。
-    /// 现在主线程只查内存缓存（内置表 + 内存 LRU，瞬时、零阻塞），
-    /// 磁盘读取与网络翻译全部下沉到后台任务，彻底解除滚动卡顿。
+    /// 现在主线程先查内存缓存（内置表 + 内存 LRU，瞬时、零阻塞），未命中才进入后续分支。
+    ///
+    /// 注意：后续分支里的 `Task.detached` 只保证「发起时不占用调用方线程」，
+    /// 并不等于被调用的代码在后台线程执行——`TranslationService` 的
+    /// `cachedTranslation` / `translateText` 均为主 actor 隔离方法（工程默认隔离为 MainActor），
+    /// 跨域调用会 `await` 切回主 actor，磁盘读取与翻译编排实际仍落在主线程上。
     func requestTranslation(for item: DownloadedItem, service: TranslationService) async {
         let id = item.id
         guard !id.isEmpty, translated[id] == nil, !pendingIDs.contains(id) else { return }
@@ -100,7 +104,20 @@ final class CardTranslationModel: ObservableObject {
             return
         }
         Task.detached(priority: .utility) { [weak self] in
-            // 后台线程发起网络翻译：translateText 内含信号量阻塞等待，必须脱离主线程执行
+            // 隔离事实（原注释「必须脱离主线程执行」不成立）：`Task.detached` 确实不继承 actor
+            // 隔离，但 `translateText` 自身是主 actor 隔离方法（工程默认隔离为 MainActor，该类未显式
+            // 标注 `nonisolated`），对它的 async 调用会 `await` 切回主 actor，方法体仍在主线程执行。
+            // 影响：`translateText` 在主线程内调用 semaphoreWait(Self.translationSemaphore)
+            //（LockCompat.swift 明确该函数「阻塞当前线程直到拿到配额」），当并发翻译数超过上限 24 时
+            // 主线程会一直阻塞到有配额释放，而配额要持有到该项目的网络竞速结束（URLSession 请求超时
+            // 8~12s），期间界面无法响应；并发数未达上限时等待立即返回，无实际影响。
+            // 依据：《Concurrency》Unstructured Concurrency —— `Task.detached` 不继承任何 actor
+            // 隔离、优先级与任务局部状态；The Main Actor —— `@MainActor` 函数只在主 actor 上运行，
+            // 从非主 actor 代码调用必须 `await` 切换到主 actor。
+            // https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/
+            // 未做异步化改造的理由：让该方法真正脱离主 actor 需连带解除 CacheManager 及其内部
+            // LRUCache / sha1Prefix 的默认 MainActor 隔离（实测仅去隔离 CacheManager 一项，
+            // typecheck 告警即由 88 增至 104），且缓存的唯一入口 AppContext.shared 不在本次可改范围内。
             let result = try? await service.translateText(text: subtitle, projectId: id)
             let final = result ?? ""
             // Sendable 闭包不可引用 weak var 捕获：先拷成强引用常量再进 MainActor.run

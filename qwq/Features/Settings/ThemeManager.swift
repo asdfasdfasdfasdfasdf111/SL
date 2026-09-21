@@ -16,25 +16,38 @@ enum UDK {
     static let cachedJavaPaths = "cachedJavaPaths"
 }
 
+/// 主题读取兼容层。
+///
+/// 收敛说明：此前本类型自带 `@Published var accentColor`，其 didSet 与
+/// `AppSettingsStore.accentColor` 的 didSet 会写入同一个 `UserDefaults[UDK.accentColor]`，
+/// 同一份数据存在两个写入口，后写入者覆盖先写入者（两处各自持有一份内存值，
+/// 任一处的改动都不会同步到另一处）。现收敛为：
+/// - 唯一存储点是 `AppSettingsStore.accentColor`（设置模块已注册为能力 `settings.store`）；
+/// - 本类型不再写 UserDefaults、不再持有颜色值，读写整体转发到存储点；
+/// - 为保持既有读取方的实时刷新语义，init 中把存储点的 `objectWillChange` 桥接为本对象的
+///   `objectWillChange`。视图失效时机与原来的 `@Published` 一致：都在值变化之前发出，且
+///   SwiftUI 对 `ObservableObject` 的更新粒度是对象级。
+///
+/// 依据：`ObservableObject` 的默认实现合成 `objectWillChange`，它在任意 `@Published`
+/// 属性变化**之前**发出值（注意是 will，不是 did）。
+/// https://developer.apple.com/documentation/combine/observableobject
 class ThemeManager: ObservableObject {
     static let shared = ThemeManager()
-    @Published var accentColor: Color {
-        didSet {
-            // 归档侧开启安全编码，与解档侧的 unarchivedObject(ofClass:from:) 策略对齐；
-            // 官方 Note 明确该开关不改变归档输出格式，因此旧数据仍可读。
-            // https://developer.apple.com/documentation/foundation/nskeyedarchiver/requiressecurecoding
-            if let data = try? NSKeyedArchiver.archivedData(withRootObject: NSColor(accentColor), requiringSecureCoding: true) {
-                UserDefaults.standard.set(data, forKey: UDK.accentColor)
-            }
-        }
+
+    /// 强调色：读写均转发到唯一存储点，本类型不参与持久化。
+    var accentColor: Color {
+        get { AppSettingsStore.shared.accentColor }
+        set { AppSettingsStore.shared.accentColor = newValue }
     }
+
+    /// 存储点变更通知的桥接订阅，使 `@ObservedObject var theme = ThemeManager.shared`
+    /// 的既有读取方无需改动即可继续收到刷新。
+    private var cancellables = Set<AnyCancellable>()
+
     private init() {
-        if let data = UserDefaults.standard.data(forKey: UDK.accentColor),
-           let nsColor = try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSColor.self, from: data) {
-            accentColor = Color(nsColor)
-        } else {
-            accentColor = .blue
-        }
+        AppSettingsStore.shared.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
     }
 }
 

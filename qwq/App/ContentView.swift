@@ -33,7 +33,6 @@ struct ContentView: View {
                          interaction: interaction,
                          navigation: navigation)
         }
-        .frame(minWidth: 800, minHeight: 550)
         // 全局用户提示层（PopupManager / hint 的唯一可见出口）：仅顶部横幅区域可点，
         // 其余区域点击穿透到下方界面；不参与、不改变原有视图层级。
         .overlay { NoticeOverlay(center: NoticeCenter.shared, theme: ThemeManager.shared) }
@@ -51,7 +50,9 @@ struct ContentView: View {
         .onAppear {
             DefaultJavaRepository.shared.preScan()
         }
-        // 窗口外观（透明标题栏 / 全尺寸内容区 / 最小尺寸 800×550）由独立修饰器负责
+        // 窗口外观（透明标题栏 / 全尺寸内容区）由独立修饰器负责；
+        // 窗口最小尺寸（800×590）的唯一声明处是 qwqApp.swift 的根视图 frame，
+        // 本视图不再重复声明（原先嵌套的 800×550 被外层 590 包住、不参与实际取值）
         .launcherWindow()
     }
 
