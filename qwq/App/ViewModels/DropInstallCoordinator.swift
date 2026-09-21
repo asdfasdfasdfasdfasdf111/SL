@@ -6,6 +6,7 @@
 //  本类型不持有 SwiftUI 视图状态，可脱离界面单独测试。
 //
 
+import Combine
 import Foundation
 
 /// 拖拽安装协调器：文件分流、实例匹配、安装执行与结果提示的唯一决策点。
