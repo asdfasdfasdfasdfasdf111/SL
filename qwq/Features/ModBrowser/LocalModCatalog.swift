@@ -21,7 +21,19 @@ enum LocalModCatalog {
         let downloads: Int
     }
 
-    private static let localCatalogLock = NSLock()
+    /// 目录内存锁（保护 `localCatalog` / `localCatalogItemsByType`，临界区只做字典读写）。
+    ///
+    /// 显式 `nonisolated`：工程启用 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`，未标注的
+    /// 静态成员会被推断为 `@MainActor`；本锁同时被后台预热路径（`Task.detached` 内的
+    /// `items(for:)` / `loadCatalog()`）使用，必须能在主 actor 之外访问。
+    /// 依据：《Concurrency》Nonstructured Concurrency —— `Task.detached` 不继承任何 actor 隔离，
+    /// 其闭包内不得同步访问主 actor 隔离的静态成员。
+    /// 依据：《Concurrency》Sendable Types —— 无可变状态、由其它并发安全数据构成的类型可跨并发域共享；
+    /// 本锁自身的可变状态由锁自身串行化，不依赖主 actor。
+    /// 官方链接：
+    ///   https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/
+    ///   https://github.com/swiftlang/swift-evolution/blob/main/proposals/0466-control-default-actor-isolation.md
+    private nonisolated static let localCatalogLock = NSLock()
     private nonisolated(unsafe) static var localCatalog: [Item]?
     private nonisolated(unsafe) static var localCatalogItemsByType: [String: [DownloadedItem]] = [:]
     /// 本地全量目录是否已在后台解析完成。主线程只在它为 true 时才调用 items，
@@ -52,7 +64,16 @@ enum LocalModCatalog {
     }
 
     /// 按分类返回本地全量条目（首次按类型映射缓存，线程安全）
-    static func items(for section: GameSidebarSection) -> [DownloadedItem] {
+    ///
+    /// 显式 `nonisolated`：四类调用者中，`preload()` 的 `Task.detached` 预热路径位于主 actor 之外；
+    /// 实现只做「加锁查内存缓存 → 读本地目录 → 建映射」，返回值是纯值类型，不触碰 UI / AppKit 状态，
+    /// 因此不需要主 actor 保护。
+    /// 依据：《Concurrency》Nonstructured Concurrency —— `Task.detached` 不继承任何 actor 隔离。
+    /// 依据：SE-0466《Control default actor isolation inference》—— 需要并发时以 `nonisolated` 显式退出默认隔离。
+    /// 官方链接：
+    ///   https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/
+    ///   https://github.com/swiftlang/swift-evolution/blob/main/proposals/0466-control-default-actor-isolation.md
+    nonisolated static func items(for section: GameSidebarSection) -> [DownloadedItem] {
         let type: String
         switch section {
         case .mod: type = "mod"
@@ -109,13 +130,20 @@ enum LocalModCatalog {
     }
 
     /// 搜索翻译预取：后台对四类目录各取前 3 条未翻译项目预热翻译缓存
+    ///
+    /// 隔离说明：`TranslationService` 受工程默认隔离（`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`）
+    /// 保护，其静态单例与实例方法均为主 actor 隔离，不能在 `Task.detached`（不继承任何 actor 隔离）
+    /// 的上下文里同步访问。本方法把重活（Modrinth 搜索网络请求 + JSON 解析）留在后台任务内，
+    /// 仅把「缓存判定 + 触发翻译」交给 `@MainActor` 的 `preTranslateOne(projectId:)`。
+    /// 依据：《Concurrency》Nonstructured Concurrency（`Task.detached` 不继承任何 actor 隔离）
+    ///       + The Main Actor（主 actor 隔离成员只能由主 actor 代码同步调用，非主 actor 需 `await` 切换）。
+    /// 官方链接：https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/
     static func preTranslateAll() {
         Task.detached(priority: .background) {
             let categories: [(String, String)] = [
                 ("mod", "模组"), ("resourcepack", "资源包"),
                 ("shader", "光影"), ("modpack", "整合包")
             ]
-            let service = TranslationService.shared
             for (type, _) in categories {
                 if Task.isCancelled { return }
                 let facets = "[[\"project_type:\(type)\"]]"
@@ -129,18 +157,42 @@ enum LocalModCatalog {
                 for hit in hits.prefix(3) {
                     if Task.isCancelled { return }
                     let projectId = hit["project_id"] as? String ?? hit["slug"] as? String ?? ""
-                    guard !projectId.isEmpty, service.cachedTranslation(for: projectId) == nil else { continue }
-                    _ = try? await service.translateText(text: "", projectId: projectId)
+                    guard !projectId.isEmpty else { continue }
+                    // 切到主 actor 完成缓存判定与翻译触发；不把非 Sendable 的 TranslationService
+                    // 引用带出隔离域，因此该步骤不返回实例
+                    await preTranslateOne(projectId: projectId)
                 }
             }
         }
+    }
+
+    /// 单条翻译预热：缓存判定 + 触发翻译。
+    ///
+    /// 显式 `@MainActor`：`TranslationService` 及其依赖的 `CacheManager` 均由工程默认隔离推断为
+    /// 主 actor 隔离，其同步成员（`cachedTranslation(for:)`）只能在主 actor 上调用；本方法把需要在
+    /// 主 actor 上完成的一小段逻辑收敛于此，网络等重活仍留在 `preTranslateAll()` 的后台任务内。
+    /// 依据：《Concurrency》The Main Actor —— `@MainActor func` 只在主 actor 上运行，
+    /// 从非主 actor 代码调用必须 `await`（切换到主 actor 引入潜在挂起点）。
+    /// 官方链接：https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/
+    @MainActor
+    private static func preTranslateOne(projectId: String) async {
+        guard TranslationService.shared.cachedTranslation(for: projectId) == nil else { return }
+        _ = try? await TranslationService.shared.translateText(text: "", projectId: projectId)
     }
 
     // MARK: - 目录解析（bundle gzip → 内存 → 磁盘缓存）
 
     /// 从 bundle 读取 modrinth_catalog.json.gz 并解析（全量目录缓存）。
     /// 优先复用解析结果的磁盘缓存，避免每次冷启动都重新解压 12 万条 gzip。
-    static func loadCatalog() -> [Item] {
+    ///
+    /// 显式 `nonisolated`：由 `preload()`（`Task.detached`）与 `items(for:)` 共同调用，
+    /// 实现全部是本地文件 / gzip / JSON 解析，属纯 CPU+IO，与主 actor 状态无关；
+    /// 内部写回磁盘缓存的 `Task.detached` 也据此无需回主 actor。
+    /// 依据：《Concurrency》Nonstructured Concurrency + SE-0466。
+    /// 官方链接：
+    ///   https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/
+    ///   https://github.com/swiftlang/swift-evolution/blob/main/proposals/0466-control-default-actor-isolation.md
+    nonisolated static func loadCatalog() -> [Item] {
         localCatalogLock.lock()
         defer { localCatalogLock.unlock() }
         if let localCatalog { return localCatalog }
@@ -181,7 +233,10 @@ enum LocalModCatalog {
     }
 
     /// 解压 gzip 数据（系统 libz，windowBits=31 支持 gzip 格式）
-    private static func inflateGzipData(_ input: Data) -> Data? {
+    ///
+    /// 显式 `nonisolated`：与 `loadCatalog()` 同属非主 actor 的解析链路，只做 C 库解压，无隔离状态。
+    /// 官方链接：https://github.com/swiftlang/swift-evolution/blob/main/proposals/0466-control-default-actor-isolation.md
+    private nonisolated static func inflateGzipData(_ input: Data) -> Data? {
         // 空 Data 时 withUnsafeBytes 的 baseAddress 为 nil，下方强解包会崩溃（bundle 资源被截断/损坏为 0 字节时触发）
         guard !input.isEmpty else { return nil }
         return input.withUnsafeBytes { (srcRaw: UnsafeRawBufferPointer) -> Data? in
@@ -214,13 +269,20 @@ enum LocalModCatalog {
     }
 
     /// 解析结果磁盘缓存路径（参考 PCL 的 Cache\download.json：二次冷启动跳过 gzip 解压，秒级出数据）
-    private static func catalogCacheURL() -> URL? {
+    ///
+    /// 显式 `nonisolated`：仅拼接「缓存目录」路径，无隔离状态；
+    /// 供非主 actor 的 `loadCatalog()` / `saveCatalogToDisk(_:)` 复用。
+    /// 官方链接：https://github.com/swiftlang/swift-evolution/blob/main/proposals/0466-control-default-actor-isolation.md
+    private nonisolated static func catalogCacheURL() -> URL? {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
             .appendingPathComponent("modrinth_local_catalog_v1.json")
     }
 
     /// 缓存是否仍有效：bundle 内的 gzip 源比磁盘缓存新则视为过期需重解
-    private static func isCatalogCacheFresh() -> Bool {
+    ///
+    /// 显式 `nonisolated`：只比较两个文件的时间戳，无隔离状态。
+    /// 官方链接：https://github.com/swiftlang/swift-evolution/blob/main/proposals/0466-control-default-actor-isolation.md
+    private nonisolated static func isCatalogCacheFresh() -> Bool {
         guard let gzURL = Bundle.main.url(forResource: "modrinth_catalog", withExtension: "json.gz"),
               let cacheURL = catalogCacheURL() else { return false }
         let fm = FileManager.default
@@ -229,7 +291,9 @@ enum LocalModCatalog {
         return cacheDate >= gzDate
     }
 
-    private static func loadCatalogFromDisk() -> [Item]? {
+    /// 显式 `nonisolated`：只读磁盘缓存文件并解码，无隔离状态。
+    /// 官方链接：https://github.com/swiftlang/swift-evolution/blob/main/proposals/0466-control-default-actor-isolation.md
+    private nonisolated static func loadCatalogFromDisk() -> [Item]? {
         guard isCatalogCacheFresh(),
               let url = catalogCacheURL(),
               let data = try? Data(contentsOf: url),
@@ -238,7 +302,13 @@ enum LocalModCatalog {
         return items
     }
 
-    private static func saveCatalogToDisk(_ items: [Item]) {
+    /// 显式 `nonisolated`：由 `loadCatalog()` 内的 `Task.detached(priority: .utility)` 调用，
+    /// 只做 JSON 编码 + 原子写盘；参数 `[Item]` 是纯值类型，不涉及主 actor 状态。
+    /// 依据：《Concurrency》Nonstructured Concurrency —— `Task.detached` 不继承任何 actor 隔离。
+    /// 官方链接：
+    ///   https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/
+    ///   https://github.com/swiftlang/swift-evolution/blob/main/proposals/0466-control-default-actor-isolation.md
+    private nonisolated static func saveCatalogToDisk(_ items: [Item]) {
         guard let url = catalogCacheURL() else { return }
         if let data = try? JSONEncoder().encode(items) {
             try? data.write(to: url, options: .atomic)

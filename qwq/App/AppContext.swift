@@ -66,9 +66,22 @@ final class AppContext {
         // 传入缓存目录，避免 CacheManager 内部访问 AppContext.shared 造成递归锁
         cacheManager = CacheManager(cacheRoot: supportURL.appendingPathComponent("Cache"))
 
-        // 启动后台清理磁盘缓存：翻译缓存等超过 30 天未访问的文件删除（可随时重新生成，
-        // 控制 Cache 目录体积；枚举+删除全部在锁外后台执行，不碰主线程）
-        Task.detached(priority: .utility) { [cacheManager] in
+        // 启动清理磁盘缓存：翻译缓存等超过 30 天未访问的文件删除（可随时重新生成，控制 Cache 目录体积）。
+        //
+        // 隔离修正：`cleanDiskCache(olderThan:)` 声明在 `CacheManager`，该类未显式标注隔离，被工程
+        // 默认隔离（`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`）推断为 `@MainActor`，属主 actor 隔离
+        // 方法；`Task.detached` 不继承任何 actor 隔离，在其闭包内同步调用会触发
+        // 「main actor-isolated instance method cannot be called from outside of the actor」告警
+        // （Swift 6 语言模式下为错误）。此处改用 `Task(priority:operation:)`——它继承当前 actor
+        // 上下文，并显式标注 `@MainActor`，使调用在主 actor 上完成；清理是启动期一次性的目录枚举，
+        // 不落在滚动等高频路径上。
+        // 依据：《Concurrency》Unstructured Concurrency —— `Task.detached` 不继承 actor 隔离、优先级
+        //       与任务局部状态，`Task { }` 继承当前任务的 actor 隔离；`@MainActor` 闭包标注须写在
+        //       捕获列表之前、`in` 之前。
+        // 依据：《Concurrency》The Main Actor —— `@MainActor` 函数只在主 actor 上运行，从主 actor
+        //       代码中可同步调用，从非主 actor 代码调用必须 `await` 切换。
+        // 官方链接：https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/
+        Task(priority: .utility) { @MainActor [cacheManager] in
             cacheManager.cleanDiskCache(olderThan: 30)
         }
 
