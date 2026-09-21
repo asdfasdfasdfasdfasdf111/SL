@@ -3,21 +3,26 @@ import AppKit
 
 /// 游戏启动编排 + 启动会话生命周期管理（CategoryContentView.startLaunch/closeSession/handleCloseSessionTap 下沉）。
 ///
-/// 只操作引用类型全局单例（LauncherSettings / LaunchSessionManager）与全局函数 pclLaunch：
-/// 六段 pclLaunch 回调（progress/phase/log/success/ready/completion）全部**零 self 捕获**——
-/// completion 在游戏退出时才触发（可运行数小时），视图早已随分类切换销毁，
-/// 操作单例而非视图 @State 即根治 UAF（与 DownloadDetailManager 治理模式一致）。
+/// 启动入口由用例层 `LaunchService` 承担（实现为 `Adapters/MinecraftInstanceLaunchService`，
+/// 内部仍委托桥接层 `pclLaunch`）：本文件只构造 `LaunchRequest` 并处理 `LaunchEvent`，
+/// 不再直接依赖 `pclLaunch` 的六段回调签名。事件处理与原回调逐条等价（时序与文案一致），
+/// 迁移计划、差异分析与不可迁移项见 `Adapters/DUAL_FLOW.md`。
+/// 回退：还原本文件的启动入口接线即可恢复旧路径（桥接层与旧流程未被删除）。
+///
+/// 只操作引用类型全局单例（LauncherSettings / LaunchSessionManager）与用例层服务：
+/// 事件处理全部**零 self 捕获**——进程退出事件在游戏退出时才到达（可运行数小时），
+/// 视图早已随分类切换销毁，操作单例而非视图 @State 即根治 UAF（与 DownloadDetailManager 治理模式一致）。
 enum LaunchCoordinator {
-    /// 启动游戏（版本/用户名校验 → 皮肤资源包准备 → pclLaunch 六段回调 → 会话登记）
+    /// 启动游戏（版本/用户名校验 → 皮肤资源包准备 → 构造 LaunchRequest → 订阅启动事件 → 会话登记）
     static func start(settings: LauncherSettings, sessionManager: LaunchSessionManager) {
         sessionManager.beginLaunch()
         // 启动前准备阶段：皮肤资源包应用等耗时操作期间按钮显示「准备中…」，
         // 避免此前启动按钮变灰却仍显示「启动游戏」的无反馈等待
         sessionManager.launchPhase = .preparing
-        let gameDir = settings.selectedGameRoot.isEmpty ? nil : settings.selectedGameRoot
         let version = settings.selectedMinecraftVersion
         // PCL2 风格离线用户名校验（非空 / 无英文引号 / ≤16 字符）：
-        // 否则 1.20.5+ 会因 hello 包 writeUtf(name,16) 报 "String too big" 而进服失败
+        // 否则 1.20.5+ 会因 hello 包 writeUtf(name,16) 报 "String too big" 而进服失败。
+        // 此处保留为 UI 侧输入提示（立即反馈）；用例层入口会再做一次等价判定（见适配器 validatedUsername）。
         let username = settings.offlineUsername.trimmingCharacters(in: .whitespacesAndNewlines)
         let nameError = validateOfflineUsername(username)
         guard nameError.isEmpty else {
@@ -41,142 +46,154 @@ enum LaunchCoordinator {
                 return
             }
         }
+        // 游戏根目录：取值口径与桥接层 `pclLaunchInternal` 的 `resolvedGameDir` 完全一致
+        // （selectedGameRoot 优先，为空则取当前实例目录）。同一路径随后也用于皮肤包与 options.txt 写入。
+        let resolvedGameDirPath = settings.selectedGameRoot.isEmpty
+            ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "")
+            : settings.selectedGameRoot
         var boundLauncher: MinecraftLauncher?
 
         let startGame = {
-            pclLaunch(
-            version: version,
-            username: finalUsername,
-            gameDir: gameDir,
-            progressHandler: { progress in
-                DispatchQueue.main.async {
-                    if progress > sessionManager.launchProgress {
-                        sessionManager.launchProgress = progress
-                    }
-                    if sessionManager.launchPhase == .downloading || sessionManager.launchPhase == .installing {
-                        sessionManager.lightProgress = progress
-                    }
-                }
-            },
-            phaseHandler: { phase in
-                DispatchQueue.main.async {
-                    switch phase {
-                    case "downloading":
-                        withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                            sessionManager.launchPhase = .downloading
+            let request = LaunchRequest(
+                version: version,
+                gameRoot: URL(fileURLWithPath: resolvedGameDirPath),
+                offlineUsername: finalUsername
+            )
+            // 事件 → UI 的翻译逐条对应原 pclLaunch 六段回调，投递线程与调用点亦一致。
+            // 用例层规范结果是 launch(_:) 的返回值/抛出值；本通道为迁移期兼容缝（见适配器文件头）。
+            let service = MinecraftInstanceLaunchService(events: { event in
+                switch event {
+                case .progress(let progress):
+                    DispatchQueue.main.async {
+                        if progress > sessionManager.launchProgress {
+                            sessionManager.launchProgress = progress
                         }
-                    case "installing":
-                        withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                            sessionManager.launchPhase = .installing
+                        if sessionManager.launchPhase == .downloading || sessionManager.launchPhase == .installing {
+                            sessionManager.lightProgress = progress
                         }
-                    case "launching":
-                        sessionManager.lightProgress = 1.0
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    }
+                case .phase(let phase):
+                    DispatchQueue.main.async {
+                        switch phase {
+                        case "downloading":
                             withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                                sessionManager.launchPhase = .launching
+                                sessionManager.launchPhase = .downloading
                             }
-                            sessionManager.darkProgress = 0.2
-                            sessionManager.darkBarTarget = 1.0
-                            sessionManager.darkBarActive = true
-                            sessionManager.startDarkBarAnimation()
+                        case "installing":
+                            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                                sessionManager.launchPhase = .installing
+                            }
+                        case "launching":
+                            sessionManager.lightProgress = 1.0
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                                    sessionManager.launchPhase = .launching
+                                }
+                                sessionManager.darkProgress = 0.2
+                                sessionManager.darkBarTarget = 1.0
+                                sessionManager.darkBarActive = true
+                                sessionManager.startDarkBarAnimation()
+                            }
+                        default:
+                            break
                         }
-                    default:
-                        break
                     }
-                }
-            },
-            logHandler: { logLine in
-                DispatchQueue.main.async {
-                    guard let l = boundLauncher else { return }
-                    if let session = sessionManager.session(for: l) {
-                        session.logs.append(logLine)
-                    } else {
-                        // session 尚未建立：暂存到 launcher，建立后 flush
-                        l.pendingLogs.append(logLine)
-                    }
-                }
-            },
-            launchSuccess: {
-                DispatchQueue.main.async {
-                    if let l = boundLauncher,
-                       let session = sessionManager.session(for: l) {
-                        session.isLaunching = false
-                    }
-                    withAnimation(.exaggeratedSpring) {
-                        sessionManager.darkBarTarget = 1.0
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        withAnimation(.easeOut(duration: 0.4)) {
-                            sessionManager.launchPhase = .idle
+                case .log(let logLine):
+                    DispatchQueue.main.async {
+                        guard let l = boundLauncher else { return }
+                        if let session = sessionManager.session(for: l) {
+                            session.logs.append(logLine)
+                        } else {
+                            // session 尚未建立：暂存到 launcher，建立后 flush
+                            l.pendingLogs.append(logLine)
                         }
-                        sessionManager.resetProgress()
                     }
-                }
-            },
-            onLauncherReady: { launcher in
-                boundLauncher = launcher
-                DispatchQueue.main.async {
-                    let wasEmpty = sessionManager.sessions.isEmpty
-                    // 先触发面板弹出动画（offset/opacity 过渡）
-                    if wasEmpty {
+                case .launcherReady(let launcher):
+                    // 绑定同步完成（与旧实现一致）：后续 log 事件依赖该引用，晚绑定会丢日志；
+                    // 面板动画与 session 插入仍在主线程执行
+                    boundLauncher = launcher
+                    DispatchQueue.main.async {
+                        let wasEmpty = sessionManager.sessions.isEmpty
+                        // 先触发面板弹出动画（offset/opacity 过渡）
+                        if wasEmpty {
+                            withAnimation(.exaggeratedSpring) {
+                                sessionManager.showLogView = true
+                            }
+                        }
+                        // 再插入 session（带 transition）；索引分配与暂存日志 flush 在 addSession 内完成
+                        _ = withAnimation(.exaggeratedSpring) {
+                            sessionManager.addSession(launcher: launcher)
+                        }
+                    }
+                case .running:
+                    DispatchQueue.main.async {
+                        if let l = boundLauncher,
+                           let session = sessionManager.session(for: l) {
+                            session.isLaunching = false
+                        }
                         withAnimation(.exaggeratedSpring) {
-                            sessionManager.showLogView = true
+                            sessionManager.darkBarTarget = 1.0
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            withAnimation(.easeOut(duration: 0.4)) {
+                                sessionManager.launchPhase = .idle
+                            }
+                            sessionManager.resetProgress()
                         }
                     }
-                    // 再插入 session（带 transition）；索引分配与暂存日志 flush 在 addSession 内完成
-                    _ = withAnimation(.exaggeratedSpring) {
-                        sessionManager.addSession(launcher: launcher)
-                    }
-                }
-            },
-            completion: { launcher, result in
-                DispatchQueue.main.async {
-                    if let launcher = launcher,
-                       let session = sessionManager.session(for: launcher) {
+                case .finished(let result):
+                    DispatchQueue.main.async {
+                        guard let launcher = boundLauncher,
+                              let session = sessionManager.session(for: launcher) else { return }
                         session.isProcessRunning = false
                         session.isLaunching = false
-                        switch result {
-                        case .success(let exitCode):
-                            let userTerminated = launcher.isUserTerminated
-                            if exitCode != 0 && !userTerminated {
-                                LaunchPanelState.shared.presentError("Minecraft 异常退出 (退出码: \(exitCode))，请查看日志")
+                        let userTerminated = launcher.isUserTerminated
+                        if result.exitCode != 0 && !userTerminated {
+                            LaunchPanelState.shared.presentError("Minecraft 异常退出 (退出码: \(result.exitCode))，请查看日志")
+                        }
+                        if result.exitCode == 0 || userTerminated {
+                            // 正常退出或被用户终止：自动清掉会话，避免日志面板残留
+                            let willBeEmpty = sessionManager.sessions.count == 1
+                            withAnimation(.exaggeratedSpring) {
+                                sessionManager.removeSession(session)
+                                if willBeEmpty { sessionManager.showLogView = false }
                             }
-                            if exitCode == 0 || userTerminated {
-                                // 正常退出或被用户终止：自动清掉会话，避免日志面板残留
-                                let willBeEmpty = sessionManager.sessions.count == 1
-                                withAnimation(.exaggeratedSpring) {
-                                    sessionManager.removeSession(session)
-                                    if willBeEmpty { sessionManager.showLogView = false }
-                                }
-                            }
-                            sessionManager.resetProgress()
-                            withAnimation(.easeOut(duration: 0.3)) {
-                                sessionManager.launchPhase = .idle
-                            }
-                        case .failure(let error):
-                            sessionManager.resetProgress()
-                            withAnimation(.easeOut(duration: 0.3)) {
-                                sessionManager.launchPhase = .idle
-                                if sessionManager.sessions.isEmpty { sessionManager.showLogView = false }
-                            }
-                            LaunchPanelState.shared.presentError(error.localizedDescription)
+                        }
+                        sessionManager.resetProgress()
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            sessionManager.launchPhase = .idle
                         }
                     }
+                case .failed(let error):
+                    DispatchQueue.main.async {
+                        // launcher 引用尚未建立时的失败（用户名/实例/Java/补全）沿用旧实现行为：
+                        // 不产生任何 UI 提示，也不复位进度（旧 completion 亦在该条件内才处理）。
+                        guard let launcher = boundLauncher,
+                              sessionManager.session(for: launcher) != nil else { return }
+                        sessionManager.resetProgress()
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            sessionManager.launchPhase = .idle
+                            if sessionManager.sessions.isEmpty { sessionManager.showLogView = false }
+                        }
+                        LaunchPanelState.shared.presentError(error.localizedDescription)
+                    }
                 }
-            }
-        )
+            })
+            // 用例层入口是 async：发起后立即返回（与旧 pclLaunch 同为非阻塞）。
+            // 失败经 .failed 事件回传，故此处忽略抛出值——与旧实现一致：
+            // launcher 尚未建立时的失败在旧路径下同样不产生任何 UI 提示。
+            Task { _ = try? await service.launch(request) }
         }
 
         // 离线皮肤：确保资源包已生成并注入（PCL2 移植，幂等 hash 判断）。
         // 后台执行避免阻塞主线程。JAR 替换对 1.13+ 无效（默认皮肤在 entity/player/{slim,wide}/ 下），
         // 资源包方案全版本生效（1.19.3+ 与旧版路径都写入）。
-        let gameDirPath = settings.selectedGameRoot.isEmpty ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "") : settings.selectedGameRoot
         // 语言与皮肤写入串行在同一个后台队列（都改 options.txt，避免竞态互相覆盖）。
         // 实际游戏运行目录是 gameRoot/versions/<版本>（instance.runningDirectory，pclLaunch 实证），
         // 皮肤包与 options.txt 必须写到这里；此前写到 gameRoot 根目录游戏读不到（潜伏错误）。
         let versionGameDir: URL? = {
-            guard !gameDirPath.isEmpty, !version.isEmpty else { return nil }
-            return URL(fileURLWithPath: gameDirPath + "/versions/" + version)
+            guard !resolvedGameDirPath.isEmpty, !version.isEmpty else { return nil }
+            return URL(fileURLWithPath: resolvedGameDirPath + "/versions/" + version)
         }()
         if let versionGameDir {
             DispatchQueue.global(qos: .utility).async {

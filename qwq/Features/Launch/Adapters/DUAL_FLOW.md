@@ -212,3 +212,56 @@ func launchLongRunning(_ executable: URL, args: [String],
 - 三个适配器**尚未加入 Xcode target**（`qwq.xcodeproj` 未修改），接线时需加入 `qwq` target 的 Compile Sources。
 - 全部新增文件通过 typecheck（exit 0、error 0），且不产生新的编译告警。
 - 未引用任务约束中列出的四个已删除文件（App 层窗口封装、旧 Java 环境 / 路径发现、旧启动预检）。
+
+> 更正：`qwq.xcodeproj/project.pbxproj` 使用 `fileSystemSynchronizedGroups`（`qwq` 目录为同步文件夹），
+> `qwq/` 下新增的 `.swift` 会自动进入目标，无需手工添加 Compile Sources。上文第一句已失效。
+
+---
+
+## 六、本次接线落地记录（第 4 步的子集 + 第 0 步已完成的适配层）
+
+### 6.1 已完成的改动
+
+| 改动 | 文件 | 内容 | 等价性结论 |
+|---|---|---|---|
+| UI 启动入口改走用例层 | `Features/Launch/LaunchCoordinator.swift` | `start` 不再调用 `pclLaunch`，改为构造 `LaunchRequest` + `MinecraftInstanceLaunchService(events:)` + `Task { await service.launch(request) }` | **等价**：事件处理逐条照搬原六段回调（同一 `DispatchQueue.main.async` 包裹、同一动画参数、同一文案、同一 `boundLauncher` 同步绑定语义）；皮肤包 / options.txt 写入、用户名提示对话框、非法字符确认框均未改动 |
+| 事件兼容通道 | `Features/Launch/Adapters/MinecraftInstanceLaunchService.swift` | 新增 `LaunchEvent` / `LaunchEventHandler`，在 `pclLaunch` 各回调**原调用点同步投递** | **等价**：投递点与线程同旧回调；`.failed` 携带桥接层原始 `Error`，故 UI 文案不变（不经过 `LaunchError` 的文案归一化） |
+| 用户名校验上移 | `PCLLaunchBridge.swift`、`MinecraftInstanceLaunchService.swift` | 桥接层首段的 trim / `"Player"` 兜底 / `validateOfflineUsername` 判定整体上移到服务层 `validatedUsername` | **等价**：判定函数与兜底逐条一致，仍在实例解析之前执行（失败时机不变）；失败时 launcher 尚未建立，旧路径与新路径 UI 均不提示。唯一差异是错误载体由 `MyLocalizedError` 变为 `LaunchError`（不改变 UI 可见行为，且是风险点 R5 的整改方向） |
+
+`LaunchEvent` 之所以不是 `LaunchState`：T1（`phaseHandler("launching")` 早于 Java 选择，若由 `.resolvingJava` 驱动 UI，UI 的「launching」相位会推迟到 `onLauncherReady` 之后）、T2（UI 需要 `MinecraftLauncher` 引用做会话绑定与终止，而 `LaunchState` 不携带引用）、T8 / T9（状态由松散 `Task` 投递且无重放）。这四点未解决前，直接改状态驱动会引入用户可感知的时序变化。
+
+### 6.2 判断为「本次不做」的项与原因
+
+| 项 | 结论 | 原因 |
+|---|---|---|
+| 目录准备（`MinecraftDirectory` + `MinecraftInstance.create`）上移到服务层 | **保留在桥接层** | `MinecraftInstance.create` → `setup()` 含多次文件读写、`loadManifest()`（含 `inheritsFrom` 合并）、`resolveAndApplyJava()` 与 `saveConfig()`（写盘）。桥接层把这些放在 GCD 线程；服务层 `launch` 的执行上下文不在 `LaunchService` 契约中（工程设置 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` 下与调用方同属主 actor），上移会把同步 I/O 落到调用方线程，最坏情况是主线程。**无法在不引入线程行为变化的前提下确认等价，故保留。** 安全的上移方式：先让桥接层接受「已解析实例」（`pclLaunch(instance:…)`）并给服务层一个显式的后台执行上下文，再迁移 |
+| Java 扫描等待（`preScanJavaAsync` + 3s 等待）上移 | **保留在桥接层** | ① R9：扫描结果在**主线程**回写（`JavaManager.swift:41-45`），服务层若在主 actor 上做同步等待会直接死锁；② 时序变化：现状是「先补文件、再等扫描」，上移后等待发生在补全之前，用户会在启动初期先停顿最多 3s，属可感知变化 |
+| 双份失败处理 / 日志双通道 / 重复窗口检测（表中第 10、11、13 行） | **本次不做** | 需要改 `MinecraftLauncher.swift`、`MinecraftInstance.swift`，不在本次允许修改的范围内 |
+
+### 6.3 本次发现的真实缺陷（已记录，未修改）
+
+- **D7 会话「运行中」标志恒为 false**：`GameSession.isProcessRunning` 初始化 `false`（`GameSession.swift:15`），全代码库**没有任何位置将其置为 `true`**。后果：
+  - `LaunchCoordinator.closeSession`（`:227`）的 `if session.isProcessRunning` 恒不成立 → 点日志卡关闭按钮**不会终止游戏进程**，只移除卡片；
+  - `LaunchCoordinator.handlePowerTap`（`:250`）过滤 `isProcessRunning` 恒为空 → 电源按钮走「取消启动并复位」分支，**不会终止全部游戏**；
+  - `SessionLogCardView.swift:28` 的提示恒为「移除此日志」；`LaunchSessionManager.hasRunningSessions` 恒 false。
+  - 修法（下一步）：在 `GameSession` 插入时或 `onLauncherReady` 之后置 `true`，退出 / 终止时置 `false`。属**用户可感知行为变化**（关闭按钮将开始真的杀进程），需产品确认后单独提交。
+- **D8 早期失败静默**（既有行为，本次刻意保持）：`launcher` 尚未建立时的失败（用户名 / 实例 / Java / 文件补全 / 客户端 JAR）经 `completion(nil, .failure)` 回传，而 UI 的处理全部位于 `if let launcher` 内 → 既不弹提示也不复位进度条，界面停在「启动中」。本次接线按「行为等价」原则保留该行为（`LaunchCoordinator` 处理 `.failed` 时同样以 `boundLauncher` 非空为前置条件）。
+
+### 6.4 本次验证
+
+- 类型检查（不跑 `xcodebuild`，避免与测试 target 的验证互相干扰）：
+  - 任务给定配置：`exit 0`、`error 0`、告警 **44**（与改动前逐条一致）；
+  - 工程真实并发设置（`-swift-version 5 -default-isolation MainActor`）：`exit 0`、`error 0`、告警 **88**（与改动前逐条一致）。
+- 仍未接入：`GameSessionStore`（UI 尚未订阅状态流），故本次服务实例以 `sessionStore: nil` 构造，状态流通道为空转。
+- 终止路径未变：UI 仍调 `session.launcher.terminate()`；`LaunchService.terminate(sessionID:)` 尚未被 UI 使用（R3 未解决前不能换）。
+
+### 6.5 需要真机验证的项（本次改动相关）
+
+1. 正常启动：日志面板逐行刷新时序与暂停 / 恢复（旧路径的 `pendingLogs` 暂存 flush 是否仍无丢行）；
+2. 退出：`exitCode == 0` 自动清卡片、非 0 弹「Minecraft 异常退出 (退出码: N)」文案与旧版一字不差；
+3. 进程未拉起（如把 Java 路径改成不可执行文件）：应弹「启动失败：…」而非「异常退出」；
+4. Java 未安装：应**无任何提示**且进度条停在「启动中」（D8 的既有行为，用来确认本次未意外改变）；
+5. 多开两个不同版本：两条启动互不串台（各自独立服务实例与事件流）；
+6. 启动过程中切换分类页再回来：回调不丢（事件处理零视图捕获）；
+7. 用户名三条校验分支（空 / 含 `"` / 超 16 字符）与非法字符确认框；
+8. 游戏根目录为空（未配置目录）时点击启动：确认行为与改动前一致（本次 `gameRoot` 由 `URL(fileURLWithPath:)` 承接路径字符串，空串会退化为工作目录，此边界不可达但需在真机确认无副作用）。

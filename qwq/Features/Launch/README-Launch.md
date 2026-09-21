@@ -90,5 +90,17 @@
 
 - 本目录文件**尚未加入 Xcode target**（`qwq.xcodeproj` 未被修改）。
   接线阶段需把上述 `.swift` 文件加入 target `qwq` 的 Compile Sources。
+
+  > 更正：工程使用 `fileSystemSynchronizedGroups`（`qwq` 为同步文件夹），`qwq/` 下新增 `.swift`
+  > 会自动进入 target，无需手工添加。
+
 - 所有新文件均通过 `xcrun swiftc -typecheck -target arm64-apple-macosx13.0` 校验，无警告。
 - 本层目前没有任何调用方，纯粹是结构准备；未改动任何既有行为。
+
+  > 更新：**已完成「UI 启动入口改走 `LaunchService`」与「用户名校验上移到服务层」**。
+  > 实际落地范围、逐条等价性论证、判断为「不做」的项与原因、新发现的缺陷、typecheck 结果、
+  > 待真机验证清单，统一记录在 `Adapters/DUAL_FLOW.md` 第六节，本文件不再重复。
+  >
+  > 与上文第 2 步描述的差异：UI 侧暂**不**订阅 `AsyncStream<LaunchState>`，而是经由
+  > `LaunchEvent` 兼容通道接收与旧 `pclLaunch` 回调等时序的事件；
+  > 原因见 DUAL_FLOW.md 第 6.1 节列出的风险点 T1 / T2 / T8 / T9。

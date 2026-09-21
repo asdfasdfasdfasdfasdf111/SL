@@ -40,7 +40,7 @@
 //  | LaunchRequest 字段        | 现状 | 说明 |
 //  |--------------------------|------|------|
 //  | version / gameRoot        | 已使用 | 直接对应 `pclLaunch(version:gameDir:)`，gameDir 语义即 `MinecraftDirectory.rootURL` |
-//  | offlineUsername           | 已使用 | 直接对应 `pclLaunch(username:)`；用户名校验由桥接层内部执行（本服务不重复校验） |
+//  | offlineUsername           | 已使用 | 直接对应 `pclLaunch(username:)`；校验与空值兜底已上移到本服务（`validatedUsername`），桥接层不再重复校验 |
 //  | instanceID / runningDirectory | 未使用 | 桥接层自行用 `MinecraftDirectory` + `MinecraftInstance.create` 建实例 |
 //  | javaExecutable            | 未使用 | 桥接层自行走 JavaResolverBridge → DataManager → JavaManager 三级选择 |
 //  | memoryMB / qualityOfServiceRawValue | 未使用 | 内存与 QoS 取自 `instance.config.maxMemory` / `.qualityOfService`，不经过请求 |
@@ -55,9 +55,50 @@
 //  缺少该标志时，用户关闭游戏会被判定为异常退出并弹出「Minecraft 异常退出」提示。
 //  因此本服务的 `terminate(sessionID:)` 不经会话存储，直接调用 `MinecraftLauncher.terminate()`。
 //
+//  MARK: - `LaunchEvent` 兼容通道（迁移期，稳定后删除）
+//
+//  UI 侧（`LaunchCoordinator`）改由本服务发起启动后，仍需「同一时序、同一文案」地收到
+//  旧路径 `pclLaunch` 的六段回调，否则会引入用户可感知的行为变化。当前不能直接改用
+//  `LaunchState` 状态流，原因：
+//    - T1：`phaseHandler("launching")` 发生在 Java 选择**之前**，若由 `.resolvingJava`
+//      驱动 UI，UI 的「launching」相位会推迟到 `onLauncherReady` 之后，进度条观感变化；
+//    - T2：UI 需要在 `onLauncherReady` 时刻拿到 `MinecraftLauncher` 引用（会话绑定与
+//      `terminate()` 都依赖它），而 `LaunchState` 不携带该引用；
+//    - T8/T9：状态由松散 `Task` 投递且无重放，UI 可能收到乱序或漏掉早期状态。
+//  故本服务额外提供一条**与 `pclLaunch` 回调调用点逐条对应、同步投递**的事件通道：
+//  `LaunchEvent` 只是迁移期的兼容缝，用例层的规范结果仍是 `launch(_:)` 的返回值与抛出值。
+//  待 T1/T2/T8/T9 落实（进程创建早于 `onLauncherReady`、状态带引用、store 支持重放）后，
+//  本通道与 `logSink` 一并删除，UI 改为订阅 `GameSessionStore.observe(sessionID:)`。
+//
 
 import Foundation
 import os
+
+/// 启动过程事件：与桥接层 `pclLaunch` 的六段回调**逐条对应**，在各自原调用点同步投递。
+/// 仅作 UI 迁移期的兼容通道，不是用例层契约（见文件头「LaunchEvent 兼容通道」）。
+public enum LaunchEvent {
+    /// 文件补全进度（0~1）→ `pclLaunch.progressHandler`（不节流，UI 侧自行做「只前进」钳制）
+    case progress(Double)
+    /// 桥接相位名（`downloading` / `launching`）→ `pclLaunch.phaseHandler`
+    case phase(String)
+    /// 游戏日志行 → `pclLaunch.logHandler`
+    case log(String)
+    /// 启动器引用就绪（此时进程尚未拉起）→ `pclLaunch.onLauncherReady`
+    case launcherReady(MinecraftLauncher)
+    /// 游戏窗口已出现，或进程以退出码 0 结束 → `pclLaunch.launchSuccess`
+    case running
+    /// 进程退出（含退出码）→ `pclLaunch.completion` 的 `.success` 分支
+    case finished(LaunchResult)
+    /// 启动失败（携带桥接层原始错误）→ `pclLaunch.completion` 的 `.failure` 分支。
+    /// 携带原始 `Error` 而非 `LaunchError`：桥接层文案尚未类型化（见 DUAL_FLOW.md 风险点 R5），
+    /// 转成 `LaunchError` 会改变 UI 展示文案，迁移期必须保持原文案。
+    case failed(Error)
+}
+
+/// 启动事件处理闭包。刻意**不加** `@Sendable`：UI 侧实现需要读写其中的会话管理器与
+/// launcher 引用（均为非 Sendable 的引用类型），加 `@Sendable` 只会产生大量
+/// SendableClosureCaptures 告警而不带来任何隔离收益（投递线程与旧回调一致）。
+public typealias LaunchEventHandler = (LaunchEvent) -> Void
 
 /// 服务侧可变状态整体（作用域锁保护，避免 NSLock 在 async 上下文中的不可用告警）；
 /// `MinecraftLauncher` 为引用类型且非 Sendable，故此处显式声明不做检查。
@@ -72,47 +113,63 @@ public final class MinecraftInstanceLaunchService: LaunchService, @unchecked Sen
 
     private let sessionStore: GameSessionStore?
     private let logSink: LogSink?
+    /// 迁移期兼容通道（见文件头说明），稳定后与 `logSink` 一并删除
+    private let events: LaunchEventHandler?
 
     /// 会话 ID → launcher 引用，供 terminate 使用
     private let runningState = OSAllocatedUnfairLock<LaunchRunningState>(initialState: .init())
 
-    public init(sessionStore: GameSessionStore? = nil, logSink: LogSink? = nil) {
+    public init(
+        sessionStore: GameSessionStore? = nil,
+        logSink: LogSink? = nil,
+        events: LaunchEventHandler? = nil
+    ) {
         self.sessionStore = sessionStore
         self.logSink = logSink
+        self.events = events
     }
 
     // MARK: - LaunchService
 
     @discardableResult
     public func launch(_ request: LaunchRequest) async throws -> LaunchResult {
+        // 启动前参数预处理：离线用户名校验（原桥接层 pclLaunchInternal 首段上移至用例层，判定逐条等价）
+        let safeUsername = try Self.validatedUsername(request.offlineUsername)
         let sessionID = UUID()
         let startedAt = Date()
         // 桥接层理论上只回调一次 completion（MinecraftLauncher 内部有一次性门控），
         // 这里再加一道门控，防止 continuation 被重复恢复（重复恢复会直接触发运行时崩溃）
         let gate = LaunchResumeGate()
         let progressRelay = LaunchProgressRelay(store: sessionStore, sessionID: sessionID)
+        // 事件通道在逃逸闭包内使用，先取局部快照，避免闭包强引用 self
+        let events = self.events
 
         await sessionStore?.update(.preparing, for: sessionID)
 
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<LaunchResult, Error>) in
             pclLaunch(
                 version: request.version,
-                username: request.offlineUsername,
+                username: safeUsername,
                 gameDir: request.gameRoot.path,
                 progressHandler: { progress in
                     progressRelay.emit(progress)
+                    events?(.progress(progress))
                 },
                 phaseHandler: { [weak self] phase in
                     self?.handle(phase: phase, sessionID: sessionID)
+                    events?(.phase(phase))
                 },
                 logHandler: { [weak self] line in
                     self?.logSink?(sessionID, line)
+                    events?(.log(line))
                 },
                 launchSuccess: { [weak self] in
+                    events?(.running)
                     guard let self else { return }
                     Task { await self.sessionStore?.update(.running, for: sessionID) }
                 },
                 onLauncherReady: { [weak self] launcher in
+                    events?(.launcherReady(launcher))
                     guard let self else { return }
                     self.remember(sessionID: sessionID, launcher: launcher)
                     self.registerSessionWhenProcessStarts(
@@ -133,10 +190,13 @@ public final class MinecraftInstanceLaunchService: LaunchService, @unchecked Sen
                                 logURL: launcher?.logURL,
                                 duration: Date().timeIntervalSince(startedAt)
                             )
+                            events?(.finished(launchResult))
                             await self?.sessionStore?.update(.finished(launchResult), for: sessionID)
                             self?.forget(sessionID: sessionID)
                             continuation.resume(returning: launchResult)
                         case .failure(let error):
+                            // 先投递原始错误（UI 文案以它为准），再把契约要求的类型化错误抛给调用方
+                            events?(.failed(error))
                             // 进程未成功拉起：按契约抛错，不返回 LaunchResult
                             let launchError = Self.mapFailure(error, version: request.version)
                             await self?.sessionStore?.update(.failed(launchError), for: sessionID)
@@ -211,6 +271,28 @@ public final class MinecraftInstanceLaunchService: LaunchService, @unchecked Sen
             }
             log("[LaunchService] 5s 内未取得进程引用，会话 \(sessionID) 未登记（启动与终止不受影响）")
         }
+    }
+
+    // MARK: - 启动前参数预处理
+
+    /// 离线用户名预处理（PCL2 风格）：trim → 空则取 `"Player"` → 校验（非空 / 无英文引号 / ≤16 UTF-16 code unit）。
+    ///
+    /// 判定与兜底逐条移植自原桥接层 `pclLaunchInternal` 首段（该段已在本次改动中删除），
+    /// 校验规则仍由唯一的 `validateOfflineUsername` 提供，未新增任何规则。
+    /// 已论证的等价性：
+    ///  - 判定与兜底：trim / 空值取 `"Player"` / 同一校验函数，且仍在「实例解析之前」执行，失败时机不变；
+    ///  - 传给桥接层的玩家名：仍是兜底后的值（桥接层用它构造 `OfflineAccount` 与 `options.playerName`）；
+    ///  - UI 可见行为：旧路径下该校验失败经 `completion(nil, .failure)` 回传，launcher 为 nil，
+    ///    UI 不产生任何提示；新路径抛出错误、`LaunchCoordinator` 同样不提示（行为一致）。
+    /// 唯一差异是错误载体由 `MyLocalizedError` 变为契约要求的 `LaunchError`（DUAL_FLOW.md 风险点 R5 的整改方向）。
+    static func validatedUsername(_ raw: String) throws -> String {
+        var safe = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if safe.isEmpty { safe = "Player" }
+        let reason = validateOfflineUsername(safe)
+        guard reason.isEmpty else {
+            throw LaunchError.unknown("离线登录参数无效：\(reason)")
+        }
+        return safe
     }
 
     // MARK: - 错误映射

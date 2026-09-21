@@ -50,6 +50,8 @@ extension MinecraftLauncher {
 
 /// 兼容启动入口：从旧 UI 参数构建 PCL.Mac 实例并启动
 /// 注意：本函数不阻塞，立即返回；启动过程通过回调通知 UI
+/// 前置条件：`username` 必须已通过用例层校验（trim 后非空、无英文引号、≤16 UTF-16 code unit，
+/// 空值调用方需自行兜底为 "Player"），本函数不再重复校验。
 public func pclLaunch(
     version: String,
     username: String,
@@ -91,17 +93,11 @@ private func pclLaunchInternal(
 ) {
     let resolvedGameDir = gameDir ?? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "")
 
-    // 离线用户名 PCL2 风格校验（空 → "Player" 兜底；含引号 / 超过 16 字符 → 直接失败）。
-    // 1.20.5+ 的 ServerboundHelloPacket 编码时 writeUtf(name, 16) 强校验：
-    //   超过 16 字符抛 EncoderException "String too big (was N characters, max 16)"，
-    // 表现为进服务器/开局域网时报 Failed to encode packet 'serverbound/minecraft:hello'
-    var safeUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
-    if safeUsername.isEmpty { safeUsername = "Player" }
-    let nameError = validateOfflineUsername(safeUsername)
-    guard nameError.isEmpty else {
-        completion(nil, .failure(MyLocalizedError(reason: "离线登录参数无效：\(nameError)")))
-        return
-    }
+    // 离线用户名校验已上移至用例层（`MinecraftInstanceLaunchService.validatedUsername`，
+    // Features/Launch/Adapters/MinecraftInstanceLaunchService.swift）：
+    // 本函数的调用方必须保证 `username` 已 trim、非空、不含英文引号且不超过 16 个 UTF-16 code unit。
+    // 上移依据：该判定原本在三处重复（UI 输入提示 / 本函数 / 用例层），逐步合并到用例层唯一入口；
+    // 等价性论证（判定、兜底、失败时机、失败时 UI 不提示）见同目录 DUAL_FLOW.md。
 
     let minecraftDir = MinecraftDirectory(
         rootURL: URL(fileURLWithPath: resolvedGameDir),
@@ -114,9 +110,9 @@ private func pclLaunchInternal(
     }
 
     // 设置离线账号（PCL2 移植：UUID 走 McLoginLegacyUuid，accessToken = UUID）
-    let account = OfflineAccount(safeUsername)
+    let account = OfflineAccount(username)
     let options = LaunchOptions()
-    options.playerName = safeUsername
+    options.playerName = username
     options.uuid = account.uuid
     options.account = .offline(account)
     options.skipResourceCheck = true
