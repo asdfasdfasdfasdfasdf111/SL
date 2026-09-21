@@ -238,14 +238,18 @@ func launchLongRunning(_ executable: URL, args: [String],
 | Java 扫描等待（`preScanJavaAsync` + 3s 等待）上移 | **保留在桥接层** | ① R9：扫描结果在**主线程**回写（`JavaManager.swift:41-45`），服务层若在主 actor 上做同步等待会直接死锁；② 时序变化：现状是「先补文件、再等扫描」，上移后等待发生在补全之前，用户会在启动初期先停顿最多 3s，属可感知变化 |
 | 双份失败处理 / 日志双通道 / 重复窗口检测（表中第 10、11、13 行） | **本次不做** | 需要改 `MinecraftLauncher.swift`、`MinecraftInstance.swift`，不在本次允许修改的范围内 |
 
-### 6.3 本次发现的真实缺陷（已记录，未修改）
+### 6.3 本次发现的真实缺陷
 
-- **D7 会话「运行中」标志恒为 false**：`GameSession.isProcessRunning` 初始化 `false`（`GameSession.swift:15`），全代码库**没有任何位置将其置为 `true`**。后果：
+- **D7 会话「运行中」标志恒为 false（已修复）**：`GameSession.isProcessRunning` 初始化 `false`（`GameSession.swift:15`），全代码库**没有任何位置将其置为 `true`**。后果：
   - `LaunchCoordinator.closeSession`（`:227`）的 `if session.isProcessRunning` 恒不成立 → 点日志卡关闭按钮**不会终止游戏进程**，只移除卡片；
   - `LaunchCoordinator.handlePowerTap`（`:250`）过滤 `isProcessRunning` 恒为空 → 电源按钮走「取消启动并复位」分支，**不会终止全部游戏**；
   - `SessionLogCardView.swift:28` 的提示恒为「移除此日志」；`LaunchSessionManager.hasRunningSessions` 恒 false。
-  - 修法（下一步）：在 `GameSession` 插入时或 `onLauncherReady` 之后置 `true`，退出 / 终止时置 `false`。属**用户可感知行为变化**（关闭按钮将开始真的杀进程），需产品确认后单独提交。
-- **D8 早期失败静默**（既有行为，本次刻意保持）：`launcher` 尚未建立时的失败（用户名 / 实例 / Java / 文件补全 / 客户端 JAR）经 `completion(nil, .failure)` 回传，而 UI 的处理全部位于 `if let launcher` 内 → 既不弹提示也不复位进度条，界面停在「启动中」。本次接线按「行为等价」原则保留该行为（`LaunchCoordinator` 处理 `.failed` 时同样以 `boundLauncher` 非空为前置条件）。
+
+  **修复（LaunchCoordinator.swift `.running` 分支）**：进程确认拉起（窗口出现，或退出码 0 兜底）时置 `isProcessRunning = (launcher.currentProcess?.isRunning ?? false)`。取值读 launcher 自身 `currentProcess` 的实时状态，故退出码 0 兜底触发的「已退出」不会被误置为运行中；终止路径仍走 `MinecraftLauncher.terminate()`（`PCLLaunchBridge.swift:23-26`，内部 `currentProcess?.terminate()` + 置 `isUserTerminated`），**不是** `instance.process`，因此多开时各会话只终止自己的进程。标志的写入口已在 `GameSession.swift` 注释中固定为 `LaunchCoordinator` 单一归属。
+  - 未覆盖的边界（属 T3 既有风险，不在本次范围）：窗口始终未被 `CGWindowList` 检测到的进程不会有 `.running`，该会话仍不可终止；「启动中取消」走的仍是 `isCancelled` no-op 桩（`PCLLaunchBridge.swift:12-15`），本次未改动。
+- **D8 早期失败静默（已修复）**：`launcher` 尚未建立时的失败（用户名 / 实例 / Java / 文件补全 / 客户端 JAR）经 `completion(nil, .failure)` 回传，而 UI 的处理全部位于 `if let launcher` 内 → 既不弹提示也不复位进度条，界面停在「启动中」。
+  **修复（LaunchCoordinator.swift）**：新增 `reportLaunchFailure`（复用既有 `LaunchPanelState.presentError`，与 launcher 已建立时的失败同一呈现通道，故不改动任何文案），`.failed` 事件不再以 `boundLauncher` / 会话存在为前置条件；`Task { try? await … }` 改为 `do/catch`，把用例层在进入桥接之前抛出的失败（离线用户名非法）也纳入同一通道；两条通道共用一次性门控 `LaunchFailureNoticeGate`，避免同一次启动弹两次提示。进度经 `resetProgress()` + `launchPhase = .idle` 复位。文案仍是桥接层原始描述，与 D2 的「启动失败 vs 异常退出」区分口径一致。
+  - 未改动的部分：桥接层各失败分支的文案（已含下一步指引，如 Java 未命中的「请先在「Java 管理」中扫描或下载 Java」、客户端 JAR 缺失的「请在「下载」页重新安装该版本」）。
 
 ### 6.4 本次验证
 
@@ -260,8 +264,11 @@ func launchLongRunning(_ executable: URL, args: [String],
 1. 正常启动：日志面板逐行刷新时序与暂停 / 恢复（旧路径的 `pendingLogs` 暂存 flush 是否仍无丢行）；
 2. 退出：`exitCode == 0` 自动清卡片、非 0 弹「Minecraft 异常退出 (退出码: N)」文案与旧版一字不差；
 3. 进程未拉起（如把 Java 路径改成不可执行文件）：应弹「启动失败：…」而非「异常退出」；
-4. Java 未安装：应**无任何提示**且进度条停在「启动中」（D8 的既有行为，用来确认本次未意外改变）；
-5. 多开两个不同版本：两条启动互不串台（各自独立服务实例与事件流）；
-6. 启动过程中切换分类页再回来：回调不丢（事件处理零视图捕获）；
-7. 用户名三条校验分支（空 / 含 `"` / 超 16 字符）与非法字符确认框；
-8. 游戏根目录为空（未配置目录）时点击启动：确认行为与改动前一致（本次 `gameRoot` 由 `URL(fileURLWithPath:)` 承接路径字符串，空串会退化为工作目录，此边界不可达但需在真机确认无副作用）。
+4. Java 未安装（D8）：应弹「未找到满足版本要求 (Java N+) 的 Java 安装，请先在「Java 管理」中扫描或下载 Java。」，且启动按钮与进度条**回到初始态**（不再停在「启动中」）；确认同一次启动只弹一次提示；
+5. 客户端 JAR 缺失（D8）：应弹「启动前文件校验失败：客户端 JAR 缺失或损坏：…」同上复位；
+6. 正常运行中的终止（D7）：① 日志卡关闭按钮 xmark → 进程被 `SIGTERM` 终止、卡片消失、**不弹**「异常退出」；② 电源按钮 → 全部游戏被终止、日志面板收起；③ 悬浮提示在运行阶段为「关闭此游戏进程 / 关闭所有游戏」，启动阶段仍为「移除此日志 / 取消启动」；
+7. 多开两个不同版本（D7）：两条启动互不串台，分别点关闭时**只终止被点的那一个**进程（其余会话与日志不受影响），电源按钮才终止全部；
+8. 游戏自行退出后（D7）：`isProcessRunning` 回落到 false，电源按钮在无会话时不再显示；
+9. 启动过程中切换分类页再回来：回调不丢（事件处理零视图捕获）；
+10. 用户名三条校验分支（空 / 含 `"` / 超 16 字符）与非法字符确认框；
+11. 游戏根目录为空（未配置目录）时点击启动：确认行为与改动前一致（本次 `gameRoot` 由 `URL(fileURLWithPath:)` 承接路径字符串，空串会退化为工作目录，此边界不可达但需在真机确认无副作用）。

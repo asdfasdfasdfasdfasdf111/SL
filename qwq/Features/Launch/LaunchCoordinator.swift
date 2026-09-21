@@ -53,6 +53,29 @@ enum LaunchCoordinator {
             : settings.selectedGameRoot
         var boundLauncher: MinecraftLauncher?
 
+        // 启动失败上报门控：`.failed` 事件（进程未拉起，桥接层经 completion 回传）与
+        // `launch(_:)` 的抛出（用例层在进入桥接之前失败，如离线用户名非法）是同一失败的
+        // 两条回传通道，共用一次性门控保证同一次启动只提示一次。
+        let failureGate = LaunchFailureNoticeGate()
+
+        // 启动失败统一上报（缺陷 D8）：**不再以 launcher 引用是否建立为前置条件**。
+        // 旧实现把处理整体放在 `if let launcher` 内，launcher 尚未建立时的失败
+        // （Java 未安装 / 客户端 JAR 缺失 / 实例无法创建 / 补全失败）被直接吞掉：
+        // 既不提示，也不复位进度，界面永久停在「启动中」。
+        // 文案沿用桥接层原始描述（错误文案的唯一来源），与 D2 确立的
+        // 「启动失败（无退出码）vs 异常退出（有退出码）」区分口径一致，不在此处改写措辞。
+        let reportLaunchFailure: (Error) -> Void = { error in
+            guard failureGate.claim() else { return }
+            DispatchQueue.main.async {
+                sessionManager.resetProgress()
+                withAnimation(.easeOut(duration: 0.3)) {
+                    sessionManager.launchPhase = .idle
+                    if sessionManager.sessions.isEmpty { sessionManager.showLogView = false }
+                }
+                LaunchPanelState.shared.presentError(error.localizedDescription)
+            }
+        }
+
         let startGame = {
             let request = LaunchRequest(
                 version: version,
@@ -130,6 +153,14 @@ enum LaunchCoordinator {
                         if let l = boundLauncher,
                            let session = sessionManager.session(for: l) {
                             session.isLaunching = false
+                            // 缺陷 D7：进程已确认拉起（窗口出现，或退出码 0 兜底）→ 置「运行中」。
+                            // 此前该标志全代码库无人置 true，导致两处终止入口
+                            // （日志卡关闭按钮 closeSession / 电源按钮 handlePowerTap）
+                            // 的终止分支恒不可达，点了也杀不掉游戏进程。
+                            // 取值直接读 launcher 自身 currentProcess 的实时状态：退出码 0 兜底
+                            // 触发时进程已退出，此处不会被误置为运行中；该引用亦是 terminate()
+                            // 的定向目标（多开时各自终止自己的进程，不共用 instance.process）。
+                            session.isProcessRunning = (l.currentProcess?.isRunning ?? false)
                         }
                         withAnimation(.exaggeratedSpring) {
                             sessionManager.darkBarTarget = 1.0
@@ -165,24 +196,20 @@ enum LaunchCoordinator {
                         }
                     }
                 case .failed(let error):
-                    DispatchQueue.main.async {
-                        // launcher 引用尚未建立时的失败（用户名/实例/Java/补全）沿用旧实现行为：
-                        // 不产生任何 UI 提示，也不复位进度（旧 completion 亦在该条件内才处理）。
-                        guard let launcher = boundLauncher,
-                              sessionManager.session(for: launcher) != nil else { return }
-                        sessionManager.resetProgress()
-                        withAnimation(.easeOut(duration: 0.3)) {
-                            sessionManager.launchPhase = .idle
-                            if sessionManager.sessions.isEmpty { sessionManager.showLogView = false }
-                        }
-                        LaunchPanelState.shared.presentError(error.localizedDescription)
-                    }
+                    // 启动失败（进程未拉起）：复位进度 + 提示，与 launcher 引用是否建立无关（D8）
+                    reportLaunchFailure(error)
                 }
             })
             // 用例层入口是 async：发起后立即返回（与旧 pclLaunch 同为非阻塞）。
-            // 失败经 .failed 事件回传，故此处忽略抛出值——与旧实现一致：
-            // launcher 尚未建立时的失败在旧路径下同样不产生任何 UI 提示。
-            Task { _ = try? await service.launch(request) }
+            // 用例层在进入桥接之前抛出的失败（离线用户名非法等）不会产生 `.failed` 事件，
+            // 旧实现的 `try?` 会把它连同 UI 提示一并丢弃；此处捕获后走同一上报通道。
+            Task {
+                do {
+                    _ = try await service.launch(request)
+                } catch {
+                    reportLaunchFailure(error)
+                }
+            }
         }
 
         // 离线皮肤：确保资源包已生成并注入（PCL2 移植，幂等 hash 判断）。
@@ -268,5 +295,29 @@ enum LaunchCoordinator {
                 sessionManager.showLogView = false
             }
         }
+    }
+}
+
+// MARK: - 失败上报一次性门控
+
+/// 保证同一次启动的失败只上报一次。
+///
+/// `.failed` 事件与 `launch(_:)` 的抛出可能描述同一失败（用例层先投递事件、再抛契约错误），
+/// 两条通道各自 hop 到主队列后执行顺序无保证，故用门控而非顺序假设。
+///
+/// 显式 `nonisolated`：该对象要被事件回调线程与调用方线程共享，必须脱离
+/// `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` 的默认推断（仅靠 `@unchecked Sendable`
+/// 不足以阻止 MainActor 推断，届时跨线程访问会成片告警），与 `TerminationResumeGate`
+/// 的治理方式一致。锁内只做内存操作，属同步临界区，不跨 `await` 持有。
+private nonisolated final class LaunchFailureNoticeGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var reported = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !reported else { return false }
+        reported = true
+        return true
     }
 }
