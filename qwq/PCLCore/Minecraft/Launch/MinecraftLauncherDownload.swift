@@ -8,8 +8,16 @@
 //
 //  downloadSingleFile 保持 private static：仅本文件的 downloadAuthlibInjector 调用。
 //
+// 注意：本文件由 MinecraftLauncher.swift 拆分而来，原文件中 `import SwiftyJSON` 必须随
+// downloadAuthlibInjector 一并带过来 —— 该函数使用 SwiftyJSON 的 `JSON` 下标与 `.url` /
+// `.string` 成员（定义模块为 SwiftyJSON）。工程已启用 MemberImportVisibility
+// （SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY），跨文件搬移代码时若漏掉定义模块的
+// import，会在真实 Xcode 编译期报「is not available due to missing import of defining module」，
+// 而单纯 `swiftc -typecheck`（未开该特性）不会报出，属拆分后的隐性回归。
+//
 
 import Foundation
+import SwiftyJSON
 
 extension MinecraftLauncher {
     public static func downloadAuthlibInjector() async throws {
