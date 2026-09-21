@@ -25,9 +25,12 @@ public enum InstallStage: Int {
     case customFile = 2000
     case modDownload = 2001
     
+    @available(*, deprecated, message: "全库无引用，待清理")
     case resources = 3000
     
+    @available(*, deprecated, message: "全库无引用，待清理")
     case javaDownload = 4000
+    @available(*, deprecated, message: "全库无引用，待清理")
     case javaInstall = 4001
     
     public func getDisplayName() -> String {

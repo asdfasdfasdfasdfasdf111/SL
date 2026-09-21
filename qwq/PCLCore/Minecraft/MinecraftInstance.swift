@@ -1,5 +1,5 @@
 //
-//  MinecraftVersion.swift
+//  MinecraftInstance.swift
 //  PCL.Mac
 //
 //  Created by YiZhiMCQiu on 2025/5/20.

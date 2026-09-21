@@ -40,6 +40,14 @@ extension MinecraftInstance {
 }
 
 public struct MinecraftConfig: Codable {
+    /// 死代码标注：全库无引用，待清理（勿删，保留以兼容既有 .PCL_Mac.json 字段）。
+    ///
+    /// 现状：只有写入方——本类型的 CodingKeys 与 `init(_ json:)` 自编解码，读取方为零，
+    /// 即外部配置实际无法追加支持库，功能未接线。
+    ///
+    /// 标注形式说明：该属性在本文件内仍有活引用（解码赋值处），改为
+    /// `@available(*, deprecated, message:)` 会在该处引入一条弃用告警，且「已弃用」与
+    /// 其真实状态（有写入、无读取）不符，故以本注释作为等价标注。
     public var additionalLibraries: Set<String> = []
     public var javaURL: URL! {
         get {
@@ -98,6 +106,7 @@ public enum ClientBrand: String, Codable, Hashable {
         }
     }
     
+    @available(*, deprecated, message: "全库无引用，待清理")
     public var index: Int {
         switch self {
         case .vanilla: 0

@@ -53,7 +53,6 @@ public class ClientManifest {
             return nil
         }
         
-    checkParent:
         if let inheritsFrom = json["inheritsFrom"].string,
            let minecraftDirectory = minecraftDirectory {
             let parentURL = minecraftDirectory.versionsURL.appendingPathComponent(inheritsFrom).appendingPathComponent("\(inheritsFrom).json")
@@ -63,14 +62,20 @@ public class ClientManifest {
                 return nil
             }
             
-            let parent: ClientManifest
             guard let manifest = ClientManifest(json: json) else { return nil }
+            let parent: ClientManifest
             do {
-                guard let manifest = try ClientManifest.parse(url: parentURL, minecraftDirectory: minecraftDirectory, depth: depth + 1) else { return nil }
-                parent = manifest
+                guard let parsedParent = try ClientManifest.parse(url: parentURL, minecraftDirectory: minecraftDirectory, depth: depth + 1) else { return nil }
+                parent = parsedParent
             } catch {
-                err("无法解析 inheritsFrom: \(error.localizedDescription)")
-                break checkParent
+                // 父清单存在但无法解析（文件损坏 / 读取失败 / 上游 JSON 非法）时不能再跳过合并：
+                // 合并是补齐父版本 libraries 与 arguments 的唯一途径，缺失父清单会得到一份
+                // classpath 不完整的清单，进游戏后才以 NoClassDefFoundError 之形式暴露，难以定位。
+                // 与「父 JSON 不存在 → return nil」保持一致判定为解析失败，此处向上抛出原始错误
+                // （parse 本身即 throws，JSON 层错误同样以抛出方式上报），不返回缺库的清单。
+                // 注意：不要退回 break/跳过合并的写法。
+                err("无法解析父版本清单 \(parentURL.path)（\(url.lastPathComponent) 的 inheritsFrom=\(inheritsFrom)）: \(error.localizedDescription)")
+                throw error
             }
             
             return merge(parent: parent, manifest: manifest)
@@ -102,6 +107,12 @@ public class ClientManifest {
         getAllowedLibraries().filter { !$0.isNativeLibrary }
     }
     
+    /// 解析期已按 `allow` / `disallow` 规则筛选完毕的库列表，即「规则允许使用的库」。
+    ///
+    /// 规则判定集中在 `ClientManifest.init(json:)` 的 `Rule.check` 一处完成，故本方法按设计
+    /// 等价于 `libraries` 的恒等返回，不做二次过滤：重复过滤不改变结果，只会让规则判定
+    /// 出现第二个入口。名称沿用上游 PCL.Mac 同源实现，含义是「已通过规则筛选」而非
+    /// 「此处再筛一遍」。natives 与普通库的区分由 getNeededLibraries / getNeededNatives 承担。
     public func getAllowedLibraries() -> [Library] { libraries }
     
     public func getNeededNatives() -> [Library: DownloadInfo] {
