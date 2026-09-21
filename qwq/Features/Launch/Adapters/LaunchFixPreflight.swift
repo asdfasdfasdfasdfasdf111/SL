@@ -117,10 +117,14 @@ enum LaunchFixPreflightContextBuilder {
 // MARK: - client 段
 
 /// 客户端 JAR 校验。**LaunchFix 没有对应步骤**（既不校验也不下载 client JAR），
-/// 故这里没有可委托的实现，只做只读校验并显式抛出，把「桥接流程不校验 client JAR」这一缺口暴露出来。
+/// 故这里没有可委托的实现，只做只读校验并显式抛出。
 ///
-/// 行为差异提示：桥接层现状对缺失/损坏的 client JAR **放行**，游戏在启动后才崩；
-/// 本校验器一旦接线会把它变成启动前失败。接线前必须由产品确认（见 DUAL_FLOW.md 风险点 R6）。
+/// 状态与差异：桥接层 `pclLaunchInternal` 已单独补上「存在且非空」判定
+/// （`PCLLaunchBridge.swift`，DUAL_FLOW 缺陷 D1 的修复点），但**未**采用本类型的 sha1 口径。
+/// 原因：带 inheritsFrom 的加载器实例，其清单经 `ClientManifest.merge` 后沿用父级
+/// `clientDownload.sha1`，而版本目录内的 JAR 会被加载器安装器就地改写，哈希必然不同；
+/// 此处按 sha1 判定会把这些实例误判为损坏。故本校验器仅在「确认实例的版本目录 JAR
+/// 恒为原版本体」的调用方（如纯原版路径或补齐后的复检）接线，见 DUAL_FLOW.md 风险点 R6。
 public struct LaunchFixClientVerifier: ClientFileVerifier, @unchecked Sendable {
 
     public init() {}

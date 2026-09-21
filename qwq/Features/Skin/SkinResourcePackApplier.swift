@@ -9,21 +9,40 @@ enum SkinResourcePackApplier {
     /// PCL2 离线皮肤资源包名（与 options.txt 的 resourcePacks 引用一致）
     static let packFileName = "SL 皮肤.zip"
 
-    /// 生成皮肤资源包并注入 options.txt，幂等：同一版本 + 同一皮肤文件只处理一次
-    /// （以 settings.appliedSkinHash 判断，避免反复重建 zip）。
+    /// 版本运行目录——即 `apply` / `remove` 的 `gameDir` 契约。
+    ///
+    /// 游戏进程以该目录为工作目录（`MinecraftLauncher` 的 `game_directory` =
+    /// `MinecraftInstance.runningDirectory` = `<gameRoot>/versions/<版本>`），
+    /// `resourcepacks`、`options.txt` 与 `<版本>.jar` 均位于此目录，
+    /// 因此调用方必须传版本运行目录，不能传游戏根目录。
+    static func versionDirectory(gameRoot: String, version: String) -> URL {
+        URL(fileURLWithPath: gameRoot)
+            .appendingPathComponent("versions", isDirectory: true)
+            .appendingPathComponent(version, isDirectory: true)
+    }
+
+    /// 生成皮肤资源包并注入 options.txt，幂等：同一版本 + 同一皮肤文件且产物已落在
+    /// `gameDir` 下时只处理一次（以 settings.appliedSkinHash 判断，避免反复重建 zip）。
+    ///
+    /// `gameDir` 必须为版本运行目录（见 `versionDirectory(gameRoot:version:)`）：
+    /// 资源包写入 `gameDir/resourcepacks`、options.txt 写入 `gameDir/options.txt`、
+    /// pack_format 探测读取 `gameDir/<版本>.jar`，三者都以版本运行目录为前提。
     static func apply(skinURL: URL, toVersion version: String, gameDir: URL, settings: LauncherSettings) throws {
         let fileManager = FileManager.default
-        // 幂等：同一版本 + 同一皮肤文件只处理一次
+        // 幂等标记与产物路径先行解析：跳过条件除 hash 外还需校验产物确实存在。
+        // 仅比对 hash 不足以保证资源包落在 gameDir（历史实现曾把包写到游戏根目录，
+        // 而 hash 口径与启动链路相同，持久化的 hash 会让「已应用」判断失真 → 启动时跳过）
         let skinHash = (try? Util.sha1OfFile(url: skinURL)) ?? "unknown"
         let currentHash = "pack_\(version)_\(skinHash)"
-        if settings.appliedSkinHash == currentHash {
+        let resourcePacksDir = gameDir.appendingPathComponent("resourcepacks", isDirectory: true)
+        let zipURL = resourcePacksDir.appendingPathComponent(packFileName)
+        if settings.appliedSkinHash == currentHash,
+           fileManager.fileExists(atPath: zipURL.path) {
             NSLog("皮肤资源包未变化，跳过")
             return
         }
 
-        let resourcePacksDir = gameDir.appendingPathComponent("resourcepacks", isDirectory: true)
         try fileManager.createDirectory(at: resourcePacksDir, withIntermediateDirectories: true)
-        let zipURL = resourcePacksDir.appendingPathComponent(packFileName)
 
         // 1) 组织临时目录：pack.mcmeta + assets 皮肤文件
         let tempDir = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)

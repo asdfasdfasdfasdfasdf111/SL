@@ -67,14 +67,16 @@ enum OfflineSkinService {
                         _ = try DefaultSkinService().saveSkin(from: url, forUUID: offlineUUID)
 
                         let version = settings.selectedMinecraftVersion
-                        let gameDirPath = settings.selectedGameRoot.isEmpty ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "") : settings.selectedGameRoot
-                        if !version.isEmpty && !gameDirPath.isEmpty {
-                            let gameDir = URL(fileURLWithPath: gameDirPath)
+                        let gameRootPath = settings.selectedGameRoot.isEmpty ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "") : settings.selectedGameRoot
+                        if !version.isEmpty && !gameRootPath.isEmpty {
                             // 离线皮肤统一走资源包方案（PCL2 移植）：生成 resourcepacks/SL 皮肤.zip
                             // 并注入 options.txt。1.19.3+ 的默认皮肤在 entity/player/{slim,wide}/ 下，
                             // 旧版 JAR 顶层替换对 1.13+ 无效（26.2 实测不加载）。
+                            // 目标目录为**版本运行目录** gameRoot/versions/<版本>（游戏的 game_directory），
+                            // 与启动链路口径一致；写入游戏根目录游戏不会加载。
                             do {
-                                try SkinResourcePackApplier.apply(skinURL: url, toVersion: version, gameDir: gameDir, settings: settings)
+                                let versionDir = SkinResourcePackApplier.versionDirectory(gameRoot: gameRootPath, version: version)
+                                try SkinResourcePackApplier.apply(skinURL: url, toVersion: version, gameDir: versionDir, settings: settings)
                             } catch {
                                 print("⚠️ 皮肤资源包生成失败: \(error.localizedDescription)")
                             }

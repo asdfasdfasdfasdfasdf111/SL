@@ -48,6 +48,7 @@
 ### 流程 B 中已发现的真实缺陷（非重构问题）
 
 - **D1 客户端 JAR 无任何校验与补全**：`LaunchFix.perform` 只处理 libraries / assets / natives，桥接又把 `skipResourceCheck` 恒置为 true（`:121`），于是缺失或损坏的 `<版本>.jar` 会一路进到 `Process.arguments`（classpath 末项）后由 JVM 报 `ClassNotFoundException` 崩溃。流程 A 有 `createCompleteTask` 兜底，流程 B 没有。
+  - **已修复（桥接层）**：`pclLaunchInternal` 在资源补全之后、`phaseHandler("launching")` 之前新增客户端 JAR 判定，路径取 `instance.runningDirectory/<instance.name>.jar`（与 `buildClasspath` 末项、`MinecraftInstaller.downloadClientJar` 落盘目标同一构造式），失败经 `LaunchError.fileVerificationFailed` 明确报错。判定口径为「存在且非空」，**不做 sha1 比对**（理由见风险点 R6）。仍然**没有**客户端 JAR 的自动补全步骤，缺失即失败。
 - **D2 进程启动失败被伪装成异常退出**：`MinecraftLauncher.launch` 的 `catch` 分支走 `reportCompletion(Int32(1))`（`MinecraftLauncher.swift:145-158`），桥接的 `completion` 只看到 `.success(1)`，无法区分「进程没起来」与「游戏崩溃退出」，UI 一律显示「Minecraft 异常退出 (退出码: 1)」。
 - **D3 正常退出时日志被删**：`MinecraftLauncher.swift:136-139` 在 `exitCode == 0` 时删除 `logURL` 文件，而桥接的日志 tail 任务与 UI 会话面板仍指向该文件；`LaunchResult.logURL` 因此可能指向一个已不存在的路径。
 - **D4 日志尾部存在丢失窗口**：`MinecraftLauncher.launch` 在 `readabilityHandler = nil` 之后关闭句柄（`MinecraftLauncher.swift:134-135`），管道内尚未读取的数据会被丢弃；随后桥接的 tail 任务也可能读到不完整的文件末尾。
@@ -131,6 +132,7 @@
 ### R6 客户端 JAR 校验会引入新的失败路径
 
 `LaunchFixClientVerifier` 一旦接线，缺失 client JAR 的实例会从「启动后崩溃」（D1 现状）变成「启动前报错」。这是**行为变化**，需产品决策：要么同时补一个客户端 JAR 下载步骤（推荐），要么把该校验降级为告警。
+当前落地口径（桥接层 D1 修复）：缺文件即**启动前失败**（未降级为告警，也尚未补下载步骤），且判定不采用 sha1——加载器实例的版本目录 JAR 会被安装器就地改写，其哈希与合并清单继承来的父级 `clientDownload.sha1` 不同，按 sha1 判定会误伤可正常启动的 Forge 等实例。因此 `LaunchFixClientVerifier` 的 sha1 校验仍**不得**直接接到加载器路径上。
 
 ### R7 `GameProcessController` 协议参数缺口
 
