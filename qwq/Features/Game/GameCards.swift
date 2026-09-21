@@ -174,6 +174,11 @@ struct VersionLoaderCard: View {
     }
 }
 
+/// 分类宫格卡片（历史遗留）。
+/// 已核查：全库无任何构造点与调用点（`qwq/Features/Game/GameCards.swift` 内的定义除外），
+/// 属死代码。此处仅作标注、不删除——保留定义便于将来出现编译错误时回退定位。
+/// 清理时需连带确认 `GameCards.swift` 顶部的 GameViews 拆分背景说明是否仍成立。
+@available(*, deprecated, message: "全库无调用点，待清理：GameGridCard 已无任何构造与渲染入口")
 struct GameGridCard: View {
     let title: String?
     let subtitle: String?

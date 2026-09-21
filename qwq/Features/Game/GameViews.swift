@@ -236,7 +236,17 @@ struct DownloadCategoryView: View {
                 }
             }
         }
-        .onChange(of: searchText) { _ in applyFilter() }
+        .onChange(of: searchText) { _ in
+            // ⚠️ onChange 处于视图更新事务中，而 applyFilter() 首行即同步写 @State
+            // searchDebounceTask（本文件 :80-81），在视图更新期间写状态会触发
+            // "Modifying state during view update"（UAF 前兆）。
+            // 此处与下方 onChange(of: items) 统一延迟到渲染事务外执行，避免两处写法不一致。
+            // 注意：本工程部署目标为 macOS 13.0，onChange(of:initial:_:)（macOS 14.0+）不可用，
+            // 必须沿用当前的旧签名 onChange(of: perform:)。
+            DispatchQueue.main.async {
+                applyFilter()
+            }
+        }
         .onChange(of: items) { newItems in
             // ⚠️ onChange 处于视图更新事务中，同步写 filteredResults/displayLimit 会触发
             // "Modifying state during view update"（UAF 前兆），延迟到渲染事务外执行

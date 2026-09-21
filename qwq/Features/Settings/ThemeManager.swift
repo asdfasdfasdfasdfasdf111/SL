@@ -20,7 +20,10 @@ class ThemeManager: ObservableObject {
     static let shared = ThemeManager()
     @Published var accentColor: Color {
         didSet {
-            if let data = try? NSKeyedArchiver.archivedData(withRootObject: NSColor(accentColor), requiringSecureCoding: false) {
+            // 归档侧开启安全编码，与解档侧的 unarchivedObject(ofClass:from:) 策略对齐；
+            // 官方 Note 明确该开关不改变归档输出格式，因此旧数据仍可读。
+            // https://developer.apple.com/documentation/foundation/nskeyedarchiver/requiressecurecoding
+            if let data = try? NSKeyedArchiver.archivedData(withRootObject: NSColor(accentColor), requiringSecureCoding: true) {
                 UserDefaults.standard.set(data, forKey: UDK.accentColor)
             }
         }

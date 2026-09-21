@@ -107,7 +107,13 @@ final class AppSettingsStore: ObservableObject {
     }
 
     private func saveColor(_ color: Color, forKey key: String) {
-        if let data = try? NSKeyedArchiver.archivedData(withRootObject: NSColor(color), requiringSecureCoding: false) {
+        // 归档侧开启安全编码，与解档侧的 unarchivedObject(ofClass:from:)（安全解档入口）策略对齐。
+        // 依据：NSKeyedArchiver.requiresSecureCoding 的官方 Note「Enabling secure coding doesn't
+        // change the output format of the archive」，即该开关不参与归档格式生成，改 true 不会与
+        // 旧数据产生格式割裂；NSColor 符合 NSSecureCoding（官方 Conforms To 含 NSCoding/
+        // NSSecureCoding），不会命中「归档不符合 NSSecureCoding 的类时抛异常」这条路径。
+        // https://developer.apple.com/documentation/foundation/nskeyedarchiver/requiressecurecoding
+        if let data = try? NSKeyedArchiver.archivedData(withRootObject: NSColor(color), requiringSecureCoding: true) {
             UserDefaults.standard.set(data, forKey: key)
         }
     }
