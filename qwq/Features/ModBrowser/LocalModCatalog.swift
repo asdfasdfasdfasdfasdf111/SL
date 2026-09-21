@@ -185,6 +185,9 @@ enum LocalModCatalog {
     /// 从 bundle 读取 modrinth_catalog.json.gz 并解析（全量目录缓存）。
     /// 优先复用解析结果的磁盘缓存，避免每次冷启动都重新解压 12 万条 gzip。
     ///
+    /// 临界区约定：`localCatalogLock` 只保护 `localCatalog` 的「读—判—写」，
+    /// 最后一次赋值用锁，解压与解析全程在锁外；与 `items(for:)` 的双重检查模式一致。
+    ///
     /// 显式 `nonisolated`：由 `preload()`（`Task.detached`）与 `items(for:)` 共同调用，
     /// 实现全部是本地文件 / gzip / JSON 解析，属纯 CPU+IO，与主 actor 状态无关；
     /// 内部写回磁盘缓存的 `Task.detached` 也据此无需回主 actor。
@@ -193,42 +196,63 @@ enum LocalModCatalog {
     ///   https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/
     ///   https://github.com/swiftlang/swift-evolution/blob/main/proposals/0466-control-default-actor-isolation.md
     nonisolated static func loadCatalog() -> [Item] {
+        // 快路径：临界区内只做一次「读已解析结果」，不持锁做任何 IO / CPU 重活。
         localCatalogLock.lock()
-        defer { localCatalogLock.unlock() }
-        if let localCatalog { return localCatalog }
+        let cached = localCatalog
+        localCatalogLock.unlock()
+        if let cached { return cached }
 
+        // 耗时工作全部放在临界区之外：读磁盘缓存、解压 gzip、解析 12 万条 JSON。
+        // 旧实现把这一整段（含 Data(contentsOf:) 与 inflate）放在锁内，期间 items(for:)
+        // 及其它访问者全部排队等待；现在锁只在最后赋值时短暂持有。
+        // 代价：并发调用可能重复解析（多算一次、结果丢弃），换取的是临界区从「秒级」降到「µs 级」。
+        let catalog: [Item]
+        let parsedFromBundle: Bool
         // 1) 复用解析结果磁盘缓存（二次冷启动秒开）
-        if let cached = loadCatalogFromDisk() {
-            localCatalog = cached
-            return cached
-        }
-
+        if let fromDisk = loadCatalogFromDisk() {
+            catalog = fromDisk
+            parsedFromBundle = false
         // 2) 冷启动：从 bundle 的 gzip 解析
-        guard let url = Bundle.main.url(forResource: "modrinth_catalog", withExtension: "json.gz"),
-              let compressed = try? Data(contentsOf: url),
-              let data = inflateGzipData(compressed),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let entries = json["items"] as? [[String: Any]] else {
+        } else if let url = Bundle.main.url(forResource: "modrinth_catalog", withExtension: "json.gz"),
+                  let compressed = try? Data(contentsOf: url),
+                  let data = inflateGzipData(compressed),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let entries = json["items"] as? [[String: Any]] {
+            catalog = entries.compactMap { entry -> Item? in
+                guard let projectID = entry["i"] as? String,
+                      let projectType = entry["t"] as? String,
+                      let title = entry["n"] as? String else { return nil }
+                return Item(
+                    projectID: projectID,
+                    projectType: projectType,
+                    title: title,
+                    description: entry["d"] as? String ?? "",
+                    categories: entry["c"] as? [String] ?? [],
+                    iconURL: entry["u"] as? String,
+                    downloads: entry["x"] as? Int ?? 0
+                )
+            }
+            parsedFromBundle = true
+        } else {
+            // 解析/读缓存失败：不写 localCatalog，保留「下次调用可重试」的旧语义
             return []
         }
-        let catalog = entries.compactMap { entry -> Item? in
-            guard let projectID = entry["i"] as? String,
-                  let projectType = entry["t"] as? String,
-                  let title = entry["n"] as? String else { return nil }
-            return Item(
-                projectID: projectID,
-                projectType: projectType,
-                title: title,
-                description: entry["d"] as? String ?? "",
-                categories: entry["c"] as? [String] ?? [],
-                iconURL: entry["u"] as? String,
-                downloads: entry["x"] as? Int ?? 0
-            )
+
+        // 临界区：只做赋值。并发下的重复解析结果一律丢弃、先到者胜，
+        // 与旧实现在锁内「先查后写」的可观察语义一致，也与 items(for:) 的双重检查写法保持一致。
+        localCatalogLock.lock()
+        if let existing = localCatalog {
+            localCatalogLock.unlock()
+            return existing
         }
         localCatalog = catalog
-        // 3) 异步写回磁盘缓存，供下次冷启动秒开
-        let toCache = catalog
-        Task.detached(priority: .utility) { saveCatalogToDisk(toCache) }
+        localCatalogLock.unlock()
+
+        // 3) 异步写回磁盘缓存，供下次冷启动秒开。仅由「结果真正被采用」的那次调用发起，
+        // 并发重复解析的落败者不再重复写盘（写盘内容相同，观察结果不变）。
+        if parsedFromBundle {
+            Task.detached(priority: .utility) { saveCatalogToDisk(catalog) }
+        }
         return catalog
     }
 

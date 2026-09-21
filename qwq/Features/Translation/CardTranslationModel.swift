@@ -67,10 +67,10 @@ final class CardTranslationModel: ObservableObject {
     /// 滚动时每个进入可视区的卡片都触发一次磁盘读取，造成主线程阻塞、列表卡顿。
     /// 现在主线程先查内存缓存（内置表 + 内存 LRU，瞬时、零阻塞），未命中才进入后续分支。
     ///
-    /// 注意：后续分支里的 `Task.detached` 只保证「发起时不占用调用方线程」，
-    /// 并不等于被调用的代码在后台线程执行——`TranslationService` 的
-    /// `cachedTranslation` / `translateText` 均为主 actor 隔离方法（工程默认隔离为 MainActor），
-    /// 跨域调用会 `await` 切回主 actor，磁盘读取与翻译编排实际仍落在主线程上。
+    /// 后台化前提（已成立）：`TranslationService.cachedTranslation(for:)` 已标 `nonisolated`，
+    /// 其依赖链（`CacheManager.textGet/diskGet`、`ProjectTranslationTable.match`、
+    /// `ChineseText.contains`）同样为非隔离，因此下面的 `Task.detached` 内调用不再 `await` 切回
+    /// 主 actor，`Data(contentsOf:)` 读盘确实发生在后台线程（此前该调用会在主线程执行）。
     func requestTranslation(for item: DownloadedItem, service: TranslationService) async {
         let id = item.id
         guard !id.isEmpty, translated[id] == nil, !pendingIDs.contains(id) else { return }
@@ -83,7 +83,12 @@ final class CardTranslationModel: ObservableObject {
         pendingIDs.insert(id)
         let subtitle = item.subtitle
         // 磁盘缓存查询走 detached 立即执行（毫秒级、成本低，无需防抖）；
-        // 命中即应用，减少「卡片出现 → 等防抖 → 再查盘」的感知延迟
+        // 命中即应用，减少「卡片出现 → 等防抖 → 再查盘」的感知延迟。
+        // `service.cachedTranslation(for:)` 为非隔离方法，本例中不产生 actor 跳转：
+        // 磁盘读取在 detached 任务的后台线程上同步完成。若它被改回主 actor 隔离，
+        // 编译器会在第 60 行附近报「expression is 'async' but is not marked with 'await'」同类诊断，
+        // 口径二（`-default-isolation MainActor`）会直接给出 main actor-isolated 无法在 actor 外调用
+        // 的告警，可据此回归。
         if let diskCached = await Task.detached(priority: .utility, operation: { service.cachedTranslation(for: id) }).value,
            !diskCached.isEmpty {
             if Task.isCancelled {
@@ -115,9 +120,11 @@ final class CardTranslationModel: ObservableObject {
             // 隔离、优先级与任务局部状态；The Main Actor —— `@MainActor` 函数只在主 actor 上运行，
             // 从非主 actor 代码调用必须 `await` 切换到主 actor。
             // https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/
-            // 未做异步化改造的理由：让该方法真正脱离主 actor 需连带解除 CacheManager 及其内部
-            // LRUCache / sha1Prefix 的默认 MainActor 隔离（实测仅去隔离 CacheManager 一项，
-            // typecheck 告警即由 88 增至 104），且缓存的唯一入口 AppContext.shared 不在本次可改范围内。
+            // 未做异步化改造的理由：`translateText` 的实现主体是「持有全局并发配额 → 网络竞速 →
+            // 写缓存」，其中 `semaphoreWait(Self.translationSemaphore)` 是同步阻塞调用，而
+            // `TranslationSourceFetcher.raceSources` 依赖主 actor 隔离的 `AppContext` 会话；
+            // 本次只把【只读缓存查询】去隔离（即本方法上方那条更高频的路径），
+            // 网络分支仍留在主 actor，避免改动面扩散到抓取层。
             let result = try? await service.translateText(text: subtitle, projectId: id)
             let final = result ?? ""
             // Sendable 闭包不可引用 weak var 捕获：先拷成强引用常量再进 MainActor.run

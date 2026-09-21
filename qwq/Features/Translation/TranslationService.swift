@@ -6,6 +6,21 @@ import Foundation
 
 /// 翻译服务（重构：使用 CacheManager + 非阻塞读取）。
 /// 只保留：翻译主流程（内置表 → 缓存 → 源竞速 → 兜底）、并发限制、去重、缓存读取。
+///
+/// 隔离约定：类本身仍由工程默认隔离推断为主 actor（`shared` 等主 actor 成员不受影响）；
+/// 仅【只读缓存查询】三个方法（`cachedTranslation` / `cachedTranslationInMemory` /
+/// `prefetchTranslations`）标为 `nonisolated`，使调用方在 `Task.detached` 的后台上下文里调用时
+/// 不再 `await` 切回主 actor，磁盘读真正落在后台线程。
+/// `cache` 因此声明为 `nonisolated let`（`CacheManager` 被主 actor 推断隔离，按官方 Sendable 规则
+/// 隐式满足 Sendable，可安全地被非隔离成员读取）；其赋值放在隔离的 `init()` 内完成，
+/// 避免在非隔离上下文中访问 `AppContext.shared`。
+/// 依据：官方诊断《Calling an actor-isolated method from a synchronous nonisolated context》——
+/// "nonisolated methods can be called from any concurrency domain. To prevent data races,
+/// nonisolated methods cannot access actor isolated state in their implementation."
+/// 依据：《Concurrency》Sendable Types —— 有保证可变状态安全的代码（如 `@MainActor` 类）可跨并发域共享。
+/// 官方链接：
+///   https://docs.swift.org/latest/documentation/diagnostics/actor-isolated-call/
+///   https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/
 final class TranslationService {
     static let shared = TranslationService()
 
@@ -13,12 +28,15 @@ final class TranslationService {
     private static let concurrencyLimit = 24
     private static let translationSemaphore = DispatchSemaphore(value: concurrencyLimit)
 
-    private let cache = AppContext.shared.cacheManager
+    /// 非隔离只读依赖，见类型注释。
+    private nonisolated let cache: CacheManager
     private let session = AppContext.shared.translateSession
     private let lock = NSLock()
     private var inFlight: Set<String> = []
 
-    private init() {}
+    private init() {
+        cache = AppContext.shared.cacheManager
+    }
 
     /// 翻译文本（内置表 → 缓存 → 并行[Modrinth API + 镜像翻译] → MyMemory 在线翻译）
     func translateText(text: String, projectId: String) async throws -> String {
@@ -94,8 +112,11 @@ final class TranslationService {
         return text
     }
 
-    /// 检查缓存（非阻塞）— 仅返回含中文的缓存
-    func cachedTranslation(for projectId: String) -> String? {
+    /// 检查缓存 — 仅返回含中文的缓存
+    ///
+    /// `nonisolated`：本方法是翻译卡片按需查盘的入口，由 `CardTranslationModel.requestTranslation`
+    /// 的 `Task.detached` 调用；标非隔离后「查内置表 → 查内存 → 读盘」整链在后台线程完成。
+    nonisolated func cachedTranslation(for projectId: String) -> String? {
         // 先查内置表再查缓存
         if let builtin = ProjectTranslationTable.match(projectId) {
             return builtin
@@ -107,7 +128,7 @@ final class TranslationService {
     }
 
     /// 仅查内存缓存（不触碰磁盘），用于全量批量扫描场景，避免海量磁盘 IO
-    func cachedTranslationInMemory(for projectId: String) -> String? {
+    nonisolated func cachedTranslationInMemory(for projectId: String) -> String? {
         if let builtin = ProjectTranslationTable.match(projectId) {
             return builtin
         }
@@ -120,7 +141,10 @@ final class TranslationService {
     /// 批量预取翻译缓存（切分类/列表填充时调用，替代逐条查盘）：
     /// 内置表/内存命中直接收集；未命中的 id 交给 CacheManager 一次性枚举磁盘并批量读入内存，
     /// 返回可直接合并进 UI 的 [projectId: 中文翻译]。
-    func prefetchTranslations(ids: [String]) -> [String: String] {
+    ///
+    /// `nonisolated`：由 `CardTranslationModel.prefetch` 的 `Task.detached` 调用，
+    /// 标非隔离后整段批量查盘在后台线程完成，不再切回主 actor。
+    nonisolated func prefetchTranslations(ids: [String]) -> [String: String] {
         guard !ids.isEmpty else { return [:] }
         var result: [String: String] = [:]
         var diskKeys: [String] = []

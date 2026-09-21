@@ -2,7 +2,13 @@ import Foundation
 
 /// 常见项目名内置翻译表（快速匹配，避免重复请求）。
 /// 拆自 TranslationService.swift 顶层私有常量；key = slug 或 project_id。
-enum ProjectTranslationTable {
+///
+/// 整枚举标 `nonisolated`：只含不可变常量与纯函数；`TranslationService` 的只读缓存查询已改为
+/// `nonisolated`，其实现需在非隔离上下文同步调用 `match(_:)` / `hint(forTitle:)`。
+/// 依据：SE-0449《Allow `nonisolated` to prevent global actor inference》（Swift 6.1 实现，
+/// 纯编译期语义，无 OS 版本要求）。
+/// 官方链接：https://github.com/swiftlang/swift-evolution/blob/main/proposals/0449-nonisolated-for-global-actor-cutoff.md
+nonisolated enum ProjectTranslationTable {
     static let entries: [String: String] = [
         // slug / project_id -> 中文名称或描述
         "fabric-api": "Fabric API 是 Fabric 工具链提供的轻量级模块化 API，为模组提供通用钩子与兼容方案。",

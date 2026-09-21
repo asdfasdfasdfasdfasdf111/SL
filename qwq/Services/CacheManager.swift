@@ -5,11 +5,39 @@ import Foundation
 /// 替代各处散落的 UserDefaults 大对象存储和静态字典缓存
 /// - 内存缓存：LRU 淘汰，响应内存警告自动清空
 /// - 磁盘缓存：按 key 分文件存储，避免 UserDefaults 膨胀
+///
+/// 隔离约定（关键）：工程启用 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`，未标注的成员会被
+/// 推断为主 actor 隔离。本类的【只读路径】显式标注 `nonisolated`，使调用方（如
+/// `TranslationService.cachedTranslation(for:)`）能在 `Task.detached` 的后台上下文里真正执行
+/// 磁盘读，而不是 `await` 切回主 actor 后在主线程上读盘。
+/// 【写入路径】（`diskSet` / `setObject` / `setText` / `removeObject` / `cleanDiskCache`
+/// / `userDefaultsGet`）保持原样仍为主 actor 隔离，避免扩大改动面。
+///
+/// `nonisolated` 的语义约束：非隔离方法可以从任意并发域调用，但实现中不得访问 actor 隔离状态
+/// （否则编译器直接报错）。本类中以 `lock` 串行化的 `memCache` 因此改用 `nonisolated(unsafe)`
+/// 显式声明「自行以锁保证隔离」，这正是该属性被设计出来适用的场景。
+/// 依据：Swift 官方诊断《Calling an actor-isolated method from a synchronous nonisolated
+/// context》——"nonisolated methods can be called from any concurrency domain. To prevent data
+/// races, nonisolated methods cannot access actor isolated state in their implementation."
+/// 官方链接：https://docs.swift.org/latest/documentation/diagnostics/actor-isolated-call/
+/// 依据：SE-0412《Strict concurrency for global variables》——"The attribute
+/// `nonisolated(unsafe)` can be used to annotate the global variable (or any form of storage)
+/// ... such as with an associated global lock serializing data access."
+/// 官方链接：
+///   https://github.com/swiftlang/swift-evolution/blob/main/proposals/0412-strict-concurrency-for-global-variables.md
+///   https://www.swift.org/blog/swift-5.10-released/
 final class CacheManager {
     private let diskRoot: URL
-    private let fileManager = FileManager.default
+    /// 声明为计算属性而非存储属性：`FileManager.default` 本身是非隔离的静态属性，
+    /// 而存储属性会随类被推断为主 actor 隔离，只读路径标 `nonisolated` 后读它会触发
+    /// 「main actor-isolated property can not be referenced from a nonisolated context」。
+    /// 计算属性只是把同一个单例实例取回来（与原存储属性赋值完全相同的对象），不改变行为。
+    /// 官方链接：https://developer.apple.com/documentation/foundation/filemanager/default
+    private nonisolated var fileManager: FileManager { FileManager.default }
+    /// 保护 `memCache` 的互斥锁。`NSLock` 在 SDK 中为 `Sendable`，可在非隔离上下文访问。
     private let lock = NSLock()
-    private var memCache = LRUCache<String, Data>(maxCost: 32 * 1024 * 1024) // 32MB
+    /// 由 `lock` 串行化访问，因此显式退出隔离检查；读与写两侧一律在 `lock` 内完成。
+    private nonisolated(unsafe) var memCache = LRUCache<String, Data>(maxCost: 32 * 1024 * 1024) // 32MB
 
     init(cacheRoot: URL) {
         diskRoot = cacheRoot
@@ -17,13 +45,14 @@ final class CacheManager {
     }
 
     // MARK: - 内存缓存
+    // 全部 nonisolated：LRUCache 的每次访问都在 `lock` 内完成，与线程无关。
 
-    func memoryGet(_ key: String) -> Data? {
+    nonisolated func memoryGet(_ key: String) -> Data? {
         lock.lock(); defer { lock.unlock() }
         return memCache.value(forKey: key)
     }
 
-    func memorySet(_ key: String, data: Data, cost: Int = -1) {
+    nonisolated func memorySet(_ key: String, data: Data, cost: Int = -1) {
         lock.lock(); defer { lock.unlock() }
         memCache.setValue(data, forKey: key, cost: cost > 0 ? cost : data.count)
     }
@@ -49,8 +78,12 @@ final class CacheManager {
     // 若在持 lock 期间做 Data(contentsOf:) 等磁盘操作，后台批量预热（如翻译缓存扫描）
     // 会长时间占用全局锁，导致主线程查内存缓存时排队等待 → 列表卡顿。
     // 锁内只允许微秒级的内存操作，磁盘读写全部在锁外完成。
+    //
+    // 只读的 diskGet / diskExists 额外标 nonisolated：翻译卡片按需查盘（
+    // `CardTranslationModel.requestTranslation` 内的 `Task.detached`）因此不再 `await`
+    // 切回主 actor，读盘真正落在后台线程；不再占用主线程去等文件 IO。
 
-    func diskGet(_ key: String) -> Data? {
+    nonisolated func diskGet(_ key: String) -> Data? {
         // 不再先用 fileExists 探路：读取失败（文件不存在 / 不可读 / 目标是目录）本就会抛错，
         // try? 同样返回 nil，与旧行为一致；每条 key 因此少一次 stat 系统调用。
         // 收益在 prefetchText 这类逐 key 批量读的路径上按 key 数累计。
@@ -70,15 +103,16 @@ final class CacheManager {
         try? fileManager.removeItem(at: diskURL(for: key))
     }
 
-    func diskExists(_ key: String) -> Bool {
+    nonisolated func diskExists(_ key: String) -> Bool {
         fileManager.fileExists(atPath: diskURL(for: key).path)
     }
 
     // MARK: - 便捷：Codable 对象
     // 读取链路：锁内查内存（µs）→ 未命中则锁外读磁盘 → 命中回写内存（锁内）。
     // 这样后台线程做磁盘读时【不占用锁】，主线程 memoryObject/object 永远瞬时返回。
+    // object / memoryObject 标 nonisolated 后可在后台上下文同步完成「查内存 + 读盘」。
 
-    func object<T: Codable>(_ type: T.Type, forKey key: String) -> T? {
+    nonisolated func object<T: Codable>(_ type: T.Type, forKey key: String) -> T? {
         if let data = memoryGet(key) {
             return try? JSONDecoder().decode(T.self, from: data)
         }
@@ -91,7 +125,7 @@ final class CacheManager {
     }
 
     /// 仅查内存缓存（不触碰磁盘），用于批量快速扫描场景
-    func memoryObject<T: Codable>(_ type: T.Type, forKey key: String) -> T? {
+    nonisolated func memoryObject<T: Codable>(_ type: T.Type, forKey key: String) -> T? {
         guard let data = memoryGet(key) else { return nil }
         return try? JSONDecoder().decode(T.self, from: data)
     }
@@ -106,13 +140,13 @@ final class CacheManager {
     // 相比 object/setObject 省去 JSON 引号转义与编解码；磁盘格式为 UTF-8 明文，
     // 读取时兼容旧版 JSON 字符串格式（"..."），一次解析、自动回写为明文。
 
-    private static func decodeString(_ data: Data) -> String? {
+    nonisolated private static func decodeString(_ data: Data) -> String? {
         if let decoded = try? JSONDecoder().decode(String.self, from: data) { return decoded }
         return String(data: data, encoding: .utf8)
     }
 
     /// 读文本缓存：内存 → 磁盘（明文，兼容旧 JSON）→ 回写内存。磁盘 IO 全程在锁外。
-    func textGet(_ key: String) -> String? {
+    nonisolated func textGet(_ key: String) -> String? {
         if let data = memoryGet(key) {
             return Self.decodeString(data)
         }
@@ -122,7 +156,7 @@ final class CacheManager {
     }
 
     /// 仅查内存文本缓存（不触碰磁盘）
-    func memoryText(_ key: String) -> String? {
+    nonisolated func memoryText(_ key: String) -> String? {
         guard let data = memoryGet(key) else { return nil }
         return Self.decodeString(data)
     }
@@ -138,7 +172,10 @@ final class CacheManager {
     /// 先一次性枚举磁盘收集已存在的文件名（readdir 级，无文件内容 IO），
     /// 再只对命中文件读盘，替代「对每个 key 各做一次 fileExists + 读」的随机 IO。
     /// 返回成功读到的 [key: text]，调用方可直接合并进 UI 状态。
-    func prefetchText(keys: [String]) -> [String: String] {
+    ///
+    /// nonisolated：本方法由 `CardTranslationModel.prefetch` 的 `Task.detached` 调用，
+    /// 标非隔离后整段枚举与批量读盘都在后台线程完成。
+    nonisolated func prefetchText(keys: [String]) -> [String: String] {
         guard !keys.isEmpty else { return [:] }
         var existing = Set<String>()
         if let topDirs = try? fileManager.contentsOfDirectory(atPath: diskRoot.path) {
@@ -179,7 +216,7 @@ final class CacheManager {
 
     // MARK: - Utility
 
-    private func diskURL(for key: String) -> URL {
+    nonisolated private func diskURL(for key: String) -> URL {
         // 两层散列目录避免单目录文件过多
         let hash = key.sha1Prefix(2)
         return diskRoot.appendingPathComponent("\(hash)/\(key)")
@@ -200,7 +237,13 @@ final class CacheManager {
 
 // MARK: - LRU 缓存
 
-private final class LRUCache<Key: Hashable, Value> {
+/// 存取一律由 `CacheManager.lock` 在外部串行化，自身不含任何同步原语，因此整类标 `nonisolated`：
+/// 使 `CacheManager` 的只读路径能在非隔离上下文里访问它。
+/// 依据：SE-0449《Allow `nonisolated` to prevent global actor inference》——允许在类型声明上写
+/// `nonisolated` 以阻止全局 actor 推断；实现于 Swift 6.1（本机工具链 6.2.3）。该写法是编译期
+/// 语义，不引入任何 OS 版本要求，macOS 13.0 目标不受影响。
+/// 官方链接：https://github.com/swiftlang/swift-evolution/blob/main/proposals/0449-nonisolated-for-global-actor-cutoff.md
+private nonisolated final class LRUCache<Key: Hashable, Value> {
     private final class Node {
         let key: Key
         var value: Value
@@ -291,7 +334,8 @@ private final class LRUCache<Key: Hashable, Value> {
 // MARK: - String SHA1 helper
 
 private extension String {
-    func sha1Prefix(_ len: Int) -> String {
+    /// `nonisolated`：只读入参、无共享状态，供非隔离的 `diskURL(for:)` 调用。
+    nonisolated func sha1Prefix(_ len: Int) -> String {
         guard let data = data(using: .utf8) else { return "00" }
         var digest = [UInt8](repeating: 0, count: Int(CC_SHA1_DIGEST_LENGTH))
         data.withUnsafeBytes { ptr in
