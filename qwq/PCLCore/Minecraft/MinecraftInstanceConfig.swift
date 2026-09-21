@@ -1,0 +1,112 @@
+//
+//  MinecraftInstanceConfig.swift
+//  PCL.Mac
+//
+//  实例配置的读写与类型定义（从 MinecraftInstance.swift 逐字搬移，逻辑与文案未变）：
+//  - MinecraftInstance.loadConfig / saveConfig：.PCL_Mac.json 的读写
+//  - MinecraftConfig：配置模型与 CodingKeys（javaURLString 沿用旧字段名 javaURL）
+//  - ClientBrand：加载器品牌枚举、显示名与排序序号
+//  - QualityOfService 的 Codable 追溯一致性（供 MinecraftConfig 编解码）
+//
+
+import Foundation
+import SwiftyJSON
+
+extension MinecraftInstance {
+    public func loadConfig() throws {
+        // readToEnd 可能返回 nil（空/损坏配置文件），强解包会崩；失败时抛错让调用方用默认配置
+        let fh = try FileHandle(forReadingFrom: configPath)
+        defer { try? fh.close() }
+        guard let data = try fh.readToEnd() else {
+            throw MyLocalizedError(reason: "配置文件为空: \(configPath.path)")
+        }
+        self.config = .init(try .init(data: data))
+    }
+    
+    public func saveConfig() {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .prettyPrinted
+        do {
+            try FileManager.default.createDirectory(
+                at: runningDirectory,
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+            try encoder.encode(config).write(to: configPath, options: .atomic)
+        } catch {
+            err("无法保存配置: \(error.localizedDescription)")
+        }
+    }
+}
+
+public struct MinecraftConfig: Codable {
+    public var additionalLibraries: Set<String> = []
+    public var javaURL: URL! {
+        get {
+            return javaURLString == "" ? nil : URL(fileURLWithPath: javaURLString)
+        }
+        set (value) {
+            javaURLString = value.path
+        }
+    }
+    public var skipResourcesCheck: Bool = false
+    public var maxMemory: Int32 = 4096
+    public var qualityOfService: QualityOfService = .default
+    public var minecraftVersion: String!
+    
+    private var javaURLString: String
+    
+    enum CodingKeys: String, CodingKey {
+        case additionalLibraries
+        case javaURLString = "javaURL"
+        case skipResourcesCheck
+        case maxMemory
+        case qualityOfService
+        case minecraftVersion
+    }
+    
+    public init(_ json: JSON) {
+        self.additionalLibraries = .init(json["additionalLibraries"].array?.map { $0.stringValue } ?? [])
+        self.javaURLString = json["javaURL"].stringValue // 旧版本字段
+        self.skipResourcesCheck = json["skipResourcesCheck"].boolValue
+        self.maxMemory = json["maxMemory"].int32 ?? 4096
+        self.qualityOfService = .init(rawValue: json["qualityOfService"].intValue) ?? .default
+        self.minecraftVersion = json["minecraftVersion"].stringValue
+        if qualityOfService.rawValue == 0 {
+            qualityOfService = .default
+        }
+    }
+    
+    public init(version: MinecraftVersion?) {
+        self.minecraftVersion = version?.displayName
+        self.javaURLString = ""
+    }
+}
+
+public enum ClientBrand: String, Codable, Hashable {
+    case vanilla = "vanilla"
+    case fabric = "fabric"
+    case quilt = "quilt"
+    case forge = "forge"
+    case neoforge = "neoforge"
+    
+    public func getName() -> String {
+        if self == .neoforge {
+            return "NeoForge"
+        } else {
+            return self.rawValue.capitalized
+        }
+    }
+    
+    public var index: Int {
+        switch self {
+        case .vanilla: 0
+        case .fabric: 1
+        case .quilt: 2
+        case .forge: 3
+        case .neoforge: 4
+        }
+    }
+}
+
+extension QualityOfService: @retroactive Codable { }

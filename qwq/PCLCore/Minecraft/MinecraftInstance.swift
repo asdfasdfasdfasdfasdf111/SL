@@ -4,6 +4,22 @@
 //
 //  Created by YiZhiMCQiu on 2025/5/20.
 //
+//
+//  实例装配与启动主流程。本文件只保留与启动直接相关的职责（逐字保留，未改逻辑与文案）：
+//  - 存储属性、private init、setup()、create / clearCache（实例工厂与缓存）
+//  - launch(_:)：登录参数、架构映射、资源完整性检查、进程拉起与退出码处理
+//  其余按职责拆分在同目录，逻辑、常量与文案均与原实现逐字一致（仅物理搬移）：
+//  - MinecraftInstanceJava.swift     Java 最低版本解析、候选筛选与 DataManager 同步
+//  - MinecraftInstanceVersion.swift  品牌判定、清单加载、版本探测与图标名
+//  - MinecraftInstanceConfig.swift   配置读写与 MinecraftConfig、ClientBrand 类型定义
+//
+//  跨文件访问级别说明（依据 references/swift-language/access-control.md 与 extensions.md，
+//  官方链接 https://docs.swift.org/swift-book/documentation/the-swift-programming-language/accesscontrol/
+//  与 .../extensions/）：扩展不能声明存储属性，且 `private` 仅对同一封闭声明及其同文件成员可见。
+//  存储属性不能由扩展声明，故 version / manifest 的 setter 由 private(set) 放宽为 internal(set)
+//  （对外读权限与类型均未变），RequiredJava16/17/21 由 private static 放宽为 internal static。
+//  对外接口零变化。
+//
 
 import Foundation
 import SwiftyJSON
@@ -15,16 +31,16 @@ import UniformTypeIdentifiers
 public class MinecraftInstance: Identifiable, Equatable, Hashable {
     private static var cache: [URL : MinecraftInstance] = [:]
     
-    private static let RequiredJava16: MinecraftVersion = MinecraftVersion(displayName: "21w19a", type: .snapshot)
-    private static let RequiredJava17: MinecraftVersion = MinecraftVersion(displayName: "1.18-pre2", type: .snapshot)
-    private static let RequiredJava21: MinecraftVersion = MinecraftVersion(displayName: "24w14a", type: .snapshot)
+    static let RequiredJava16: MinecraftVersion = MinecraftVersion(displayName: "21w19a", type: .snapshot)
+    static let RequiredJava17: MinecraftVersion = MinecraftVersion(displayName: "1.18-pre2", type: .snapshot)
+    static let RequiredJava21: MinecraftVersion = MinecraftVersion(displayName: "24w14a", type: .snapshot)
     
     public let runningDirectory: URL
     public let minecraftDirectory: MinecraftDirectory
     public let configPath: URL
-    public private(set) var version: MinecraftVersion! = nil
+    public internal(set) var version: MinecraftVersion! = nil
     public var process: Process?
-    public private(set) var manifest: ClientManifest!
+    public internal(set) var manifest: ClientManifest!
     public var config: MinecraftConfig!
     public var clientBrand: ClientBrand!
     public var isUsingRosetta: Bool = false
@@ -99,184 +115,6 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
         return true
     }
 
-    /// 根据当前 manifest/version 解析所需最低 Java 版本并自动选择最合适的 JVM
-    @discardableResult
-    public func resolveAndApplyJava() -> JavaVirtualMachine? {
-        let minJavaVersion = Self.resolveMinJavaVersion(manifest: manifest, version: version)
-
-        // 若用户缓存的 Java 仍满足版本要求，且可执行文件实际存在，保留之
-        if let currentURL = config.javaURL {
-            if FileManager.default.isExecutableFile(atPath: currentURL.path),
-               let currentMajor = Self.readJavaMajorVersion(at: currentURL),
-               currentMajor >= minJavaVersion {
-                debug("沿用缓存 Java: \(currentURL.path) (major=\(currentMajor), 需要>=\(minJavaVersion))")
-                // 确保同步到 DataManager，以便其他 UI 组件能看到
-                Self.ensureDataManagerHasJava(currentURL)
-                return Self.findJVM(at: currentURL)
-            } else {
-                warn("缓存的 Java 不满足当前版本 (需要>=\(minJavaVersion)) 或已失效，重新选择")
-                config.javaURL = nil
-            }
-        }
-
-        guard let jvm = Self.findSuitableJava(version, minJavaVersion: minJavaVersion, manifest: manifest) else {
-            return nil
-        }
-        config.javaURL = jvm.executableURL
-        debug("自动选择 Java: \(jvm.executableURL.path) (major=\(jvm.version), 需要>=\(minJavaVersion))")
-        return jvm
-    }
-
-    /// 解析最低 Java 版本：优先 manifest.javaVersion，无则根据 MC 版本推断
-    public static func resolveMinJavaVersion(manifest: ClientManifest?, version: MinecraftVersion?) -> Int {
-        if let manifestJava = manifest?.javaVersion, manifestJava > 0 {
-            return manifestJava
-        }
-        guard let version else { return 8 }
-        return getMinJavaVersion(version)
-    }
-
-    /// 读取指定 java 可执行文件的主版本号（读 release 文件，不启动进程）
-    public static func readJavaMajorVersion(at javaURL: URL) -> Int? {
-        let base = javaURL.deletingLastPathComponent().deletingLastPathComponent()
-        let candidates: [URL] = [
-            base.appendingPathComponent("release"),
-            base.deletingLastPathComponent().appendingPathComponent("release"),
-        ]
-        for releaseURL in candidates {
-            guard let content = try? String(contentsOf: releaseURL, encoding: .utf8) else { continue }
-            for line in content.split(separator: "\n") {
-                if line.hasPrefix("JAVA_VERSION=") {
-                    let values = line.replacingOccurrences(of: "JAVA_VERSION=", with: "")
-                        .replacingOccurrences(of: "\"", with: "")
-                        .split(separator: ".")
-                        .compactMap { Int($0) }
-                    if let first = values.first {
-                        return first == 1 ? (values.count > 1 ? values[1] : 8) : first
-                    }
-                }
-            }
-        }
-        return nil
-    }
-
-    private static func findJVM(at url: URL) -> JavaVirtualMachine? {
-        DataManager.shared.javaVirtualMachines.first(where: { $0.executableURL.path == url.path })
-    }
-
-    private static func ensureDataManagerHasJava(_ url: URL) {
-        guard findJVM(at: url) == nil else { return }
-        let arch = Architecture.getArchOfFile(url)
-        let callMethod: CallMethod = arch == Architecture.system ? .direct : (Architecture.system == .arm64 ? .transition : .incompatible)
-        let major = readJavaMajorVersion(at: url) ?? 0
-        let jvm = JavaVirtualMachine(
-            arch: arch,
-            version: major,
-            displayVersion: "\(major)",
-            implementor: nil,
-            executableURL: url,
-            callMethod: callMethod,
-            isJdk: nil
-        )
-        DispatchQueue.main.async {
-            DataManager.shared.javaVirtualMachines.append(jvm)
-        }
-    }
-
-    private static func archName(_ arch: Architecture) -> String {
-        switch arch {
-        case .arm64: return "arm64"
-        case .x64: return "x64"
-        case .fatFile: return "fat"
-        case .unknown: return "unknown"
-        }
-    }
-    
-    public func loadConfig() throws {
-        // readToEnd 可能返回 nil（空/损坏配置文件），强解包会崩；失败时抛错让调用方用默认配置
-        let fh = try FileHandle(forReadingFrom: configPath)
-        defer { try? fh.close() }
-        guard let data = try fh.readToEnd() else {
-            throw MyLocalizedError(reason: "配置文件为空: \(configPath.path)")
-        }
-        self.config = .init(try .init(data: data))
-    }
-    
-    public func saveConfig() {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .prettyPrinted
-        do {
-            try FileManager.default.createDirectory(
-                at: runningDirectory,
-                withIntermediateDirectories: true,
-                attributes: nil
-            )
-            try encoder.encode(config).write(to: configPath, options: .atomic)
-        } catch {
-            err("无法保存配置: \(error.localizedDescription)")
-        }
-    }
-    
-    private static func getClientBrand(_ manifestString: String) -> ClientBrand {
-        if manifestString.contains("neoforged") {
-            return .neoforge
-        } else if manifestString.contains("fabric") {
-            return .fabric
-        } else if manifestString.contains("forge") {
-            return .forge
-        } else {
-            return .vanilla
-        }
-    }
-    
-    public static func getMinJavaVersion(_ version: MinecraftVersion) -> Int {
-        if version >= RequiredJava21 {
-            return 21
-        } else if version >= RequiredJava17 {
-            return 17
-        } else if version >= RequiredJava16 {
-            return 16
-        } else {
-            return 8
-        }
-    }
-    
-    public static func findSuitableJava(_ version: MinecraftVersion, minJavaVersion: Int? = nil, manifest: ClientManifest? = nil) -> JavaVirtualMachine? {
-        let resolvedMin = minJavaVersion ?? resolveMinJavaVersion(manifest: manifest, version: version)
-        let validJVMs = DataManager.shared.javaVirtualMachines.filter { $0.version > 0 && $0.callMethod != .incompatible }
-
-        debug("寻找 Java: 版本=\(version.displayName), 最低 Java=\(resolvedMin), 候选 JVM=\(validJVMs.count)")
-        for jvm in validJVMs {
-            debug("  候选: \(jvm.executableURL.path) (major=\(jvm.version), arch=\(archName(jvm.arch)), callMethod=\(jvm.callMethod))")
-        }
-
-        // 优先选择：callMethod == .direct 且 version >= min
-        // 次选：callMethod == .transition（Rosetta）且 version >= min
-        var directCandidate: JavaVirtualMachine?
-        var transitionCandidate: JavaVirtualMachine?
-        for jvm in validJVMs.sorted(by: { $0.version < $1.version }) {
-            if jvm.version < resolvedMin { continue }
-            if jvm.callMethod == .direct {
-                directCandidate = jvm
-                break
-            }
-            if transitionCandidate == nil && jvm.callMethod == .transition {
-                transitionCandidate = jvm
-            }
-        }
-
-        let result = directCandidate ?? transitionCandidate
-        if let result {
-            debug("选定 Java: \(result.executableURL.path) (major=\(result.version), callMethod=\(result.callMethod))")
-        } else {
-            warn("未找到可用 Java")
-            warn("  版本: \(version.displayName)")
-            warn("  最低 Java 版本: \(resolvedMin)")
-            warn("  可用 JVM 数量: \(validJVMs.count)")
-        }
-        return result
-    }
-    
     public func launch(_ launchOptions: LaunchOptions) async {
         guard version != nil else {
             log("版本未设置，无法启动")
@@ -374,132 +212,4 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
             }
         }
     }
-    
-    @discardableResult
-    private func loadManifest() -> Bool {
-        do {
-            let manifestPath = runningDirectory.appendingPathComponent(runningDirectory.lastPathComponent + ".json")
-            
-            // readToEnd 可能返回 nil（空/损坏清单文件），强解包会崩；失败按读取失败处理
-            let fh = try FileHandle(forReadingFrom: manifestPath)
-            defer { try? fh.close() }
-            guard let data = try fh.readToEnd() else {
-                err("无法读取 \(manifestPath.lastPathComponent): 文件为空")
-                return false
-            }
-            self.clientBrand = MinecraftInstance.getClientBrand(String(data: data, encoding: .utf8) ?? "")
-            
-            guard let manifest = try ClientManifest.parse(
-                url: manifestPath, minecraftDirectory: minecraftDirectory
-            ) else { return false }
-            self.manifest = manifest
-        } catch {
-            err("无法加载客户端清单: \(error.localizedDescription)")
-            return false
-        }
-        
-        return true
-    }
-    
-    private func detectVersion() {
-        guard version == nil else {
-            return
-        }
-        do {
-            let archive = try Archive(url: runningDirectory.appendingPathComponent("\(name).jar"), accessMode: .read)
-            guard let entry = archive["version.json"] else {
-                throw MyLocalizedError(reason: "version.json 不存在")
-            }
-            
-            var data = Data()
-            _ = try archive.extract(entry, consumer: { (chunk) in
-                data.append(chunk)
-            })
-            
-            let version = MinecraftVersion(displayName: try JSON(data: data)["id"].stringValue)
-            self.version = version
-        } catch {
-            err("无法检测版本: \(error.localizedDescription)，正在使用清单版本")
-            self.version = .init(displayName: manifest.id)
-        }
-    }
-    
-    public func getIconName() -> String {
-        if self.clientBrand == .vanilla {
-            return self.version.getIconName()
-        }
-        return "\(self.clientBrand.rawValue.capitalized)Icon"
-    }
 }
-
-public struct MinecraftConfig: Codable {
-    public var additionalLibraries: Set<String> = []
-    public var javaURL: URL! {
-        get {
-            return javaURLString == "" ? nil : URL(fileURLWithPath: javaURLString)
-        }
-        set (value) {
-            javaURLString = value.path
-        }
-    }
-    public var skipResourcesCheck: Bool = false
-    public var maxMemory: Int32 = 4096
-    public var qualityOfService: QualityOfService = .default
-    public var minecraftVersion: String!
-    
-    private var javaURLString: String
-    
-    enum CodingKeys: String, CodingKey {
-        case additionalLibraries
-        case javaURLString = "javaURL"
-        case skipResourcesCheck
-        case maxMemory
-        case qualityOfService
-        case minecraftVersion
-    }
-    
-    public init(_ json: JSON) {
-        self.additionalLibraries = .init(json["additionalLibraries"].array?.map { $0.stringValue } ?? [])
-        self.javaURLString = json["javaURL"].stringValue // 旧版本字段
-        self.skipResourcesCheck = json["skipResourcesCheck"].boolValue
-        self.maxMemory = json["maxMemory"].int32 ?? 4096
-        self.qualityOfService = .init(rawValue: json["qualityOfService"].intValue) ?? .default
-        self.minecraftVersion = json["minecraftVersion"].stringValue
-        if qualityOfService.rawValue == 0 {
-            qualityOfService = .default
-        }
-    }
-    
-    public init(version: MinecraftVersion?) {
-        self.minecraftVersion = version?.displayName
-        self.javaURLString = ""
-    }
-}
-
-public enum ClientBrand: String, Codable, Hashable {
-    case vanilla = "vanilla"
-    case fabric = "fabric"
-    case quilt = "quilt"
-    case forge = "forge"
-    case neoforge = "neoforge"
-    
-    public func getName() -> String {
-        if self == .neoforge {
-            return "NeoForge"
-        } else {
-            return self.rawValue.capitalized
-        }
-    }
-    
-    public var index: Int {
-        switch self {
-        case .vanilla: 0
-        case .fabric: 1
-        case .quilt: 2
-        case .forge: 3
-        case .neoforge: 4
-        }
-    }
-}
-
-extension QualityOfService: @retroactive Codable { }
