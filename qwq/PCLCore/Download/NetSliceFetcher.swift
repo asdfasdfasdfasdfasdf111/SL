@@ -9,7 +9,12 @@
 //  - sliceSucceeded / sliceFailed：分片终态归位（断流未下满视为失败走续传、源失败记账、连接层错误直接淘汰该源）；
 //  - 末尾「分片执行器内部接口」是 detached 任务读写 actor 状态的原子边界（文件大小确立、分片临时文件与进度记账）。
 //  自 NetDownloader.swift 按职责物理拆出，原第 537-737、835-889 行。
-//  请求头、超时公式、阈值、写入顺序与全部注释文案均未改动。
+//  请求头、超时公式、阈值与写入顺序均未改动。
+//
+//  本次修复（同一源可无限重试 / 进度停住）：sliceSucceeded 的断流分支原先只把 failCount 加一，
+//  而 failCount 全工程无人读取（超时公式读的是 sourceFails），也不拉黑源，因此同一源可被无限
+//  续传重试。现改为复用既有的源失败机制（sourceFails + maxFailPerSource + pickSource +
+//  isAllSourcesFailed），与 sliceFailed 的记账口径一致。
 //
 
 import Foundation
@@ -173,6 +178,17 @@ extension NetManager {
         if record.fileSize != -1 && slice.undone(of: record) > 0 {
             slice.state = .failed
             record.failCount += 1
+            // 断流与 sliceFailed 走同一套源失败记账：原实现只累加 failCount（该字段无人读取），
+            // 既不拉黑源也不触发换源，同一源可以被无限续传重试，用户侧表现为「进度停住、
+            // 既不失败也不换源」。计入 sourceFails 后：自适应超时随之增长（runSlice 的 6s×(1+失败数)），
+            // 同一源失败 maxFailPerSource 次即被 pickSource 跳过，全部源耗尽则由下面的
+            // isAllSourcesFailed 置为失败并清理临时分片。
+            record.sourceFails[slice.sourceIndex, default: 0] += 1
+            record.failReason = "连接中断，分片未下载完整"
+            if record.isAllSourcesFailed(config.maxFailPerSource) {
+                record.state = .failed
+                cleanupTemps(record)
+            }
             return
         }
         slice.state = .done
