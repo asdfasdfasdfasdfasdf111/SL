@@ -51,9 +51,12 @@ final class CacheManager {
     // 锁内只允许微秒级的内存操作，磁盘读写全部在锁外完成。
 
     func diskGet(_ key: String) -> Data? {
-        let url = diskURL(for: key)
-        guard fileManager.fileExists(atPath: url.path) else { return nil }
-        return try? Data(contentsOf: url)
+        // 不再先用 fileExists 探路：读取失败（文件不存在 / 不可读 / 目标是目录）本就会抛错，
+        // try? 同样返回 nil，与旧行为一致；每条 key 因此少一次 stat 系统调用。
+        // 收益在 prefetchText 这类逐 key 批量读的路径上按 key 数累计。
+        // 依据：Data.init(contentsOf:options:) 在 url 不可读时抛 Cocoa 域错误。
+        // 官方链接：https://developer.apple.com/documentation/foundation/data/init(contentsof:options:)
+        return try? Data(contentsOf: diskURL(for: key))
     }
 
     func diskSet(_ key: String, data: Data) {

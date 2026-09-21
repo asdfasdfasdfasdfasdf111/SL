@@ -128,6 +128,15 @@ class ModVersionDetector {
 
         let lines = content.components(separatedBy: .newlines)
         var inMinecraftDep = false
+        // 该模式每一行都要用一次，提到循环外只编译一次：旧写法把 NSRegularExpression 建在逐行
+        // 循环体内，minecraft 依赖块里的每一行都会重新编译同一个（已固定的）模式。
+        // 依据：NSRegularExpression 是「编译后的正则」的不可变表示，构造即编译，成本与待匹配
+        // 字符串无关；官方明确其不可变且线程安全，可安全复用同一实例。
+        // 官方链接：https://developer.apple.com/documentation/foundation/nsregularexpression
+        let minecraftModIdRegex = try? NSRegularExpression(
+            pattern: #"#?modId\s*=\s*"minecraft""#,
+            options: .caseInsensitive
+        )
 
         for line in lines {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -139,18 +148,15 @@ class ModVersionDetector {
                 inMinecraftDep = false
                 continue
             }
-            if inMinecraftDep {
-                let regex = try? NSRegularExpression(
-                    pattern: #"#?modId\s*=\s*"minecraft""#,
-                    options: .caseInsensitive
-                )
-                if let match = regex?.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)), match.numberOfRanges > 0 {
-                    for l in lines {
-                        let t = l.trimmingCharacters(in: .whitespaces)
-                        if t.hasPrefix("versionRange") || t.hasPrefix("#versionRange") {
-                            if let range = extractTOMLValue(t, key: "versionRange") {
-                                return ModVersionInfo(versionRange: range, loader: "forge")
-                            }
+            // 匹配模式、选项与匹配范围（整行）均与旧实现一致，仅编译时机改变
+            if inMinecraftDep,
+               let match = minecraftModIdRegex?.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
+               match.numberOfRanges > 0 {
+                for l in lines {
+                    let t = l.trimmingCharacters(in: .whitespaces)
+                    if t.hasPrefix("versionRange") || t.hasPrefix("#versionRange") {
+                        if let range = extractTOMLValue(t, key: "versionRange") {
+                            return ModVersionInfo(versionRange: range, loader: "forge")
                         }
                     }
                 }
