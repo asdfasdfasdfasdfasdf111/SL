@@ -46,10 +46,6 @@ struct ModDetailView: View {
     // 「内存→磁盘→网络」按需翻译流程；视图销毁后 model 不再写回，UAF 防护）
     @StateObject private var translationModel = CardTranslationModel()
 
-    private func assetName(for loader: String) -> String {
-        LoaderNameResolver.assetName(for: loader)
-    }
-
     var body: some View {
         GeometryReader { geometry in
             let width = geometry.size.width

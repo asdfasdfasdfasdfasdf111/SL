@@ -115,7 +115,8 @@
 - `ModDownloader.getProject` 不读写 `searchCache`（`searchCache` 仅 `searchMods` 使用），
   因此由「每次新建实例」改为「`DefaultModBrowserService` 内的共享静态实例」不改变缓存命中与返回值；
 - `ModProject.gameVersions` / `loaders` 在转换时已按 `?? []` 归一，与既有 `project.game_versions ?? []` 同义；
-- 错误仍由同一 `catch` 吞掉并复位 `isLoadingProject`，未新增错误提示。
+- 错误仍由同一 `catch` 吞掉，未新增错误提示（该分支原先仅复位只写不读的 `isLoadingProject`，
+  该死状态已随清理删除，错误路径行为不变）。
 
 未采用 `ModSearchUseCase.detail(projectID:)`：它会额外请求一次版本列表，
 而本视图的版本清单来自本地目录扫描，多出的一次往返属行为变化。

@@ -61,7 +61,8 @@ final class ModDetailViewModel: ObservableObject {
 
     @Published var projectGameVersions: [String] = []
     @Published var projectLoaders: [String] = []
-    @Published var isLoadingProject = false
+    // isLoadingProject 已删除：项目详情取数期间无任何视图读取该标记
+    // （版本列表本就以空数组起步、卡片自行显示占位），保留只会让赋值的视图失效成为空转。
 
     // MARK: - 加载器支持检测
 
@@ -74,7 +75,9 @@ final class ModDetailViewModel: ObservableObject {
     /// 加载器检测完成顺序（先定论的在最前；只用于 supported 卡片排序）
     @Published var loaderCompletionOrder: [String] = []
     /// 加载器检测任务：持有引用以便切换版本/销毁视图时取消（UAF 防护）
-    @Published var loaderSupportTask: Task<Void, Never>?
+    /// 仅用于 cancel()，无任何展示读取点，故不做 @Published；否则每次赋值都会触发
+    /// 一次无对应的视图失效。
+    private var loaderSupportTask: Task<Void, Never>?
 
     // MARK: - 整合包版本
 
@@ -175,7 +178,6 @@ final class ModDetailViewModel: ObservableObject {
 
     func fetchProjectDetails(itemId: String, pageType: DetailPageType) {
         guard !itemId.isEmpty, projectGameVersions.isEmpty else { return }
-        isLoadingProject = true
         Task {
             do {
                 // 项目详情经 ModBrowser 服务层读取：DefaultModBrowserService.projectDetail
@@ -186,7 +188,6 @@ final class ModDetailViewModel: ObservableObject {
                     guard isViewActive else { return }
                     projectGameVersions = project.gameVersions
                     projectLoaders = project.loaders
-                    isLoadingProject = false
                     // 模组/光影/资源包页：版本列表规则如下——
                     // 1. 模组(.mod)：版本列表 = 本地已安装版本 ∩ API 返回的兼容版本，
                     //    即先看本地 versions 文件夹有哪些版本，再筛出该模组兼容的版本，全部列出来。
@@ -220,7 +221,8 @@ final class ModDetailViewModel: ObservableObject {
                     }
                 }
             } catch {
-                await MainActor.run { if isViewActive { isLoadingProject = false } }
+                // 项目详情取数失败：静默保留本地版本列表，不提示错误
+                // （原实现仅在此复位 isLoadingProject，该死状态已删除）
             }
         }
     }
@@ -281,7 +283,7 @@ final class ModDetailViewModel: ObservableObject {
         loaderStates = initial
         // 完成顺序：缓存已定论项在前（按显示顺序），检测中新定论的按流式到达顺序追加
         loaderCompletionOrder = LoaderSupportChecker.loaderOrder.filter { initial[$0] == .supported || initial[$0] == .notSupported }
-        applyLoaderStates(initial, version: version)
+        applyLoaderStates(initial)
         // 3. 无论当前版本是否命中缓存，都预加载相邻版本；缓存全命中正是后台预取的最佳时机。
         prefetchNearbyLoaders(for: requested, pageType: pageType)
         // 4. 全部定论（无 missing）→ 直接结束，绝不联网当前版本
@@ -299,7 +301,7 @@ final class ModDetailViewModel: ObservableObject {
                     if !loaderCompletionOrder.contains(loader) {
                         loaderCompletionOrder.append(loader)
                     }
-                    applyLoaderStates(states, version: requested)
+                    applyLoaderStates(states)
                 }
             }
         }
@@ -314,7 +316,7 @@ final class ModDetailViewModel: ObservableObject {
     }
 
     /// 应用逐加载器状态到 UI 派生状态（主线程调用）
-    private func applyLoaderStates(_ states: [String: LoaderState], version: String) {
+    private func applyLoaderStates(_ states: [String: LoaderState]) {
         availableLoaders = LoaderSupportChecker.loaderOrder.filter { states[$0] == .supported }
         isLoadingLoaders = states.values.contains { $0 == .checking }
         let hasUnknown = states.values.contains { $0 == .unavailable }

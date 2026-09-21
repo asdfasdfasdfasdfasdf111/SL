@@ -71,10 +71,15 @@ final class DownloadCategoryViewModel: ObservableObject {
     @Published var searchText = ""
 
     /// 与收口前一致：仅写入、无读取点（历史遗留字段，保持原状不删除）
+    /// 本次死状态清理判定：保留。该字段为 `private var`，删除虽不影响行为，
+    /// 但属收口时明确记录「保持原状」的历史字段，与搜索防抖逻辑同一事务块内写入，
+    /// 清理收益为零，故不做无谓改动。
     private var debouncedSearchText = ""
     private var searchDebounceTask: Task<Void, Never>?
 
     /// 与收口前一致：仅写入、无读取点（结果网格迁到 CategoryResultsGrid 后弹入动画未回接）
+    /// 本次死状态清理判定：保留。该字段是「结果弹入动画未回接」这一待办的唯一痕迹
+    /// （ContentCard.swift 注释指向同一语义），删除会丢失待接线意图。
     private var searchPopInIds: Set<String> = []
 
     // MARK: - 分页
@@ -123,6 +128,9 @@ final class DownloadCategoryViewModel: ObservableObject {
     }
 
     /// 与收口前一致：详情页渲染以 selectedModItem 非空为准，本标记仅写入、无读取点
+    /// 本次死状态清理判定：保留。写入点位于 openDetail/closeDetail 的 withAnimation 闭包内，
+    /// 与详情页进出场 transition 共用同一事务；删除将使 openDetail 退化为空动画闭包，
+    /// 而事务归属无法在不运行 App 的前提下依据官方文档判定，为守住「不改变交互行为」约束不动。
     @Published var showDetail = false
 
     /// 当前打开的详情项
@@ -176,14 +184,30 @@ final class DownloadCategoryViewModel: ObservableObject {
 
     // MARK: - 列表派生刷新
 
+    /// 最近一次由 `applyFilter` 联网写回 items 的批次快照。
+    ///
+    /// 该路径同时写回 items 与 filteredResults，因此视图 `onChange(of: items)` 再调用
+    /// `handleItemsChanged` 时，过滤结果其实已经就位；若仍按「items 变更即重过滤」处理，
+    /// 每次联网搜索都会多发一轮 Modrinth 请求（旧签名 onChange 的既有冗余）。
+    /// 以快照比对识别变更来源：批次长度不同时比较在首步即失败，无遍历开销。
+    private var itemsFromSearch: [DownloadedItem]?
+
     /// items 变更后的派生刷新。
     ///
     /// 由视图在 `onChange(of: items)` 内延迟到渲染事务外调用（与收口前一致：
     /// onChange 处于视图更新事务中，同步写 filteredResults/displayLimit 会触发
     /// "Modifying state during view update"，是 UAF 前兆）。
+    ///
+    /// 变更来源为 `applyFilter` 自身（快照命中）时直接返回：此时 filteredResults 已是
+    /// 该批次搜索结果，再走一次 applyFilter 只会在 400ms 防抖后重复同一轮联网请求。
+    /// 其余来源（本地目录加载完成、缓存命中、分页合并等）保持原行为，仍按搜索词重过滤。
     func handleItemsChanged(_ newItems: [DownloadedItem], translation: CardTranslationModel) {
         filteredResults = newItems
         displayLimit = 120
+        if let searchBatch = itemsFromSearch, searchBatch == newItems {
+            itemsFromSearch = nil
+            return
+        }
         if !searchText.trimmingCharacters(in: .whitespaces).isEmpty {
             applyFilter(translation: translation)
         }
@@ -260,6 +284,8 @@ final class DownloadCategoryViewModel: ObservableObject {
                 debouncedSearchText = searchText
                 activeSearchQuery = searchQuery
                 items = result.items
+                // 记录本次写回批次：供 handleItemsChanged 识别来源，避免再触发一轮请求
+                itemsFromSearch = result.items
                 currentOffset = result.items.count
                 hasMore = result.totalHits > result.items.count
                 filteredResults = result.items

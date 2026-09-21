@@ -10,21 +10,19 @@ import zlib
 // 状态与业务决策（选中态/搜索/分页/取数）→ ViewModels/DownloadCategoryViewModel.swift
 
 struct DownloadCategoryView: View {
-    @EnvironmentObject var settings: LauncherSettings
     /// 主题来源由调用方注入（全局单例外部持有），本视图仅向下透传
     @ObservedObject var theme: ThemeManager
 
     /// 本视图的唯一状态与决策来源（对标 ContentView 的 NavigationState / DropInstallCoordinator）
     @StateObject private var viewModel = DownloadCategoryViewModel()
 
-    // 以下均为纯视图状态：侧栏高亮位移、子项弹入透明度、内容淡入淡出、几何宽度
+    // 以下均为纯视图状态：侧栏高亮位移、子项弹入透明度、内容淡入淡出
     @State private var subItemOpacity: [GameSubCategory: Double] = [
         .release: 0, .snapshot: 0, .ancient: 0
     ]
     @State private var sectionHighlightY: CGFloat = 12
     @State private var contentOpacity: Double = 1
     @State private var contentOffset: CGFloat = 0
-    @State private var geometryWidth: CGFloat = 0
 
     // 卡片副标题翻译状态与调度已下沉到 CardTranslationModel（与详情页共享同一套
     // 「内存→磁盘→网络」按需翻译流程；视图销毁后 model 不再写回，UAF 防护）。
@@ -52,8 +50,7 @@ struct DownloadCategoryView: View {
                 contentWidth: contentWidth,
                 cardPadding: cardPadding,
                 columns: columns,
-                cardWidth: cardWidth,
-                geometry: geometry
+                cardWidth: cardWidth
             )
         }
         .onAppear {
@@ -106,6 +103,9 @@ struct DownloadCategoryView: View {
         .onChange(of: viewModel.items) { newItems in
             // ⚠️ onChange 处于视图更新事务中，同步写 filteredResults/displayLimit 会触发
             // "Modifying state during view update"（UAF 前兆），延迟到渲染事务外执行
+            // 本工程部署目标为 macOS 13.0，onChange(of:initial:_:)（macOS 14.0+）不可用，
+            // 沿用旧签名 onChange(of: perform:)。
+            // 「items 变更 → 重过滤」引发的重复联网在 handleItemsChanged 内按变更来源消除
             DispatchQueue.main.async {
                 viewModel.handleItemsChanged(newItems, translation: translationModel)
             }
@@ -120,8 +120,7 @@ struct DownloadCategoryView: View {
         contentWidth: CGFloat,
         cardPadding: CGFloat,
         columns: Int,
-        cardWidth: CGFloat,
-        geometry: GeometryProxy
+        cardWidth: CGFloat
     ) -> some View {
         HStack(spacing: 0) {
             GameSidebarView(
@@ -140,6 +139,10 @@ struct DownloadCategoryView: View {
                 .frame(width: 0.5)
                 .frame(maxHeight: .infinity)
 
+            // 分类切换淡出：selectSection 写入的 contentOpacity/contentOffset 在此读取。
+            // 该淡出自初始提交起只有写入点、无读取点（收口提交亦记录为死状态），导致动画从未生效；
+            // 读取点接在右侧内容区，与「侧栏高亮位移 + 内容淡入淡出」的分工一致。
+            // 静止态为 opacity 1 / offset 0，不改变既有布局与视觉。
             if let item = viewModel.selectedModItem {
                 ModDetailView(
                     item: item,
@@ -173,6 +176,8 @@ struct DownloadCategoryView: View {
                     insertion: .move(edge: .trailing),
                     removal: .move(edge: .trailing)
                 ))
+                .opacity(contentOpacity)
+                .offset(y: contentOffset)
             } else {
                 listContainer(
                     contentWidth: contentWidth,
@@ -180,20 +185,11 @@ struct DownloadCategoryView: View {
                     columns: columns,
                     cardWidth: cardWidth
                 )
+                .opacity(contentOpacity)
+                .offset(y: contentOffset)
             }
         }
         .clipped()
-        .overlay(
-            Color.clear.frame(width: 0, height: 0)
-                .onAppear {
-                    // 布局事务中写 @State 会触发 "Modifying state during view update"（UAF 前兆）
-                    DispatchQueue.main.async { geometryWidth = geometry.size.width }
-                }
-                .onChange(of: geometry.size.width) { newWidth in
-                    // 布局事务中写 @State 会触发 "Modifying state during view update"（UAF 前兆）
-                    DispatchQueue.main.async { geometryWidth = newWidth }
-                }
-        )
     }
 
     private func listContainer(

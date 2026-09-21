@@ -260,10 +260,11 @@ struct CategoryContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.clear)
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView { LazyVGrid(columns: [GridItem(.adaptive(minimum: 280))], spacing: 20) { }.padding(32) }
+                // 原先以 ScrollViewReader 包裹但从未调用 scrollTo（proxy 无读取点）：
+                // ScrollViewReader 的官方用途即经 proxy 做编程式滚动，无调用时仅为惰性包装，
+                // 不参与布局、不影响滚动，故移除包装保留 ScrollView 本体。
+                ScrollView { LazyVGrid(columns: [GridItem(.adaptive(minimum: 280))], spacing: 20) { }.padding(32) }
                     .background(Color.clear)
-                }
             }
         }
         .id(category.id)
