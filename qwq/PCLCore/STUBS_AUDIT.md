@@ -13,6 +13,11 @@
 - 任务书中列出的 `NetworkTest.hasNetworkConnection()` **在当前分支已不存在**（详见 §2.1）。
 - 离线账号链路（`PCLLaunchBridge.pclLaunch` → `AnyAccount.offline`）未受影响，功能照常。
 
+**第二轮（兼容层引用普查，2026-09）**：对 `qwq/PCLCore/PCLStubs.swift` 的 65 项声明逐项统计全库引用，
+结果为 **有引用 56 项 / 无引用 9 项 / 语义可疑 3 项**。9 项无引用声明已加
+`@available(*, deprecated, message: "全库无引用，待清理")` 标注，**本轮不执行删除**；完整表格见 §9。
+本轮同时更正了 §1.4、§5.3、§8 中关于 `AccountManager` / `AppRouter` 的两处误判。
+
 ## 1. 账号系统
 
 ### 1.1 `.microsoft` / `.yggdrasil` 伪实现（高）
@@ -48,15 +53,16 @@ Java JDK 下载源（`aka.ms`、`Microsoft JDK`）与离线账号 UUID 算法注
 | 影响 | 不存在「点击后被静默降级」的入口，用户不会被诱导去点一个假按钮。 |
 | 处置 | **未改动 UI**（无入口可改，且无必要）。 |
 
-### 1.4 账号持久化层实际未被使用（中）
+### 1.4 账号持久化层的引用核实（**结论已更正**）
 
 | 项 | 内容 |
 | --- | --- |
-| 位置 | `qwq/PCLCore/PCLStubs.swift:238`（`AccountManager`）、`:240`（`@CodableAppStorage("accounts")`）、`:241`（`accountId`） |
-| 当前行为 | 提供多账号的增删查与持久化接口。 |
-| 实际行为 | **`AccountManager` 在全代码库无任何引用**（除自身定义外 0 处调用）。真实启动链路 `PCLLaunchBridge.swift:118-120` 每次直接 `OfflineAccount(safeUsername)` 新建账号，不读不写 `accounts`。 |
-| 影响 | 不影响用户，但会误导维护者以为存在账号管理能力。同时说明 §1.1 中「保留 case 以兼容持久化数据」目前缺乏实际数据支撑（仍按任务要求保留）。 |
-| 建议处置 | **标注**。保留 `AnyAccount` 结构不动；后续如继续重构可评估移除整个账号持久化层。 |
+| 位置 | `qwq/PCLCore/PCLStubs.swift`（`AccountManager`、`@CodableAppStorage("accounts")`、`accountId`） |
+| 当前行为 | 提供账号的持久化读取接口。 |
+| 实际行为（**第二轮更正**） | 原报告称「`AccountManager` 在全代码库无任何引用」，该结论**有误**。`AccountManager.shared.getAccount()` 在 `qwq/PCLCore/PCLLaunchBridge.swift:124` 被活跃调用，用于读取持久化账号并在 `:125-127` 对未实现种类显式告警。真实启动链路 `PCLLaunchBridge.swift:113-117` 另用 `OfflineAccount(username)` 新建离线账号，两条路径并存。 |
+| 影响 | 无用户影响。`accounts` / `accountId` 由本类型自身读写，外部只经 `getAccount()` 读取。 |
+| 建议处置 | **保留**（第二轮已核实有引用，不得删除）。 |
+| 附注 | 由于该读取路径存在，§1.1 中「保留 `.microsoft` / `.yggdrasil` case 以兼容持久化数据」现在具备实际数据通道支撑。 |
 
 ## 2. 网络探测
 
@@ -98,6 +104,15 @@ Java JDK 下载源（`aka.ms`、`Microsoft JDK`）与离线账号 UUID 算法注
 | 已完成处置 | 补充文档注释，明确说明返回值语义为「恒为 0，即第 0 个按钮」以及调用方分支会永久走 index == 0。签名不变。 |
 | 建议处置 | **实现**（后续）：接入真实弹窗并按用户点击返回索引；或临时将调用方改为「不做分支假设」。 |
 
+### 3.3 状态更新（第二轮普查时复核）
+
+§3.1 与 §3.2 描述的空实现 / 恒返回 0 **已不成立**：当前代码中
+`PopupManager.show(_:)` 已改为 `NoticeCenter.shared.post(Notice(model))`，
+`showAsync(_:)` 已改为 `await NoticeCenter.shared.presentAndWait(Notice(model))`
+（`PCLStubs.swift`，`NoticeCenter.swift` 提供 `hasPresenter` / `presentAndWait(_:)`）。
+即弹窗已接入真实提示通道，`MinecraftInstance.swift:348` 的「导出错误报告」分支可被真实点击触发。
+本项遗留问题关闭；第二轮改为关注 `PopupManager.isAvailable`（全库无引用，已标注待清理）。
+
 ## 4. 启动取消
 
 ### 4.1 `MinecraftLauncher.isCancelled` 为 no-op（中）
@@ -123,8 +138,8 @@ Java JDK 下载源（`aka.ms`、`Microsoft JDK`）与离线账号 UUID 算法注
 | 实际行为 | PCL2 中 hint 是界面瞬时提示条；此处退化为一条日志，**用户看不到任何提示**。 |
 | 影响 | **会误导用户**：关键状态变化静默化。 |
 | 调用点 | ① `qwq/PCLCore/Minecraft/MinecraftInstance.swift:333` —— 「检测到 Minecraft 出现错误，错误分析已开始……」（用户看不到）<br>② `qwq/PCLCore/Minecraft/Download/InstallTask.swift:416` —— 文件下载失败（`.critical`，用户看不到）<br>③ `qwq/PCLCore/Minecraft/Download/InstallTask.swift:420` —— 文件下载完成（`.finish`，用户看不到） |
-| 已完成处置 | 补充文档注释，明确「只写日志、不显示界面元素、调用后用户无感知」。 |
-| 建议处置 | **实现**（后续）：接入真实提示通道。当前先标注。 |
+| 已完成处置 | 补充文档注释，明确「只写日志、不显示界面元素、调用后用户无感知」。**第二轮状态更新：该描述已过时**——`hint()` 现已在函数体内把消息按级别转成 `Notice` 投递到 `NoticeCenter`，用户可在界面顶部看到横幅，不再是「只写日志」。 |
+| 建议处置 | **已实现（后续已完成）**：接入真实提示通道。 |
 
 ### 5.2 `Theme` 桩实现（低）
 
@@ -145,7 +160,7 @@ Java JDK 下载源（`aka.ms`、`Microsoft JDK`）与离线账号 UUID 算法注
 | 当前行为 | 提供 `append` / `getLast` / `removeLast` 路由栈。 |
 | 实际行为 | **全库无任何 `router.append(...)` 调用**，栈恒为空，`getLast()` 恒返回 `.other`。因此 `InstallTask.swift:120` 的 `if case .installing(_) = router.getLast()` 判断**永远不会成立**，其中的 `removeLast()`（`:121`）是死代码。真实页面切换由 `DownloadDetailManager` 负责。 |
 | 影响 | 不影响用户；误导维护者以为存在路由系统。 |
-| 建议处置 | **标注 / 移除**。本次未改动（涉及 `InstallTask.complete()` 逻辑，改动收益低于风险），仅记录于此。 |
+| 建议处置 | **仅记录，不改**。第二轮核实：`AppRouter` 类及 `getLast()` / `removeLast()` **确有活跃引用**（`InstallTask.swift:120,121`，经 `DataManager.shared.router`），不得整体删除；真正的退化点是「无入栈点」而非「无引用」。其无引用成员 `Route.versionList(directory:)` 与 `append(_:)` 已在第二轮加 `@available(*, deprecated)` 标注。 |
 
 ### 5.4 `AppSettings` 部分字段恒为默认值（低）
 
@@ -201,24 +216,161 @@ Java JDK 下载源（`aka.ms`、`Microsoft JDK`）与离线账号 UUID 算法注
 | `qwq/PCLCore/Minecraft/Download/InstallTask.swift` | 基类 `start` / `getInstallStates` / `getTitle` 补充语义注释。 |
 | `qwq/PCLCore/STUBS_AUDIT.md` | 本报告。 |
 
+第二轮（兼容层引用普查）改动仅限两个文件：
+
+| 文件 | 改动性质 |
+| --- | --- |
+| `qwq/PCLCore/PCLStubs.swift` | 9 项无引用声明加 `@available(*, deprecated, message: "全库无引用，待清理")`；对 20 余项有引用声明补齐「使用方 / 调用点」注释；更正 `AnyAccount` 文档中关于 `isFullyImplemented` 的表述。**未删除任何代码**。 |
+| `qwq/PCLCore/STUBS_AUDIT.md` | 新增 §9 逐声明引用普查表；更正 §1.4 / §5.3 / §8 的误判；补记 §3.3 与 §5.1 的状态更新。 |
+
+其余源码文件（含 `qwqTests/`）**一律未改动**；本轮未发现需要同步修改的调用点。
+
 ## 7. 验证结果
 
-命令：
+命令（类型检查，不跑完整 `xcodebuild`）：
 
 ```
 cd /Users/apple/Downloads/Swim111Launcher_副本
-xcrun swiftc -typecheck -target arm64-apple-macosx13.0 -I /tmp/deps $(find qwq -name "*.swift")
+DEV=$(xcode-select -p)
+xcrun swiftc -typecheck -target arm64-apple-macosx13.0 -I /tmp/deps \
+  -F "$DEV/Platforms/MacOSX.platform/Developer/Library/Frameworks" \
+  -I "$DEV/Platforms/MacOSX.platform/Developer/usr/lib" -module-name qwq \
+  $(find qwq -name "*.swift") qwqTests/*.swift
 ```
 
-结果：`exit = 0`，`grep -c "error:"` = **0**，`warning` 16 条均为改动前既有告警
-（Swift 6 并发严格模式相关，与本次改动无关）。
+第一轮结果：`exit = 0`，`grep -c "error:"` = **0**，`warning` 16 条均为改动前既有告警。
+
+第二轮结果：`exit = 0`，`error:` **0** 条，`warning:` **44** 行（与改动前基线完全一致），
+其中 `DeprecatedDeclaration` 告警 **0** 条——即本次新增的 `@available(*, deprecated)` 标注
+未产生任何新告警（被标注声明在本文件内均无使用点，且经隔离用例实测确认同文件内
+「类型引用自身成员」与「switch 匹配自身 deprecated case」不触发弃用告警）。
+告警仍为并发严格模式相关的既有项。
 
 ## 8. 需人工决策的遗留项
 
 以下各项未在本次改动（改动面超出「标注」范畴或存在回归风险）：
 
-1. **`PopupManager` 接入真实弹窗** —— 需确定弹窗承载方式（SwiftUI sheet / `NSAlert`）与全局挂载点，影响 `MinecraftInstance.swift:336` 的错误报告导出分支。
-2. **`hint()` 接入真实提示通道** —— 需先确定提示 UI 形态。
-3. **`AnyAccount.microsoft` / `.yggdrasil` 是否长期保留** —— 本次按要求保留 case；但 §1.4 表明持久化账号层当前无任何调用点，保留理由暂无实据，需人工确认历史数据是否真实存在。
-4. **`AppRouter` 与 `AccountManager` 是否删除** —— 均为无引用死代码，删除可减小误导面，但超出本次治理范围。
+1. ~~**`PopupManager` 接入真实弹窗**~~ —— **已关闭**：`show` / `showAsync` 现已走 `NoticeCenter`（见 §3.3）。
+2. ~~**`hint()` 接入真实提示通道**~~ —— **已关闭**：`hint()` 现已投递 `NoticeCenter`（见 §5.1）。
+3. **`AnyAccount.microsoft` / `.yggdrasil` 是否长期保留** —— 本次按要求保留 case；§1.4 已更正为「持久化读取路径真实存在」，保留理由成立，需人工确认线上是否确有此类历史数据。
+4. **`AppRouter` 与 `AccountManager` 是否删除** —— **此条已在第二轮修正**：两者均有活跃引用
+   （`AccountManager.shared.getAccount()` → `PCLLaunchBridge.swift:124`；
+   `DataManager.shared.router.getLast()` / `removeLast()` → `InstallTask.swift:120,121`），
+   **不得删除**。可再评估的是二者内部的无引用成员（`Route.versionList`、`AppRouter.append(_:)`）。
 5. **`AppSettings.currentMinecraftDirectory` 是否补 UI 入口** —— 属新功能，本次不做。
+6. **9 项「全库无引用」声明是否执行删除** —— 本轮仅标注，未删除；删除前需确认无跨 target / 运行时反射引用，
+   建议单独提交并由工程侧确认编译后执行（清单见 §9.3）。
+
+## 9. 附录：`PCLStubs.swift` 逐声明引用普查（第二轮）
+
+### 9.1 口径
+
+- 统计范围：`qwq/**/*.swift`（生产）与 `qwqTests/*.swift`（测试）；`build*/SourcePackages/` 等构建产物与
+  `未命名文件夹/` 下的历史副本**不计入**。
+- 「引用数」= 除声明行本身以外的使用点行数；仅出现在文档注释中的符号名不计引用。
+- 分类规则：**无引用**（生产与测试均为 0）→ 加 `@available(*, deprecated, message: "全库无引用，待清理")`；
+  **有引用** → 保留并补「使用方」注释；**语义可疑** → 仅记录，不改代码。
+- 本轮**未执行任何删除**：无引用项占 9 / 65，未构成多数，按保守原则仅标注。
+
+### 9.2 完整表
+
+| 声明名 | 引用数（生产/测试） | 引用位置 | 处置结论 |
+| --- | --- | --- | --- |
+| `URL.parent()` | 13 / 0 | `Minecraft/Mod/Loader/Fabric/FabricInstaller.swift:24`；`Minecraft/Mod/Loader/Forge/ForgeInstaller.swift:175,237,253`；`Minecraft/Launch/MinecraftLauncher.swift:110,114`；`Minecraft/Download/MinecraftInstaller.swift:373`；`Java/JavaVirtualMachine.swift:82,83,111`；`Storage/CacheStorage.swift:80,109`；`Temp/TemperatureDirectory.swift:26`；`FileManagerExtension.swift:17` | 保留（真实现，广泛使用） |
+| `URL.init(fileURLWithUserPath:)` | 0 / 0 | — | **无引用 → 已标注 deprecated** |
+| `Optional.unwrap(_:file:line:)` | 4 / 0 | `Minecraft/Download/InstallTask.swift:349`；`Download/DownloadSource.swift:49`；`Download/DownloadSourceManager.swift:109`；`Features/ModBrowser/ModDownloader.swift:156` | 保留（真实现） |
+| `hint(_:_:)` | 5 / 0 | `Minecraft/Download/InstallTask.swift:441,445`；`Minecraft/MinecraftInstance.swift:338,345`；`PCLLaunchBridge.swift:127` | 保留（已接 `NoticeCenter`） |
+| `HintType`（含 3 case） | 1 / 3 | `UI/Notices/NoticeCenter.swift:71`；`qwqTests/NoticeCenterTests.swift:291-293` | 保留 |
+| `DataManager`（类） | 30+ / 0 | `VersionManifest.swift:86`；`MinecraftVersion.swift:60`；`DownloadSource.swift:37`；`InstallTask.swift:118-121`；`MinecraftInstaller.swift:451,453,455`；`MinecraftDirectory.swift:77`；`PCLLaunchBridge.swift:195-256`；`Java/JavaManager.swift:124,143`；`DownloadDetailManager.swift:57`；`MinecraftInstance.swift:164,182,246` | 保留（真实现） |
+| ├ `DataManager.shared` | 25+ / 0 | 同上各处 | 保留 |
+| ├ `javaVirtualMachines` | 10 / 0 | `MinecraftInstance.swift:164,182,246`；`PCLLaunchBridge.swift:195,202,206,253`；`JavaManager.swift:124,143` | 保留 |
+| ├ `versionManifest` | 3 / 0 | `VersionManifest.swift:86`；`MinecraftVersion.swift:60`；`DownloadSource.swift:37` | 保留 |
+| ├ `inprogressInstallTasks` | 6 / 0 | `DownloadDetailManager.swift:57`；`InstallTask.swift:118,119`；`MinecraftInstaller.swift:451,453,455` | 保留 |
+| └ `router` | 2 / 0 | `InstallTask.swift:120,121` | 保留（**曾被误判为死代码**） |
+| `AppRouter`（类） | 2 / 0 | `InstallTask.swift:120,121`（经 `DataManager.shared.router`） | 保留（**曾被误判为死代码**） |
+| ├ `Route`（枚举） | 1 / 0 | `InstallTask.swift:120` | 保留 |
+| ├ `Route.versionList(directory:)` | 0 / 0 | — | **无引用 → 已标注 deprecated** |
+| ├ `Route.installing(_:)` | 1 / 0 | `InstallTask.swift:120` | 保留 |
+| ├ `Route.other` | 1 / 0 | 本文件 `getLast()` 空栈兜底 | 保留 |
+| ├ `getLast()` | 1 / 0 | `InstallTask.swift:120` | 保留（语义可疑，见 §9.4） |
+| ├ `removeLast()` | 1 / 0 | `InstallTask.swift:121` | 保留（语义可疑，见 §9.4） |
+| └ `append(_:)` | 0 / 0 | — | **无引用 → 已标注 deprecated** |
+| `DownloadSourceOption` | 6 / 4 | `DownloadSourceManager.swift:40,49,69,132`；`Core/Download/Adapters/DefaultDownloadSourceResolver.swift:41`；`MultiFileDownloader.swift:27`；`qwqTests/DownloadAdapterTests.swift:49,53,182,192` | 保留（真实现） |
+| `ColorSchemeOption` | 0 / 0 | — | **无引用 → 已标注 deprecated** |
+| `AppSettings`（类）/`.shared` | 12 / 4 | `CategoryContentView.swift:133`；`LaunchCoordinator.swift:52`；`OfflineSkinService.swift:70,128,165`；`MinecraftRepository.swift:76`；`PCLLaunchBridge.swift:94`；`DefaultDownloadSourceResolver.swift:41`；`MultiFileDownloader.swift:27`；`DownloadSourceManager.swift:40,49,69,132`；`DownloadAdapterTests.swift:49,53,182,192` | 保留 |
+| ├ `currentMinecraftDirectory` | 6 / 0（写入 0） | 同上的读取点 | 保留；**语义可疑**（见 §9.4） |
+| ├ `fileDownloadSource` | 4 / 4 | `DownloadSourceManager.swift:40,49,69`；`DefaultDownloadSourceResolver.swift:41`；`MultiFileDownloader.swift:27`；`DownloadAdapterTests.swift:49,53,182,192` | 保留（真实现） |
+| └ `versionManifestSource` | 1 / 0 | `DownloadSourceManager.swift:132` | 保留 |
+| `Account`（协议） | 3 / 0 | `OfflineAccount` / `AnyAccount` 遵循；`AnyAccount.account` 以 `any Account` 承载 | 保留 |
+| `OfflineAccount`（类）及 `id`/`uuid`/`name` | 2 / 0 | `PCLLaunchBridge.swift:113`（构造）、`:116`（`uuid`） | 保留（真实现，**不得删**） |
+| ├ `init(_:_:)` | 2 / 0 | `PCLLaunchBridge.swift:113`；`AnyAccount` case 关联值 | 保留 |
+| ├ `pclLegacyUuidHex(for:)` | 1 / 0 | 本文件 `init` 内 | 保留（真实现，**不得删**；无外部直接调用） |
+| ├ `leftPad(_:to:)` | 2 / 0 | 本文件 `pclLegacyUuidHex` 内 | 保留（真实现，**不得删**） |
+| ├ `formatUuid(_:)` | 1 / 0 | 本文件 `init` 内 | 保留（真实现，**不得删**） |
+| └ `putAccessToken(options:)` | 2 / 0 | `PCLLaunchBridge.swift:191`；`MinecraftInstance.swift:301`（经 `AnyAccount`） | 保留 |
+| `validateOfflineUsername(_:)` | 3 / 0 | `LaunchCoordinator.swift:27`；`Features/Launch/Adapters/MinecraftInstanceLaunchService.swift:291`；`MinecraftInstance.swift:293` | 保留（真实现，**不得删**） |
+| `AccountError`（枚举） | 2 / 0 | `PCLLaunchBridge.swift:125-127`；`MinecraftInstance.swift:288-289` | 保留 |
+| ├ `microsoftLoginNotImplemented` | 1 / 0 | 本文件 `unimplementedError` | 保留 |
+| ├ `yggdrasilLoginNotImplemented` | 1 / 0 | 本文件 `unimplementedError` | 保留 |
+| ├ `networkUnavailable` | 0 / 0 | — | **无引用 → 已标注 deprecated** |
+| └ `popupNotAvailable` | 0 / 0 | — | **无引用 → 已标注 deprecated** |
+| `AnyAccount`（枚举） | 4 / 0 | `LaunchOptions.swift:17`；`PCLLaunchBridge.swift:117,125,126`；`MinecraftInstance.swift:285,288,289,293,298,299,301,302` | 保留 |
+| ├ `offline(_:)` | 1 / 0 | `PCLLaunchBridge.swift:117`（全库唯一构造点） | 保留（真实现） |
+| ├ `microsoft(_:)` | 0 构造 | — | 保留（类型层兼容；语义可疑，见 §9.4） |
+| ├ `yggdrasil(_:)` | 0 构造 / 1 模式匹配 | `MinecraftInstance.swift:302`（`if case .yggdrasil`） | 保留（同上） |
+| ├ `id`/`uuid`/`name`/`==` | 3 / 0 | `MinecraftInstance.swift:293,299` | 保留 |
+| ├ `putAccessToken(options:)` | 1 / 0 | `MinecraftInstance.swift:301` | 保留 |
+| ├ `isFullyImplemented` | 0 / 0 | — | **无引用 → 已标注 deprecated** |
+| ├ `accountKindDescription` | 2 / 0 | `PCLLaunchBridge.swift:126`；`MinecraftInstance.swift:289` | 保留 |
+| └ `unimplementedError` | 2 / 0 | `PCLLaunchBridge.swift:125`；`MinecraftInstance.swift:288` | 保留 |
+| `AccountManager`（类）/`.shared` | 1 / 0 | `PCLLaunchBridge.swift:124`（`getAccount()`） | 保留（**曾被误判为死代码**） |
+| ├ `accounts` / `accountId` | 本文件内读写 | `AccountManager.getAccount()` | 保留 |
+| └ `getAccount()` | 1 / 0 | `PCLLaunchBridge.swift:124` | 保留 |
+| `PopupButton`（及 `ok`） | 4 / 7 | `InstallTask.swift:240,304,355`；`MinecraftInstance.swift:348`；`NoticeCenter.swift:15`；`NoticeCenterTests.swift:321,322,336,346,347,351,352` | 保留（真实现） |
+| `PopupButtonStyle` | 2 / 1 | `NoticeCenter.swift:19,21`；`NoticeCenterTests.swift:347`（`.danger`） | 保留 |
+| `PopupType` | 1 / 3 | `NoticeCenter.swift:62`；`NoticeCenterTests.swift:284-286` | 保留 |
+| `PopupModel` | 3 / 4 | 本文件 `show`/`showAsync`；`NoticeCenter.swift:92`；`NoticeCenterTests.swift:318,336,345,350` | 保留 |
+| `PopupManager`（类）/`.shared` | 4 / 0 | `InstallTask.swift:240,304,355`；`MinecraftInstance.swift:348` | 保留（已接 `NoticeCenter`） |
+| ├ `isAvailable` | 0 / 0 | — | **无引用 → 已标注 deprecated** |
+| ├ `show(_:)` | 3 / 0 | `InstallTask.swift:240,304,355` | 保留（真实现） |
+| └ `showAsync(_:)` | 1 / 0 | `MinecraftInstance.swift:348` | 保留（真实现） |
+| `CodableAppStorage` | 2 / 0 | 本文件 `AccountManager.accounts` / `accountId` | 保留（有引用，仅本文件内） |
+| `Theme`（类）/`load(id:)`/`id`/`init` | 0 / 0 | 仅注释：`Features/Theme/ThemeDefinition.swift:8-13` | **无引用 → 已标注 deprecated** |
+
+### 9.3 无引用清单（本轮已标注，未删除）
+
+| # | 声明 | 位置 | 备注 |
+| --- | --- | --- | --- |
+| 1 | `URL.init(fileURLWithUserPath:)` | `PCLStubs.swift`（`URL` 扩展） | 仅把 `~` 展开后转交 `init(fileURLWithPath:)` |
+| 2 | `ColorSchemeOption` | `PCLStubs.swift` | 配色由 `Features/Settings/AppSettingsStore.swift:accentColor` 承担 |
+| 3 | `AppRouter.Route.versionList(directory:)` | `PCLStubs.swift` | 无构造点 |
+| 4 | `AppRouter.append(_:)` | `PCLStubs.swift` | 无调用点（路由栈无入栈来源） |
+| 5 | `AccountError.networkUnavailable` | `PCLStubs.swift` | 无构造点 |
+| 6 | `AccountError.popupNotAvailable` | `PCLStubs.swift` | 无构造点 |
+| 7 | `AnyAccount.isFullyImplemented` | `PCLStubs.swift` | 非桩，属上一轮新增的治理访问器；消费方实际走 `unimplementedError` |
+| 8 | `PopupManager.isAvailable` | `PCLStubs.swift` | 同上，属治理访问器 |
+| 9 | `Theme`（含 `load(id:)`/`id`/`init`） | `PCLStubs.swift` | 历史遗留主题模型，不参与渲染 |
+
+删除前置条件：需确认无跨 target / 运行时反射 / 条件编译引用，且工程侧确认编译与测试通过。
+本轮经类型检查确认：9 项标注均未引入新告警。
+
+### 9.4 语义可疑项（仅记录，未改动）
+
+| 项 | 位置 | 可疑点 |
+| --- | --- | --- |
+| `AppRouter` 路由栈无入栈来源 | `PCLStubs.swift`（`AppRouter`） | 全库无 `append` 调用，栈恒空 → `getLast()` 恒返回 `.other`，`InstallTask.swift:120` 的 `if case .installing(_)` 运行期永不成立，`:121` 的 `removeLast()` 实际为不可达分支。真实页面切换由 `Features/Download/DownloadDetailManager.swift` 承担。**注意：该类本身有活跃引用，不可整体删除。** |
+| `AppSettings.currentMinecraftDirectory` 恒为默认值 | `PCLStubs.swift` | 6 处读取，全库无写入点，读到的始终是 `.default`。表面上支持「切换 Minecraft 目录」，实际不支持；UI 亦无对应入口。 |
+| `AnyAccount.microsoft` / `.yggdrasil` 退化实现 | `PCLStubs.swift` | 两个 case 均以 `OfflineAccount` 承载，无 OAuth / 无 Yggdrasil 认证；`.yggdrasil` 仅在 `MinecraftInstance.swift:302-305` 预置 authlib-injector，不产生认证会话。详见 §1.1。 |
+
+### 9.5 依据条目
+
+本轮唯一涉及语法/API 的改动是新增 `@available(*, deprecated, message: "...")` 标注。
+
+| 依据条目 | 官方链接 | 结论 |
+| --- | --- | --- |
+| `@available` 属性：声明生命周期；参数以平台名（`macOS` 等）或 `swift` 开头，`*` 表示「在上述所有平台可用」 | https://docs.swift.org/swift-book/documentation/the-swift-programming-language/attributes/ | `@available(*, deprecated, message:)` 合法 |
+| `deprecated` 参数：可省略版本号，省略时同时省略冒号；`message` 为**独立参数**，语义为「编译器在标记了 `deprecated`、`obsoleted` 或 `noasync` 的声明被使用时显示的文本」 | 同上 | 本写法（`deprecated` 不带版本号 + 独立 `message:`）属官方定义范围 |
+| 本地依据库条目 | `.workbuddy/skills/apple-swift-reference/references/swift-language/attributes.md`（`@available` 小节及其"常见误解"段） | 与本轮结论一致 |
+
+`@available` 自 Swift 4.1 / Xcode 9.3 起可用，远早于本项目目标部署版本 macOS 13.0，
+不存在部署版本可用性风险；本轮 `-target arm64-apple-macosx13.0` 类型检查通过（`exit = 0`）亦予佐证。
