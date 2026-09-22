@@ -27,17 +27,36 @@ public enum LaunchFix {
 
         let libraries = manifest.getNeededLibraries()
         let libTotal = max(1, libraries.count)
+        // 「本应补全却补不了」的项：缺失文件定位不到下载地址 / 清单 URL 非法。
+        // 原实现对这些项直接 `continue`——不下载、不报错、不计进度，于是：
+        //  日志里看不到、界面上看不到、进度条停在原地像是卡死，
+        //  最终仍带着缺失的库拉起进程，游戏在进入后才以 NoClassDefFoundError 崩溃，
+        //  UI 只能显示「异常退出」，用户与维护者都无从定位。
+        // 现在统一收集到本数组，逐条 err 记日志，并在末尾汇总为一次用户可见提示。
+        var unrepairable: [String] = []
+
         // 1) 缺失支持库分析（PCL2 McLibFix）：已存在且 sha1 匹配 → 跳过，仅收集缺失项
         for (i, library) in libraries.enumerated() {
-            guard let artifact = library.artifact else { continue }
-            let dest = dir.librariesURL.appendingPathComponent(artifact.path)
-            if fileIsValid(dest, hash: artifact.sha1) {
-                onProgress(Double(i + 1) / Double(libTotal) * 0.5)
+            // 每项（含补不了的项）都推进进度：跳过的项不计进度会让进度条停在原地
+            let step = Double(i + 1) / Double(libTotal) * 0.5
+            guard let artifact = library.artifact else {
+                onProgress(step)
                 continue
             }
+            let dest = dir.librariesURL.appendingPathComponent(artifact.path)
+            if fileIsValid(dest, hash: artifact.sha1) {
+                onProgress(step)
+                continue
+            }
+            // 走到这里代表该文件**当前缺失或校验不通过**
             if let url = DownloadSourceManager.shared.getLibraryURL(library) {
                 items.append(.init(url, dest, sha1: artifact.sha1))
+            } else {
+                // 缺库且拿不到下载地址 = 无法自愈的缺库，必须可见
+                err("启动前补全：库 \(library.name) 缺失但无法解析下载地址，已跳过（\(dest.path)）")
+                unrepairable.append(library.name)
             }
+            onProgress(step)
         }
         
         // 2) 资源索引：缺失或损坏时先补索引，再按索引分析缺失资源
@@ -47,6 +66,10 @@ public enum LaunchFix {
             if !fileIsValid(indexPath, hash: assetIndexInfo.sha1) {
                 if let url = URL(string: assetIndexInfo.url) {
                     items.append(.init(url, indexPath, sha1: assetIndexInfo.sha1))
+                } else {
+                    // 清单里的索引 URL 非法（第三方/损坏清单）：索引补不上 → 后续资源分析也无法进行
+                    err("启动前补全：资源索引 URL 非法，已跳过：\(assetIndexInfo.url)")
+                    unrepairable.append("资源索引 \(assetIndexInfo.id)")
                 }
             }
             // 索引本地可用时立即解析，否则等下载完成后由本函数末尾统一补资源（见下）
@@ -107,6 +130,24 @@ public enum LaunchFix {
         
         // 5) natives 缺失 → 重新解压（PCL2 McLaunchNatives 语义）
         try MinecraftInstaller.ensureNatives(instance)
+
+        // 6) 汇总「补不了的项」并让用户看见。
+        //
+        // **为什么只提示、不阻断**（本条的取舍口径）：
+        //  - `getNeededLibraries()` 只表示「清单规则允许且当前平台适用」，不表示运行期一定会加载该库；
+        //    第三方加载器清单里常见「列了但实际由加载器自带 / 永不访问」的条目。
+        //    据此阻断会把**本可正常启动**的实例变成不可启动——这是比原缺陷更糟的结果。
+        //  - 与 PCL2 DlClientFix 的同源语义一致：尽力修补后继续，把判断留给用户。
+        //  - 真正的硬失败（客户端 JAR 缺失或为空）已由桥接层 `pclLaunchInternal` 在拉起进程前阻断，
+        //    不依赖本函数。
+        // 因此这里选择「不阻断 + 双重可见」：逐条 err 进日志，汇总 hint 进界面提示，
+        // 并保留 `unrepairable` 计数供后续接入更精细的必要性判定。
+        if !unrepairable.isEmpty {
+            let detail = unrepairable.prefix(3).joined(separator: "、")
+            let suffix = unrepairable.count > 3 ? " 等" : ""
+            warn("启动前补全：\(unrepairable.count) 项缺失文件无法解析下载地址，已跳过：\(unrepairable.joined(separator: "、"))")
+            hint("启动前补全有 \(unrepairable.count) 项文件无法获取下载地址（\(detail)\(suffix)），游戏可能因缺库无法正常进入。", .critical)
+        }
     }
     
     /// 文件存在且（有 hash 时）hash 匹配 → true

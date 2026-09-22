@@ -235,6 +235,13 @@ public struct LaunchFixNativeInstaller: NativeInstaller, @unchecked Sendable {
 ///
 /// 实例解析由调用方注入：实例创建（`MinecraftInstance.create`）属于服务层职责，
 /// 本适配器只负责文件校验与补齐，避免与桥接层重复实现「建目录 + 建实例」。
+///
+/// 全库无引用，待清理（含 `qwqTests`）：全库没有任何 `LaunchFixPreflight(...)` 构造点，
+/// 启动路径仍直接调 `LaunchFix.perform`（`PCLLaunchBridge.swift`）。连带失效的还有本类型内的
+/// `LaunchFixClientVerifier`（sha1 口径的客户端 JAR 校验）——桥接层用的是「存在且非空」判定
+/// （见 `PCLLaunchBridge.swift` 的「客户端 JAR 校验」段），故 sha1 口径从未生效。
+/// 保留原因：四条子校验的拆分粒度与「client 段 LaunchFix 未覆盖」的结论是合并阶段的依据。
+@available(*, deprecated, message: "全库无引用，待清理")
 public struct LaunchFixPreflight: LaunchPreflight, @unchecked Sendable {
 
     /// 从启动请求解析实例；实现方通常包 `MinecraftInstance.create(minecraftDirectory, version)`。

@@ -9,6 +9,15 @@ extension MinecraftLauncher {
     /// 调用方不得据此判断「已取消」，也不得依赖赋值来终止启动；
     /// 需要终止运行中的进程请使用 `terminate()`（真实生效）。
     /// 当前代码库中无任何调用点，详见 `qwq/PCLCore/STUBS_AUDIT.md`。
+    ///
+    /// **为什么不能接上真实取消源**（而非「暂未接线」）：
+    /// 本属性挂在 `MinecraftLauncher` 实例上，而唯一存在「中途取消」语义的阶段——
+    /// 启动前补全（`LaunchFix`，600s 超时）——发生在 `MinecraftLauncher` 被构造**之前**
+    /// （`pclLaunchInternal` 先做补全，之后才 `MinecraftLauncher(instance)`），
+    /// 因此该属性没有任何可承载的取消源；补全阶段的取消已由 `pclLaunchInternal` 内的
+    /// `AbandonFlag`（闸断 UI 回调）+ `fixTask.cancel()` 直接实现，不经本属性。
+    /// 而 `MinecraftLauncher.launch` 是「同步阻塞到进程退出」的调用，其唯一的真实停止手段是
+    /// `terminate()`（SIGTERM），不存在「取消启动但不终止进程」的中间状态。
     public var isCancelled: Bool {
         get { false }
         set { /* no-op 桩：同步 launch 调用无法中途取消，赋值被静默忽略 */ }
@@ -131,11 +140,16 @@ private func pclLaunchInternal(
     // 补全期间 UI 显示 downloading 进度条；完成后才进入 launching（避免相位回退）
     // 补全失败则终止启动（与 PCL2 一致），避免缺文件启动后崩溃
     let fixResultBox = FixResultBox()
+    // 超时后置位：闸断后续进度回调（见下方超时分支注释）
+    let fixAbandoned = AbandonFlag()
     let fixSemaphore = DispatchSemaphore(value: 0)
     phaseHandler("downloading")
-    Task {
+    let fixTask = Task {
         do {
             try await LaunchFix.perform(instance: instance) { p in
+                // 超时后不再回调 UI：UI 已按「补全超时」复位到 idle 并弹出错误，
+                // 若继续回调进度，用户会看到「错误提示 + 进度条继续走」的并存状态。
+                guard !fixAbandoned.isSet else { return }
                 progressHandler(p)
             }
             log("启动前补全完成：缺失的库/资源已补齐")
@@ -146,6 +160,20 @@ private func pclLaunchInternal(
         fixSemaphore.signal()
     }
     if fixSemaphore.wait(timeout: .now() + 600) == .timedOut {
+        // MARK: 超时处理（缺陷：超时后任务仍继续跑且无取消路径）
+        // 原实现只 `completion(.failure)` 就 return：补全 Task 仍在后台下载并持续回调
+        // `progressHandler`，UI 报错之后又被进度回调推着继续走，且没有任何取消入口。
+        // 现做两件事，并把「能做到什么程度」写清：
+        //  1) 置 `fixAbandoned`：**强保证**切断 UI 回调（不再有进度事件流向界面）；
+        //  2) `fixTask.cancel()`：**尽力而为**。真正的网络中止需要下载层有取消检查点，
+        //     而 `LaunchFix` 底层的 `MultiFileDownloader.start()` → `NetManager.downloadAll`
+        //     内部没有任何 `Task.isCancelled` / `checkCancellation` 判定
+        //     （`PCLCore/Download/MultiFileDownloader.swift:110-152`），
+        //     且该层不在本轮允许修改的范围内，因此取消只能传递给仍会响应的 await 点，
+        //     无法保证立即停止在途 TCP 下载。残留下载只会继续写入本地缓存目录（下次启动可直接复用），
+        //     不会阻塞本次流程——本函数已经 return，后续走完 `.launchFailed` 通道。
+        fixAbandoned.set()
+        fixTask.cancel()
         completion(nil, .failure(MyLocalizedError(reason: "启动前补全超时（10 分钟），请检查网络连接")))
         return
     }
@@ -392,4 +420,28 @@ extension MinecraftInstance {
 /// 跨线程传递启动前补全的错误结果（后台线程用信号量同步等待 Task 完成）
 private final class FixResultBox {
     var error: Error?
+}
+
+/// 跨线程共享的一次性「已放弃」标志。
+///
+/// 用途：`pclLaunchInternal` 在补全超时后置位，补全 Task 的进度回调据此**停止向 UI 投递**；
+/// 回调可能在主线程（`MultiFileDownloader` 经 `MainActor.run` 回调）而置位发生在等待线程，
+/// 故用锁保护（锁内只做内存读写，不回调外部、不跨 await 持有）。
+/// 显式 `nonisolated`：需脱离 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` 的默认推断
+/// （仅靠 `@unchecked Sendable` 不足以阻止 MainActor 推断），与 `TerminationResumeGate` 治理方式一致。
+private nonisolated final class AbandonFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var abandoned = false
+
+    var isSet: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return abandoned
+    }
+
+    func set() {
+        lock.lock()
+        defer { lock.unlock() }
+        abandoned = true
+    }
 }

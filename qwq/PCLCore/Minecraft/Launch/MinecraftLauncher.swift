@@ -47,6 +47,8 @@ public class MinecraftLauncher {
     public init?(_ instance: MinecraftInstance) {
         self.instance = instance
         self.logURL = SharedConstants.shared.applicationSupportURL.appendingPathComponent("GameLogs").appendingPathComponent(id.uuidString + ".log")
+        // 目录 / 文件创建失败在此**不抛错也不报错**：日志写不了不应阻止游戏启动。
+        // 失败会在 launch() 打开句柄时被发现，并按「无日志运行 + 提示用户」降级（见 launch 内注释）。
         try? FileManager.default.createDirectory(at: logURL.parent(), withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: logURL.path, contents: Data())
         // 日志保留策略：日志文件在退出时不再删除（退出码 0 也保留，供日志面板与 LaunchResult.logURL 读取），
@@ -87,7 +89,22 @@ public class MinecraftLauncher {
         process.standardError = pipe
         var logWriter: GameLogWriter?
         do {
-            let writer = GameLogWriter(handle: try FileHandle(forWritingTo: logURL))
+            // MARK: 日志降级（缺陷：日志目录创建失败被 try? 吞掉 → 阻断整局启动）
+            // `init` 里 `try? createDirectory` 的失败会在原先的 `try FileHandle(forWritingTo:)`
+            // 处暴露成抛出，再经 catch 走 `.launchFailed`——用户看到「启动失败」，
+            // 真实原因只是「日志写不了」，而游戏本身完全能跑。故此处降级为**无日志运行**：
+            // 日志文件打不开就用丢弃模式的 writer，启动照常继续，仅提示用户。
+            //
+            // 仍然必须挂 readabilityHandler：即使不落盘也要持续读取管道，
+            // 否则管道缓冲（OS 决定大小）写满后游戏进程自身会被阻塞；退出时的 drainPipe 亦照常执行。
+            let writer: GameLogWriter
+            if let logHandle = try? FileHandle(forWritingTo: logURL) {
+                writer = GameLogWriter(handle: logHandle)
+            } else {
+                writer = GameLogWriter(handle: nil)
+                warn("无法写入游戏日志 \(logURL.path)，本次启动不记录游戏日志（不影响游戏运行）")
+                hint("无法写入游戏日志文件，本次启动将不记录游戏日志。请检查磁盘空间与目录权限。", .critical)
+            }
             logWriter = writer
             // 管道字节可能含非法 UTF-8（Java/模组输出非 UTF-8 编码时不崩溃）；解码失败行丢弃。
             // 内容切行与落盘由 GameLogWriter 负责（内部加锁，与退出时的收尾排空共用同一缓冲区）。
@@ -105,6 +122,14 @@ public class MinecraftLauncher {
             }
 
             try process.run()
+            // 竞态收口：`terminate()` 可能在「进程对象已建立、`run()` 尚未执行」的窗口内被调用
+            // （此时它只能置位 `isUserTerminated`，`currentProcess?.terminate()` 打不到尚未启动的进程）。
+            // run() 之后补查该位：命中即立刻终止刚拉起的进程，避免用户已经点了关闭却仍留下孤儿进程。
+            // 该位只会由 terminate() 置 true（每个 launcher 实例独立持有），不存在被误触发的路径。
+            if isUserTerminated {
+                log("启动期间已收到终止请求，立即终止刚拉起的进程")
+                process.terminate()
+            }
             Task { // 轮询判断窗口是否出现
                 while process.isRunning {
                     let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements, .optionOnScreenOnly)

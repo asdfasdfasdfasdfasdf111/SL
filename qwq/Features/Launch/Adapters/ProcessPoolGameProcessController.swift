@@ -51,6 +51,11 @@
 import Foundation
 import os
 
+/// 全库无引用，待清理（含 `qwqTests`）：全库没有任何 `ProcessPoolGameProcessController(...)`
+/// 构造点，启动路径仍走 `MinecraftLauncher.launch`；因此本适配器描述的那条「长驻进程归池管」路径从未执行。
+/// 保留原因：文件头的协议缺口分析（工作目录 / 输出句柄 / 环境变量）与「直接绑定文件句柄不丢尾部日志」
+/// 的替代方案，是合并阶段必须复用的结论，删除会丢失依据。
+@available(*, deprecated, message: "全库无引用，待清理")
 final class ProcessPoolGameProcessController: GameProcessController, @unchecked Sendable {
 
     /// 进程池（默认复用应用级单例）

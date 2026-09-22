@@ -152,10 +152,24 @@ public class MinecraftInstaller {
     // MARK: 确保 natives 已解压（PCL2 McLaunchNatives 语义：启动前缺失则重解压）
     public static func ensureNatives(_ instance: MinecraftInstance) throws {
         let nativesURL = instance.runningDirectory.appendingPathComponent("natives")
-        // 已有可用的 dylib/jnilib 则跳过
-        if let contents = try? FileManager.default.contentsOfDirectory(atPath: nativesURL.path),
-           contents.contains(where: { $0.hasSuffix(".dylib") || $0.hasSuffix(".jnilib") }) {
-            return
+        // 已有**与目标架构匹配**的 dylib/jnilib 则跳过。
+        // 原判据只看「目录里有没有 .dylib」，架构错配时会被误判为「已就绪」：
+        // 若目录里的 dylib 全是 x64（历史上曾被 x64 条目解压出来），在 arm64 机器上这里会直接跳过，
+        // 于是最终 `-Djava.library.path` 指向的仍是 x64 dylib → 进游戏后 UnsatisfiedLinkError。
+        // 现额外校验架构：只在存在「架构兼容」的可执行文件时才跳过；全部不匹配则重新解压
+        // （重解压会按目标架构选择正确的 natives jar，见 unzipNatives 的 resolvedNativeJarPath）。
+        // 目标架构取 `Architecture.system`，与下方创建任务时的默认架构（`.system`）一致。
+        if let contents = try? FileManager.default.contentsOfDirectory(atPath: nativesURL.path) {
+            let hasCompatibleExecutable = contents
+                .filter { $0.hasSuffix(".dylib") || $0.hasSuffix(".jnilib") }
+                .contains { name in
+                    // .jnilib（LWJGL2 时代）不参与 Mach-O 架构判定：口径与 dylib 不同，
+                    // 一律视为可用，避免对老版本每次启动都反复重解压
+                    guard name.hasSuffix(".dylib") else { return true }
+                    let arch = Architecture.getArchOfFile(nativesURL.appendingPathComponent(name))
+                    return arch.isCompatiable(with: .system)
+                }
+            if hasCompatibleExecutable { return }
         }
         guard let manifest = instance.manifest, !manifest.getNeededNatives().isEmpty else { return }
         let task = MinecraftInstallTask(

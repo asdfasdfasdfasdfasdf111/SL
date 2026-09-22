@@ -84,6 +84,14 @@ enum LaunchCoordinator {
             )
             // 事件 → UI 的翻译逐条对应原 pclLaunch 六段回调，投递线程与调用点亦一致。
             // 用例层规范结果是 launch(_:) 的返回值/抛出值；本通道为迁移期兼容缝（见适配器文件头）。
+            //
+            // **接线现状（缺陷：会话登记等全部空转）**：此处只传了 `events`，
+            // `sessionStore` 与 `logSink` 保持默认 nil，于是用例层内所有 `sessionStore?.` 调用
+            // （会话登记 `register`、状态 `update`、`GameProcessController.waitForTermination`
+            // 所需的过程观察）都不产生任何效果；`LaunchFixClientVerifier` 的 sha1 口径同样从未生效
+            // （其宿主 `LaunchFixPreflight` 全库无引用）。本处**只标注不改接线**：
+            // 终止入口实际走 `GameSession.launcher.terminate()`（closeSession / handlePowerTap），
+            // 补上 store 会同时启用一条与现有 UI 并行的状态通道，属于合并阶段的任务。
             let service = MinecraftInstanceLaunchService(events: { event in
                 switch event {
                 case .progress(let progress):
@@ -250,7 +258,9 @@ enum LaunchCoordinator {
 
     /// 关闭单个会话（日志卡 xmark 按钮 → .closeGameSession 通知）：终止进程 → 移除会话 → 空时复位启动状态
     static func closeSession(_ session: GameSession, sessionManager: LaunchSessionManager) {
-        if session.isProcessRunning {
+        // 判据用 `hasLiveProcess` 而非 `isProcessRunning`：后者在「窗口出现 / 退出码 0」之前恒为 false，
+        // Forge 初始化期（可达数十秒）点 × 会只删会话、不终止进程 → 游戏成孤儿进程且再无终止入口。
+        if session.hasLiveProcess {
             session.launcher.terminate()
             session.isProcessRunning = false
             session.isLaunching = false
@@ -273,7 +283,9 @@ enum LaunchCoordinator {
 
     /// 电源按钮点击：运行中有游戏 → 直接终止全部（不弹窗确认）；否则取消启动并复位
     static func handlePowerTap(sessionManager: LaunchSessionManager) {
-        let runningSessions = sessionManager.sessions.filter { $0.isProcessRunning }
+        // 与 closeSession 同一判据：窗口出现前的初始化期也要能终止，
+        // 否则点电源键只会清掉会话，游戏在后台继续跑（孤儿进程）
+        let runningSessions = sessionManager.sessions.filter { $0.hasLiveProcess }
         if !runningSessions.isEmpty {
             for s in runningSessions {
                 s.launcher.terminate()

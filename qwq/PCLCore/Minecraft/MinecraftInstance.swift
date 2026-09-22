@@ -115,6 +115,14 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
         return true
     }
 
+    /// 流程 A（PCL.Mac 原始启动流程）入口。
+    ///
+    /// 全库无引用，待清理（含 `qwqTests`）：UI 侧启动已统一改走用例层
+    /// `MinecraftInstanceLaunchService.launch(_:)` → 桥接层 `pclLaunch`（见
+    /// `Features/Launch/Adapters/DUAL_FLOW.md`），全库不存在任何 `launch(_:)` 调用点，
+    /// 因此本方法与其中的资源完整性检查、崩溃弹窗分支（`launcher.launch` 调用点）均不会执行。
+    /// 保留原因：两套流程的差异分析（资源检查、崩溃弹窗、账号告警）依赖本文件原样存在。
+    @available(*, deprecated, message: "全库无引用，待清理")
     public func launch(_ launchOptions: LaunchOptions) async {
         guard version != nil else {
             log("版本未设置，无法启动")
@@ -165,6 +173,8 @@ public class MinecraftInstance: Identifiable, Equatable, Hashable {
         }
         
         let launcher = MinecraftLauncher(self)!
+        // 本调用点属「全库无引用」的流程 A（见 launch(_:) 的标注）：`launch(_:)` 自身无调用方，
+        // 故这里的进程拉起与崩溃弹窗分支在运行期不会执行。**只标注不删除**。
         launcher.launch(launchOptions) { outcome in
             let exitCode: Int32
             switch outcome {

@@ -14,6 +14,41 @@
 import Foundation
 
 extension MinecraftLauncher {
+    // MARK: - 内存参数口径（缺陷：内存参数无校验）
+    //
+    // `maxMemory` 来自实例配置 `.PCL_Mac.json`，是不经校验的持久化值：
+    //  - 取 0（或负值 / 极小值）会产出 `-Xmx0m`，JVM 立即以退出码 1 秒退，
+    //    在 UI 上被报成「Minecraft 异常退出（退出码 1）」，与真正的游戏崩溃完全不可区分；
+    //  - 取超大值（超过物理内存）会让堆分配依赖 swap，表现为长时间卡顿 / 分配失败。
+    // 故在构造 `-Xmx` / `-Xms` 前做一次归一化，越界即回退默认值并**显式告知用户**。
+
+    /// 堆上限下界（MB）。
+    /// 依据：现代 Minecraft 完成类加载 + 资源加载需要数百 MB，官方帮助页对现代版本的最低建议是 1 GB；
+    /// 本启动器取更宽松的 512 MB 作为「明显不是用户本意」的判定线，
+    /// 避免把 1024 之类偏小但仍可用的配置误判为非法。
+    static let minHeapMB = 512
+    /// 堆上限默认值（MB），与 `MinecraftConfig.maxMemory` 的默认值保持一致。
+    static let defaultHeapMB = 4096
+
+    /// 本机物理内存（MB），用作堆上限的上界。
+    static var physicalMemoryMB: Int { Int(ProcessInfo.processInfo.physicalMemory / 1024 / 1024) }
+
+    /// 校验并归一化堆内存上限（MB）。
+    ///
+    /// 口径与依据：
+    ///  - 下界 `minHeapMB`（512 MB）：见上；
+    ///  - 上界 = 物理内存：堆上限超过物理内存必然触发大量 swap 或分配失败，PCL2 的内存上限同样以物理内存为准；
+    ///  - 物理内存异常小（< 512 MB）时以 `minHeapMB` 作上界，保证默认值自身不会被判为越界。
+    /// 越界时返回默认值（夹到上界内）并置 `didFallback`，由调用方 warn + hint 让回退可见。
+    static func sanitizedHeapMB(_ raw: Int32) -> (value: Int, didFallback: Bool) {
+        let upper = max(minHeapMB, physicalMemoryMB)
+        let requested = Int(raw)
+        guard requested >= minHeapMB, requested <= upper else {
+            return (min(defaultHeapMB, upper), true)
+        }
+        return (requested, false)
+    }
+
     public func buildJvmArguments(_ options: LaunchOptions) -> [String] {
         let values: [String: String] = [
             "natives_directory": instance.runningDirectory.appendingPathComponent("natives").path,
@@ -36,14 +71,22 @@ extension MinecraftLauncher {
         // 3) 动态补齐缺失的关键参数（仅当 manifest 未提供时才追加，避免重复）
 
         // -Xmx 内存：manifest 一般不含；用户已显式指定（自定义 JVM 参数/高级设置）则不覆盖
+        // 取值先经 sanitizedHeapMB 归一化：越界回退默认值，并让「已回退到默认」在日志与提示中可见
+        let heap = Self.sanitizedHeapMB(instance.config.maxMemory)
+        if heap.didFallback {
+            warn("内存上限配置不合法：maxMemory=\(instance.config.maxMemory) MB，可接受范围 \(Self.minHeapMB)~\(Self.physicalMemoryMB) MB（上界为本机物理内存），已回退为 \(heap.value) MB")
+            hint("内存上限 \(instance.config.maxMemory) MB 不合法，已自动回退为 \(heap.value) MB。", .critical)
+        }
         if !args.contains(where: { $0.contains("-Xmx") }) {
-            args.append("-Xmx\(instance.config.maxMemory)m")
+            args.append("-Xmx\(heap.value)m")
         }
 
         // -Xms 堆初始大小：与 -Xmx 同级避免堆扩张时的 GC 停顿（参考 Swift Craft Launcher）。
-        // 默认取 maxMemory 的一半，下限 256m；用户/清单已显式指定则不覆盖
+        // 默认取 maxMemory 的一半，下限 256m；用户/清单已显式指定则不覆盖。
+        // 上界必须夹到堆上限：`-Xms` 大于 `-Xmx` 会让 JVM 直接报
+        // "Initial heap size set to a larger value than the maximum heap size" 并退出
         if !args.contains(where: { $0.contains("-Xms") }) {
-            let xms = max(256, instance.config.maxMemory / 2)
+            let xms = min(heap.value, max(256, heap.value / 2))
             args.append("-Xms\(xms)m")
         }
 

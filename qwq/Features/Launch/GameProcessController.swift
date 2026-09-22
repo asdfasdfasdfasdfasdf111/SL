@@ -34,6 +34,12 @@ public struct ManagedProcess: Sendable {
 
     /// 等待进程退出并返回退出码。
     ///
+    /// **全库无引用，待清理**（含 `qwqTests`）：唯一实现路径是「会话登记 → 由会话层等待退出」，
+    /// 而 `InMemoryGameSessionStore` 未接线（`LaunchCoordinator` 构造服务时不传 `sessionStore`），
+    /// 故该方法及其对 `terminationHandler` 的覆写从未执行。
+    /// 保留原因：其竞态治理（先挂 handler、再补检状态、一次性门控恰好 resume 一次）是
+    /// 「会话层接管进程观察」的正确形态，接线时可直接复用；删除会丢失该结论。
+    ///
     /// 竞态窗口（修复前）：实现**先**判断 `process.isRunning`、**后**在续体内挂
     /// `terminationHandler`。若进程恰好在这两步之间退出，Foundation 并不承诺「进程已结束后
     /// 再设置 handler 仍会收到回调」（`terminationHandler` 文档只说系统在任务完成时调用该 block），
@@ -46,6 +52,7 @@ public struct ManagedProcess: Sendable {
     ///   必须在此手动 resume。两者互补，缺一不可；
     /// - 两条路径共用一次性门控 `TerminationResumeGate`：谁先 claim 成功谁负责 resume，
     ///   因此即使 handler 与补检并发发生，也**恰好 resume 一次**（不多不少）。
+    @available(*, deprecated, message: "全库无引用，待清理")
     public func waitForTermination() async -> Int32 {
         await withCheckedContinuation { (continuation: CheckedContinuation<Int32, Never>) in
             let gate = TerminationResumeGate()

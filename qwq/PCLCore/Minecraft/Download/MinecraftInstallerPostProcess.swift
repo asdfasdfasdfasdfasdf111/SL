@@ -21,13 +21,14 @@ extension MinecraftInstaller {
             throw MyLocalizedError(reason: "客户端清单未就绪，无法解压本地库")
         }
         for (_, native) in manifest.getNeededNatives() {
-            let jarURL: URL = task.minecraftDirectory.librariesURL.appendingPathComponent(native.path)
+            let jarPath = resolvedNativeJarPath(native, in: task)
+            let jarURL: URL = task.minecraftDirectory.librariesURL.appendingPathComponent(jarPath)
             // 解压失败必须可见：`Util.unzip` 原先无返回值、失败仅记日志，调用方无从判断成败，
             // 安装（createTask / createCompleteTask）与启动前修复（ensureNatives）都会在
             // natives 缺失的情况下继续当作成功。现读取其成功标志并走既有错误通道——本方法本就是
             // `throws`，三处调用方均已用 `try`。
             guard Util.unzip(archiveURL: jarURL, destination: nativesURL, replace: true) else {
-                throw MyLocalizedError(reason: "解压 natives 失败：\(native.path)")
+                throw MyLocalizedError(reason: "解压 natives 失败：\(jarPath)")
             }
             do {
                 try processLibs(task, nativesURL)
@@ -36,6 +37,33 @@ extension MinecraftInstaller {
                 throw error
             }
         }
+    }
+
+    /// 解析 natives 条目应解压的 jar 路径，**按目标架构选择**（缺陷：native 库架构错配）。
+    ///
+    /// 背景：清单通过 `natives: {"osx": "natives-macos"}` 选定的是 **x64** 分类器
+    /// （`ClientManifestLibrary.swift` 的 `Library.init(json:)` 只认 `natives["osx"]`），
+    /// arm64 修正唯一的来源是 `ArtifactVersionMapper.map(_:arch:.arm64)`。
+    /// 而 `pclLaunchInternal` 的执行顺序是「先启动前补全（`LaunchFix.perform` → `ensureNatives`
+    /// → 本函数）→ 后 `ArtifactVersionMapper.map`」，即解压时清单条目**尚未**被改成 arm64，
+    /// 会去解压 x64 的 `-natives-macos.jar`；紧随其后的 `processLibs` 按 `task.architecture`
+    /// 删掉全部架构不匹配的 dylib → natives 目录被清空 → `-Djava.library.path` 指向空目录
+    /// （表现为进入游戏后 UnsatisfiedLinkError）。
+    ///
+    /// 修法（**不调整启动链路顺序**，只让「解压」这一步自身架构正确，从而与顺序无关）：
+    /// 目标架构为 arm64、原路径是 macos 分类器、且盘上确实存在同坐标的
+    /// `-natives-macos-arm64.jar` 时改用它；其余情况（x64 目标、1.18 及更早只有 x64 natives、
+    /// 非 macos 分类器、清单已被映射过）一律回落原路径，行为与改动前完全一致。
+    private static func resolvedNativeJarPath(_ native: ClientManifest.DownloadInfo, in task: MinecraftInstallTask) -> String {
+        guard task.architecture == .arm64 else { return native.path }
+        guard native.path.hasSuffix("-natives-macos.jar") else { return native.path }
+        let arm64Path = native.path.replacingOccurrences(of: "-natives-macos.jar", with: "-natives-macos-arm64.jar")
+        // 只有盘上真有 arm64 变体时才切换：否则保持原路径（老版本/第三方清单可能没有该分类器）
+        guard FileManager.default.fileExists(
+            atPath: task.minecraftDirectory.librariesURL.appendingPathComponent(arm64Path).path
+        ) else { return native.path }
+        log("natives 架构修正：目标架构 arm64，改用 arm64 分类器 \(arm64Path)（清单条目为 \(native.path)）")
+        return arm64Path
     }
     
     // MARK: 处理解压结果

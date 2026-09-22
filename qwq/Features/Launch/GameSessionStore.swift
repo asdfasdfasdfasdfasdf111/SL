@@ -36,6 +36,14 @@ public protocol GameSessionStore: Sendable {
 }
 
 /// 内存实现：作用域锁保护会话表与订阅表，进程内单例即可满足当前「同时运行数个游戏」的规模。
+///
+/// 全库无引用，待清理（含 `qwqTests`）：全库没有任何 `InMemoryGameSessionStore()` 构造点——
+/// 生产接线（`LaunchCoordinator` 构造 `MinecraftInstanceLaunchService` 时）只传了 `events`，
+/// `sessionStore` 恒为 nil，于是 `register` / `update` / `observe` / `terminate(sessionID:)`
+/// 全部是空转的可选链调用；会话终止实际走 `GameSession.launcher.terminate()`
+/// （`LaunchCoordinator.closeSession` / `handlePowerTap`）。
+/// 保留原因：接口形状（sessionID 维度、AsyncStream 订阅）是「UI 退化为订阅者」的目标形态。
+@available(*, deprecated, message: "全库无引用，待清理")
 public final class InMemoryGameSessionStore: GameSessionStore, @unchecked Sendable {
 
     /// 锁保护的可变状态整体（作用域锁定，避免 NSLock 在 async 上下文中的不可用告警）
