@@ -8,8 +8,8 @@
 //  根视图收不到，界面行为会变。
 //
 //  与 NoticeCenter 的关系：NoticeCenter 由 NoticeOverlay 渲染为窗口顶部横幅；
-//  本组状态对应的是固定在窗口内的浮动气泡（JavaSelectionPopup）与居中失败弹窗
-//  （LaunchErrorPopup），呈现位置、样式与消失时机均不同，复用会改变可见行为，故不迁移。
+//  本组状态对应的是窗口内的浮动药丸（`UI/TaskPill.swift`，两套状态共用同一个组件、
+//  同一锚点、同一套动画），呈现位置、样式与消失时机均不同，复用会改变可见行为，故不迁移。
 //
 
 import Foundation
@@ -55,16 +55,17 @@ final class LaunchPanelState: ObservableObject {
     /// 用户点击「确定」后清空正文（沿用既有点击即清空的行为）
     ///
     /// **只清正文、不动开关**：该语义由 `LaunchPanelStateTests` 固定（清正文不得顺带
-    /// 关闭弹窗，否则「弹窗何时消失」这件事就有了两个来源）。呈现层改自绘弹窗后依然成立：
-    /// `LaunchErrorPopup` 自己持有退场动画，动画播完才调用 `dismissError()`。
+    /// 关闭提示，否则「提示何时消失」这件事就有了两个来源）。呈现层换组件后依然成立：
+    /// `TaskPill` 自己持有退场动画，动画播完才写回开关（经 `dismissError()`）。
     func clearLaunchError() {
         settings.launchErrorMessage = nil
     }
 
-    /// 关闭失败弹窗：正文与开关一起复位。
+    /// 关闭失败提示：正文与开关一起复位。
     ///
-    /// 与 `clearLaunchError` 的分工：后者是「清内容」，本方法是「关弹窗」。
-    /// 自绘弹窗没有系统 alert 那样的自动关闸，必须由呈现层显式调一次本方法。
+    /// 与 `clearLaunchError` 的分工：后者是「清内容」，本方法是「关提示」。
+    /// `TaskPill` 只负责把开关写回 false，没有系统 alert 那样的自动关闸，
+    /// 故由它经 `RootOverlays` 里的 Binding 调一次本方法。
     func dismissError() {
         settings.launchErrorMessage = nil
         settings.showLaunchAlert = false

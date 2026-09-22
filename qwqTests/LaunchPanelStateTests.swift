@@ -191,7 +191,7 @@ final class LaunchPanelStateTests: XCTestCase {
 
 // MARK: - 覆盖率缺口（本文件不覆盖的原因）
 //
-//  1. 气泡/弹窗的实际呈现（`JavaSelectionPopup` 展示时长、`alert` 关闭时机）
+//  1. 气泡的实际呈现（`TaskPill` 的展示时长、开关写回时机）
 //     依赖 SwiftUI 视图生命周期，无 UI 承载时不可验证。
 //  2. `LaunchPanelState` 与 `NoticeCenter` 的分工（顶部横幅 vs 窗口内浮层）
 //     属于视觉呈现差异，无断言入口。

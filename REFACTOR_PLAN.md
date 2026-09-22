@@ -45,7 +45,8 @@
 | 15 | **qwqTests 接入工程** | `8172dbf` | 测试 target + scheme + `verify-test.sh`；**TEST BUILD SUCCEEDED**，14 文件 180 用例可编译 | 中 |
 | 16 | 一批确认缺陷修复 | `6d0541f` `ade90b3` `ab02506` `2364ea4` `3c028fb` | 下载核心 3 条、加载器 4 条、清单 2 条、UI 2 条；弹入动画接线 | 中 |
 | 17 | **全量扫描 + 30 条缺陷修复** | `9a2ea40` `6623247` `819904e` `9ef8032` | 按下载/安装、Mod 与清单、UI 与服务、启动四条链路逐文件通读，修 8+8+6+8 条已确认缺陷（含 `NetSliceFetcher` 分片计数泄漏、`createCompleteTask` 资源补全假成功、Forge 处理器非零退出码被吞、`mods.toml` 依赖块永不匹配、`NoticeCenter` 单槽覆盖、natives 架构取证等）。每条均真实编译 0 error | 中 |
-| 18 | **D1 落地 + 真机启动验证** | 本文档下一次提交 | 客户端 JAR 校验前移到补全之前（缺文件秒级拦截）；失败提示改为对齐「下载中」气泡的自绘弹窗 `LaunchErrorPopup`；**真机跑通 `26.2-Fabric`（LWJGL 3.4.1 加载成功、窗口出现、无 `UnsatisfiedLinkError`）**，并构造缺 JAR 目录复现拦截 | 中 |
+| 18 | **D1 落地 + 真机启动验证** | `708b3f9` `af9c1ed` | 客户端 JAR 校验前移到补全之前（缺文件秒级拦截）；**真机跑通 `26.2-Fabric`（LWJGL 3.4.1 加载成功、窗口出现、无 `UnsatisfiedLinkError`）**，并构造缺 JAR 目录复现拦截 | 中 |
+| 19 | **失败提示与任务气泡合并为同一组件** | 本文档下一次提交 | 新增 `qwq/UI/TaskPill.swift`：原先「照抄一份样式」的 `LaunchErrorPopup` 删掉，两个入口改为渲染**同一个类型**（同锚点、同动画，唯一差异是停留时长 1.5s / 6s）。`JavaSelectionPopup` 随之并入 | 低 |
 
 ---
 
@@ -179,8 +180,10 @@ SL_DEBUG_AUTO_LAUNCH=1 SL_DEBUG_AUTO_LAUNCH_DELAY=4 \
 
 ### 没能验证到的部分（如实记录）
 
-- **`LaunchErrorPopup` 的视觉效果没有截图佐证**：本机没给屏幕录制权限，`screencapture` 只会
-  吐出桌面壁纸。该弹窗只做到「代码审查 + 真实编译通过 + 与既有 `JavaSelectionPopup` 同材料/
-  同圆角/同弹簧曲线」。**请你在本机用上面的缺 JAR 手法看一眼**（或者直接删了某个版本的 jar）。
+- **气泡的视觉效果在本机看不到**：本机没给屏幕录制权限，`screencapture` 只会吐出桌面壁纸。
+  因此不再试图「照着画一个像的」，而是把两个入口合并成**同一个组件** `UI/TaskPill.swift` ——
+  任务状态气泡与失败提示渲染的是同一个类型、同一个锚点、同一套入场退场动画，
+  样式**由代码保证相同**，不存在两边各改一半的余地。两个入口唯一的差异是停留时长
+  （1.5s → 6s，失败提示是用户唯一能看到的失败原因，一闪而过等于没提示）。
 - `F` 的合并本体（把 `MinecraftInstance.launch` 与 `pclLaunch` 合成一条）**尚未开始**，
   本轮只打通了它的验证手段。

@@ -5,7 +5,7 @@ import zlib
 
 // ScrollBounceModifier → Core/ScrollBounceModifier.swift
 // VersionButton → UI/VersionButton.swift
-// JavaSelectionPopup, JavaPickerView, JavaPickerRow → UI/JavaPickerView.swift
+// JavaPickerView, JavaPickerRow → Features/Java/JavaPickerView.swift
 // GameSubCategory, GameSidebarSection, ModrinthTagMap, DownloadedItem → Models/GameModels.swift
 // 状态与业务决策（选中态/搜索/分页/取数）→ ViewModels/DownloadCategoryViewModel.swift
 // 视图入口编排决策（数据源预热/本地目录就绪刷新/详情页进出归属）→ ViewModels/DownloadCategoryViewModel+Orchestration.swift

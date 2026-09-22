@@ -41,7 +41,7 @@ struct ContentView: View {
         .onChange(of: navigation.selectedCategory) { _ in
             navigation.handleSelectedCategoryChange()
         }
-        // 启动 / 下载失败提示已由 RootOverlays 里的自绘弹窗（LaunchErrorPopup）承担，
+        // 启动 / 下载失败提示已由 RootOverlays 里的任务气泡（TaskPill）承担，
         // 不再使用系统 alert：同一份状态（showLaunchAlert / launchErrorMessage）换一种呈现，
         // 状态源与写入方一个都没动。
         // Java 预扫描经 Java 模块入口触发，根视图不再直接持有 JavaManager
