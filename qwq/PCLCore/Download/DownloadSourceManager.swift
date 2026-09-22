@@ -97,6 +97,16 @@ public class DownloadSourceManager: DownloadSource {
         getDownloadSource().getAssetURL(hash: hash)
     }
     
+    /// 官方源测速：下载一个固定测试文件，按墙钟耗时与文件大小判定主源。
+    ///
+    /// 迁移状态：内部**保持旧链路**（`SingleFileDownloader` → `NetManager.shared.download`），
+    /// 不切换 `DownloadEngine`。两条不可等价的原因：
+    /// 1. 本方法由 `getDownloadSource()` 派发，而缺省下载源解析器 `DefaultDownloadSourceResolver`
+    ///    又委托 `DownloadSourceManager.getDownloadSource()`，改走引擎会形成
+    ///    「测速 → 下载 → 解析源 → 测速」的重入（判据见 MIGRATION.md 第二节 #12）；
+    /// 2. 本方法的结果就是 `before` 之后的墙钟差，属「输出即耗时」的调用方，而引擎以 `Task.detached`
+    ///    承载下载并经 `AsyncStream` 逐元素投递状态，这些调度跳步会落在计时窗口内。
+    /// 完整依据与行号记录在 `SingleFileDownloader.swift` 的类注释上。
     private func testSpeed(_ url: URLConvertible) async {
         // 不再预先强制切回官方源：上次测速切到镜像后，60s 后的再次测速会把源重置回官方，
         // 若官方仍然不可用，用户中途切换到的新源又被丢弃（旧实现的切换是「一次性」的）

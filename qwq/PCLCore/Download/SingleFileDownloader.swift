@@ -8,6 +8,31 @@
 
 import Foundation
 
+/// 旧链路仅存的单文件下载门面（后端为 `NetManager.shared.download`）。
+///
+/// 迁移状态：**不切换**。本类原为全部单文件调用方的公共入口，经 MIGRATION.md 第一至第三步后，
+/// 除下列唯一调用方外均已改经 `DownloadEngine` 适配器直接提交：
+/// `DownloadSourceManager.testSpeed`（`DownloadSourceManager.swift:108`）。
+///
+/// 唯一调用方不可等价切换的两条硬证据（均为静态可核对的路径差异，非“看起来一样”）：
+/// 1. **候选源集合会变**。测速 URL 为 `https://libraries.minecraft.net/...`，落在
+///    `DefaultDownloadSourceResolver.officialHosts`（`DefaultDownloadSourceResolver.swift:28-34`）内；
+///    缺省解析器在 `AppSettings.fileDownloadSource == .both` 时会追加 BMCLAPI 镜像候选，
+///    而旧链路 `PCLNetFile.urls` 恒为单元素 `[url]`，构成旧链路不存在的跨源兜底。
+///    同时缺省解析器会调用 `DownloadSourceManager.getDownloadSource()`，该方法在未节流时
+///    **派发新的测速任务**（`DownloadSourceManager.swift:39-51`），使测速期间再次进入测速，
+///    即「测速 → 下载 → 解析源 → 测速」的重入（`DownloadSourceManager` 的 60s 节流只把重入限制在
+///    有限层数，不消除该路径）。
+/// 2. **被测量的量本身会变**。`testSpeed` 的输出就是 `Date()` 之差（`DownloadSourceManager.swift:103`
+///    与 `:119`），整个下载调用都落在计时区间内；适配器以 `Task.detached` 承载下载
+///    （`NetDownloaderDownloadEngine.swift:91`，官方明确 `Task.detached` 不继承调用方隔离与优先级，
+///    见 references/swift-language/concurrency.md 与 TSPL Concurrency 章），并经 `AsyncStream`
+///    逐元素投递状态（`NetDownloaderDownloadEngine.swift:101-122`，官方 AsyncStream 文档
+///    https://developer.apple.com/documentation/swift/asyncstream ，macOS 10.15+）。
+///    这些新增的调度跳步直接进入计时窗口，而测量值经 1 MB/s 阈值决定是否把主源切到镜像。
+///    对测速这类「输出即耗时」的调用方，任何落在计时区间内的新增调度都属对外行为变化。
+///
+/// 结论：本类保持旧链路。若将来需要评估引擎吞吐，应另建不经计时的探针，不能复用本类。
 public class SingleFileDownloader {
     /// 单 URL 下载（保持旧接口）
     public static func download(

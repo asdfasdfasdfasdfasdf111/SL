@@ -8,8 +8,18 @@
 //  - downloadAssetIndex / downloadHashResourcesFiles：资源索引与散列资源
 //  - downloadLibraries / downloadNatives：依赖项与本地库
 //
-//  本次仅做结构分层：已使用 DownloadEngine 的单文件路径与仍走 MultiFileDownloader 的批量路径
-//  均保持原实现，不切换下载后端、不改阶段顺序与进度口径。
+//  结构分层（自 MinecraftInstaller.swift 逐字搬移）：本次只做物理拆分，不改阶段顺序与进度口径。
+//  拆分后两条路径的后端分工为——单文件已在此前的切换批次中改经 `DownloadEngine` 提交
+//  （后端仍为 `NetManager`）；批量路径仍经 `MultiFileDownloader` → `NetManager.downloadAll`，
+//  **不切换**（原因见下）。
+//
+//  批量路径不切换的原因（完整清单见 `Core/Download/Adapters/MIGRATION.md` 第六节
+//  「批量路径（#5 / #6 / #8）评估：本轮不切换」，逐条判据与本文件的对应关系记录在
+//  `PCLCore/Download/MultiFileDownloader.swift` 的 `start()` 上，此处不重复）：
+//  `downloadAll` 的批进度是「字节加权（分母为各文件首片响应头给出的 fileSize 之和）+ 200ms 采样轮询
+//  + 预检跳过项不进入批次」三者耦合的引擎内部量，在 `DownloadEngine` 边界不可观察；
+//  而本文件三处批进度都经 `task.updateParallelStage` 写进 `parallelStageProgress`，
+//  最终由 `DownloadDetailView` 渲染为阶段百分比，属用户可见量，不能接受数值序列变化。
 //
 
 import Foundation
@@ -276,6 +286,7 @@ extension MinecraftInstaller {
         }
         
         try? FileManager.default.createDirectory(at: task.versionURL.appendingPathComponent("natives"), withIntermediateDirectories: true)
+        // 批量：保持旧后端，理由见 `MultiFileDownloader.start()` 的迁移记录。
         try await MultiFileDownloader(task: task, items: items, stage: parallel ? .natives : nil).start()
         
         for (library, artifact) in manifest.getNeededNatives() {

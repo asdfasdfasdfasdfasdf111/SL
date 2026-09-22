@@ -85,6 +85,28 @@ public class MultiFileDownloader {
         self.total = items.count
     }
     
+    /// 批量下载入口。
+    ///
+    /// 迁移状态：整条批量链路**保持旧后端**（本方法内调 `NetManager.downloadAll`），不切换 `DownloadEngine`。
+    /// 判据见 `Core/Download/Adapters/MIGRATION.md` 第六节「批量路径（#5 / #6 / #8）评估：本轮不切换」：
+    /// 批进度的分子与分母都定义在引擎内部状态上，在 `DownloadEngine` 边界不可观察，无法逐字复刻。
+    /// 不可等价的三个具体落点（行号为当前代码）：
+    /// 1. 分母 =「首片响应头已到达（`fileSize > 0`）且尚未 `.done`」的文件大小之和，该集合由引擎内部事件决定；
+    ///    调用方拿不到每文件真实字节数，`DownloadProgress` 在无 `expectedSize` 时以固定分母承载比例
+    ///    （`NetProgressReporting.swift:24-41`）；
+    /// 2. 预检跳过项在开始下载前即回调 `onFileCompleted`，且不进入 pending、不计入 `count`
+    ///    （`NetDownloader.swift:104-116`、`:119`）；新链路「已存在而跳过」与「实际下载完成」都只产生
+    ///    `.completed`，两者在边界上不可分辨，`count` 的计入集合无法对齐；
+    /// 3. 批进度由 200ms 采样轮询产生，**非单调**且末次上报可能为 0（`NetDownloader.swift:125-136`）；
+    ///    本方法在 `downloadAll` 返回后还会再回放一次可能陈旧的采样值（见本方法末尾）。
+    /// 该数值序列在三个调用点都是用户可见量：`MinecraftInstallerDownloads.swift:208 / 241 / 279`
+    /// 经 `InstallTask.updateParallelStage` 渲染、`LaunchFix.swift:79 / 100` 直接交给 `onProgress`、
+    /// `ForgeInstaller.swift:153` 映射为 `setProgress(0.3 + progress * 0.3)`。因此聚合口径不得由
+    /// 旧链路的「字节加权」退化为「Σ 各文件 fraction ÷ 文件数」的等权口径。
+    /// 切换前置条件见同节「解除卡点的前置条件」：引擎侧提供批进度聚合，并新增可区分「跳过 / 完成」的标记。
+    ///
+    /// 另：`concurrentLimit` 为死参数（仅赋值、无读取），旧链路真实并发由 `NetManager.config.maxSlices = 16`
+    /// 的全局分片池兜底，切换时无需复刻该参数。
     public func start() async throws {
         guard !items.isEmpty else { return }
         
