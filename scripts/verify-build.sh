@@ -19,8 +19,10 @@ set -o pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_DIR" || exit 1
 
-DERIVED=/tmp/SL-DD
-LOG=/tmp/sl_build.log
+# 多个任务并行时，各自用 SL_DERIVED 指定独立派生目录，避免抢同一份派生数据
+# （同一个 derivedDataPath 上并发跑 xcodebuild 会互相破坏中间产物）
+DERIVED=${SL_DERIVED:-/tmp/SL-DD}
+LOG=${SL_LOG:-/tmp/sl_build.log}
 
 export SWIFTPM_DISABLE_SANDBOX=1
 export SWIFT_BUILD_USE_SANDBOX=0

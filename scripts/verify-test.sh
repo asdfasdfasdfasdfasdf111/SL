@@ -15,9 +15,10 @@ set -o pipefail
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_DIR" || exit 1
 
-DERIVED=/tmp/SL-DD-tt
-LOG=/tmp/sl_test.log
-RESULT=/tmp/sl_test.xcresult
+# 多个任务并行时，各自用 SL_DERIVED 指定独立派生目录，避免抢同一份派生数据
+DERIVED=${SL_DERIVED:-/tmp/SL-DD-tt}
+LOG=${SL_LOG:-/tmp/sl_test.log}
+RESULT=${SL_RESULT:-/tmp/sl_test.xcresult}
 
 export SWIFTPM_DISABLE_SANDBOX=1
 export SWIFT_BUILD_USE_SANDBOX=0
