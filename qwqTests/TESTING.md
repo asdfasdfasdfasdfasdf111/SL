@@ -300,7 +300,7 @@ Java 解析与版本门槛、classpath 去重、进程生命周期）只有在�
 
 ```bash
 touch /tmp/sl-real-launch.enabled
-SL_DERIVED=/tmp/SL-DD-real ./scripts/verify-test.sh run   # 必须在用户自己的 Terminal 里跑
+SL_DERIVED=/tmp/SL-DD-real ./scripts/verify-test.sh run
 rm /tmp/sl-real-launch.enabled
 ```
 
@@ -318,3 +318,79 @@ rm /tmp/sl-real-launch.enabled
 
 若在无法驱动 UI 的环境里（无辅助功能权限）需要跑一次启动，还有第三条路，见
 `REFACTOR_PLAN.md` §七：`SL_DEBUG_AUTO_LAUNCH=1`。
+
+## 五、必须遵守：用例一律写成 `async`（Xcode 26.2 隔离析构缺陷）
+
+**结论**：`qwqTests` 里**每个 `test…()` 方法都必须写成 `async`**。这不是为了等待什么，
+而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 14 个测试文件、181 个用例已全部统一。
+
+### 现象
+
+在**同步**用例里创建并释放任何一个 `@MainActor` 类实例，测试宿主 100% 直接 abort：
+
+```
+Test Case '-[qwqTests.LaunchPanelStateTests testClearLaunchErrorClearsTextOnly]' started.
+qwq(30095,0x20e2462c0) malloc: *** error for object 0x2a0b603b0: pointer being freed was not allocated
+```
+
+XCTest 会不断重启宿主继续往下跑，所以表面症状是「一堆用例通过、然后无限重启、套件再也前进不了」。
+2026-09-22 的全量运行共 **39 次崩溃**，卡在第 5 个测试类。
+
+### 根因（已定位到构建设置这一层）
+
+1. 工程开了 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`（Debug / Release 都开）。
+2. 这个设置会把**没有显式 `deinit` 的类**的隐式析构推断成「隔离析构（isolated deinit）」。
+3. 于是析构入口不再直接释放对象，而是调用运行时垫片
+   `swift_task_deinitOnExecutorMainActorBackDeploy`（macOS < 15.4 的兼容路径；
+   在 macOS 26 上它转发给运行时的 `swift_task_deinitOnExecutor`）。
+4. 同步用例跑在主线程上但**不在任何 Task 里**，运行时因此走了「把析构推迟到主 actor」的慢路径，
+   在 `TaskLocal::StopLookupScope` 收尾处对同一个对象二次释放 → `pointer being freed was not allocated`。
+
+硬证据（同一份源码，只改这一个构建设置，统计反汇编里调用该垫片的析构函数个数）：
+
+| 构建设置 | 走隔离析构的类数量 |
+|---|---|
+| `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`（现状） | **102** |
+| 关掉该设置 | **0** |
+
+上游同源问题：[swiftlang/swift#87422](https://github.com/swiftlang/swift/issues/87422)
+（环境栏写的正是 Xcode 26.2 / 17C52）。
+
+### 为什么选「用例 async」而不是别的修法
+
+| 方案 | 代价 | 为什么不采用 |
+|---|---|---|
+| **用例一律 `async`**（已采用） | 14 个测试文件、140 行；生产代码零改动 | —— |
+| 给 102 个类各加 `nonisolated deinit {}` | 102 个生产文件 | 为一条工具链缺陷改 102 个类；而且会把「析构推迟到主 actor」这一语义一起改掉 |
+| 关掉 `SWIFT_DEFAULT_ACTOR_ISOLATION` | 1 行设置 | 实测**编译 0 报错**，但 Swift 5 语言模式下默认隔离会「静默失效」—— 不报错、只悄悄改变语义，比崩溃更难发现 |
+| 等 Apple 修 | 0 | 无法预期周期；且升级工具链后 `async` 写法依然正确，**不需要回滚** |
+
+### 为什么 app 本身没事
+
+app 里这些对象都在主队列上下文（SwiftUI / Combine / AppKit 回调）里释放，此时「当前执行器」
+就是主 actor，运行时走**内联快路径**，不碰那条有缺陷的慢路径。只有 XCTest 的同步用例
+是在主线程上、却不在任何 Task 里的调用点。
+
+### 写法
+
+```swift
+// ✅ 正确：async 把用例体放进一个 MainActor 任务里执行
+func testClearLaunchErrorClearsTextOnly() async {
+    let panel = LaunchPanelState()
+    panel.presentError("启动失败")
+    XCTAssertNil(panel.launchErrorMessage)
+}
+
+// ❌ 会 abort 整个测试进程
+func testClearLaunchErrorClearsTextOnly() {
+    let panel = LaunchPanelState()
+    ...
+}
+```
+
+带 `throws` 的写成 `func testX() async throws`。用例体内不需要 `await` 任何东西 ——
+`async` 在这里只是手段，不是目的。
+
+**注意**：不要试图写一条「释放 MainActor 类不崩溃」的同步回归用例 ——
+它在有缺陷的工具链上必然 abort，会让套件永远是红的。要在本机单独验证这条，
+只能用临时探针（跑完即删），不能进套件。

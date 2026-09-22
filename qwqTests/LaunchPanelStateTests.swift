@@ -45,12 +45,12 @@ final class LaunchPanelStateTests: XCTestCase {
     // MARK: - 单例与数据源
 
     /// shared 是稳定单例
-    func testSharedIsSingleton() {
+    func testSharedIsSingleton() async {
         XCTAssertTrue(LaunchPanelState.shared === LaunchPanelState.shared)
     }
 
     /// 两个实例必须共享同一份底层设置（唯一数据源契约）
-    func testTwoInstancesShareSingleSettingsSource() {
+    func testTwoInstancesShareSingleSettingsSource() async {
         let first = LaunchPanelState()
         let second = LaunchPanelState()
 
@@ -68,7 +68,7 @@ final class LaunchPanelStateTests: XCTestCase {
     // MARK: - 投递入口
 
     /// presentMessage 设置气泡文案并打开气泡
-    func testPresentMessageSetsTextAndOpensPopup() {
+    func testPresentMessageSetsTextAndOpensPopup() async {
         let panel = LaunchPanelState()
 
         panel.presentMessage("正在下载 Java 21")
@@ -81,7 +81,7 @@ final class LaunchPanelStateTests: XCTestCase {
     }
 
     /// presentError 设置失败正文并打开失败提示
-    func testPresentErrorSetsTextAndOpensAlert() {
+    func testPresentErrorSetsTextAndOpensAlert() async {
         let panel = LaunchPanelState()
 
         panel.presentError("整合包安装失败: 磁盘空间不足")
@@ -94,7 +94,7 @@ final class LaunchPanelStateTests: XCTestCase {
     }
 
     /// 连续投递以最后一次为准
-    func testLaterMessageReplacesEarlierOne() {
+    func testLaterMessageReplacesEarlierOne() async {
         let panel = LaunchPanelState()
 
         panel.presentMessage("第一条")
@@ -110,7 +110,7 @@ final class LaunchPanelStateTests: XCTestCase {
     // MARK: - 开关读写的回写
 
     /// showJavaPopup 可读可写（气泡展示结束后由视图写回 false）
-    func testShowJavaPopupRoundTrip() {
+    func testShowJavaPopupRoundTrip() async {
         let panel = LaunchPanelState()
 
         panel.showJavaPopup = true
@@ -123,7 +123,7 @@ final class LaunchPanelStateTests: XCTestCase {
     }
 
     /// showLaunchAlert 可读可写
-    func testShowLaunchAlertRoundTrip() {
+    func testShowLaunchAlertRoundTrip() async {
         let panel = LaunchPanelState()
 
         panel.showLaunchAlert = true
@@ -138,7 +138,7 @@ final class LaunchPanelStateTests: XCTestCase {
     // MARK: - 清空语义
 
     /// clearLaunchError 只清正文，不动开关（点击确定后由调用方/绑定关闭 alert）
-    func testClearLaunchErrorClearsTextOnly() {
+    func testClearLaunchErrorClearsTextOnly() async {
         let panel = LaunchPanelState()
         panel.presentError("启动失败")
 
@@ -150,7 +150,7 @@ final class LaunchPanelStateTests: XCTestCase {
     }
 
     /// 无错误时清空是幂等的 no-op
-    func testClearLaunchErrorWithoutErrorIsIdempotent() {
+    func testClearLaunchErrorWithoutErrorIsIdempotent() async {
         let panel = LaunchPanelState()
         XCTAssertNil(panel.launchErrorMessage)
 
@@ -164,7 +164,7 @@ final class LaunchPanelStateTests: XCTestCase {
     // MARK: - 变化透传
 
     /// 通过本对象投递会触发自身 objectWillChange
-    func testOwnMutationsEmitObjectWillChange() {
+    func testOwnMutationsEmitObjectWillChange() async {
         let panel = LaunchPanelState()
         var emissions = 0
         let cancellable = panel.objectWillChange.sink { _ in emissions += 1 }
@@ -176,7 +176,7 @@ final class LaunchPanelStateTests: XCTestCase {
     }
 
     /// 外部直接写 LauncherSettings（其他模块的既有调用方式）同样要透传
-    func testExternalSettingsWriteIsForwardedToPanel() {
+    func testExternalSettingsWriteIsForwardedToPanel() async {
         let panel = LaunchPanelState()
         var emissions = 0
         let cancellable = panel.objectWillChange.sink { _ in emissions += 1 }

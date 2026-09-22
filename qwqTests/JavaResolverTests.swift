@@ -92,7 +92,7 @@ final class JavaResolverTests: XCTestCase {
     // MARK: JavaRequirement 版本推导
 
     /// 官方版本区间的最低 Java 要求：1.16.5 及更早 -> 8，1.17 -> 16，1.18~1.20.4 -> 17，1.20.5+ -> 21
-    func testMinimumMajorForReleaseVersions() {
+    func testMinimumMajorForReleaseVersions() async {
         XCTAssertEqual(JavaRequirement.minimumMajor(forMinecraftVersion: "1.8.9"), 8)
         XCTAssertEqual(JavaRequirement.minimumMajor(forMinecraftVersion: "1.12.2"), 8)
         XCTAssertEqual(JavaRequirement.minimumMajor(forMinecraftVersion: "1.16.5"), 8)
@@ -109,7 +109,7 @@ final class JavaResolverTests: XCTestCase {
     }
 
     /// 快照按 (年份, 周序号) 近似映射：24w14a 起 -> 21，21w~23w -> 17，更早 -> 8
-    func testMinimumMajorForSnapshots() {
+    func testMinimumMajorForSnapshots() async {
         XCTAssertEqual(JavaRequirement.minimumMajor(forMinecraftVersion: "24w14a"), 21)
         XCTAssertEqual(JavaRequirement.minimumMajor(forMinecraftVersion: "25w02a"), 21)
         XCTAssertEqual(JavaRequirement.minimumMajor(forMinecraftVersion: "23w51b"), 17)
@@ -118,7 +118,7 @@ final class JavaResolverTests: XCTestCase {
     }
 
     /// 无法解析的版本号兜底为 Java 8；非 "1.x" 的新版本号方案按 Java 21 处理
-    func testMinimumMajorForUnparsableVersions() {
+    func testMinimumMajorForUnparsableVersions() async {
         XCTAssertEqual(JavaRequirement.minimumMajor(forMinecraftVersion: ""), JavaRequirement.fallbackMinimumMajor)
         XCTAssertEqual(JavaRequirement.minimumMajor(forMinecraftVersion: "unknown"), JavaRequirement.fallbackMinimumMajor)
         // 未来版本号方案（去掉 "1." 前缀）：保守按 Java 21 处理
@@ -128,7 +128,7 @@ final class JavaResolverTests: XCTestCase {
     }
 
     /// 由 Minecraft 版本构造需求时，同时回填 minimumMajor 与 mcVersion
-    func testRequirementFromMinecraftVersion() {
+    func testRequirementFromMinecraftVersion() async {
         let requirement = JavaRequirement(mcVersion: "1.20.1", preferredMajor: 21, remarks: "manifest.javaVersion=21")
         XCTAssertEqual(requirement.minimumMajor, 17)
         XCTAssertEqual(requirement.preferredMajor, 21)
@@ -137,7 +137,7 @@ final class JavaResolverTests: XCTestCase {
     }
 
     /// manifest 声明优先于版本推断；未声明或 <= 0 时回落到推断值；两者皆无时取兜底 8
-    func testRequirementFromManifestJavaVersion() {
+    func testRequirementFromManifestJavaVersion() async {
         let fromManifest = JavaRequirement(manifestJavaVersion: 21, mcVersion: "1.18.2")
         XCTAssertEqual(fromManifest.minimumMajor, 21, "manifest 声明优先于由 mcVersion 推断的值")
 
@@ -309,7 +309,7 @@ final class JavaResolverTests: XCTestCase {
     }
 
     /// 解析失败原因面向用户可读（非空且点明最低版本）
-    func testResolutionErrorDescriptionsAreReadable() {
+    func testResolutionErrorDescriptionsAreReadable() async {
         let requirement = JavaRequirement(mcVersion: "1.20.6")
         let notFound = JavaResolutionError.notFound(requirement)
         XCTAssertTrue(notFound.errorDescription?.contains("21") == true)
@@ -326,7 +326,7 @@ final class JavaResolverTests: XCTestCase {
     // MARK: JavaArchitecture 映射
 
     /// 由 PCLCore 的 Architecture 转换；fatFile 归并为 universal
-    func testJavaArchitectureMappingFromPCLCoreArchitecture() {
+    func testJavaArchitectureMappingFromPCLCoreArchitecture() async {
         XCTAssertEqual(JavaArchitecture(.arm64), .arm64)
         XCTAssertEqual(JavaArchitecture(.x64), .x64)
         XCTAssertEqual(JavaArchitecture(.fatFile), .universal)
@@ -335,7 +335,7 @@ final class JavaResolverTests: XCTestCase {
     }
 
     /// 由架构字符串转换；无法识别时归为 unknown
-    func testJavaArchitectureMappingFromString() {
+    func testJavaArchitectureMappingFromString() async {
         XCTAssertEqual(JavaArchitecture(rawArchitecture: "arm64"), .arm64)
         XCTAssertEqual(JavaArchitecture(rawArchitecture: "aarch64"), .arm64)
         XCTAssertEqual(JavaArchitecture(rawArchitecture: "arm"), .arm64)
@@ -349,7 +349,7 @@ final class JavaResolverTests: XCTestCase {
     }
 
     /// isNative：universal / unknown / 本机架构为原生，其余需转译
-    func testJavaArchitectureNativeFlag() {
+    func testJavaArchitectureNativeFlag() async {
         XCTAssertTrue(nativeArchitecture.isNative)
         XCTAssertTrue(JavaArchitecture.universal.isNative)
         XCTAssertTrue(JavaArchitecture.unknown.isNative)
@@ -359,7 +359,7 @@ final class JavaResolverTests: XCTestCase {
     // MARK: JavaInstallation 转换
 
     /// 由 JavaInfo 转换：路径、版本、架构字符串归一化、isJDK 不可得
-    func testInstallationFromJavaInfoMapsFields() {
+    func testInstallationFromJavaInfoMapsFields() async {
         let info = JavaInfo(
             path: "/Library/Java/21/bin/java",
             majorVersion: 21,
@@ -381,7 +381,7 @@ final class JavaResolverTests: XCTestCase {
     }
 
     /// 由 JavaInfo 转换：架构未识别 / 版本为 0 / isValid 为 false 均判为不可用
-    func testInstallationFromJavaInfoFlagsIncompatible() {
+    func testInstallationFromJavaInfoFlagsIncompatible() async {
         let unknownArch = JavaInfo(path: "/a/java", majorVersion: 21, fullVersion: "21", architecture: "mips", vendor: nil, isValid: true)
         XCTAssertEqual(JavaInstallation(unknownArch).architecture, .unknown)
         XCTAssertFalse(JavaInstallation(unknownArch).isCompatible)
@@ -394,7 +394,7 @@ final class JavaResolverTests: XCTestCase {
     }
 
     /// 由 JavaVirtualMachine 转换：arch / version / displayVersion / implementor / isJdk 的字段映射
-    func testInstallationFromJavaVirtualMachineMapsFields() {
+    func testInstallationFromJavaVirtualMachineMapsFields() async {
         let vm = JavaVirtualMachine(
             arch: .fatFile,
             version: 21,
@@ -416,7 +416,7 @@ final class JavaResolverTests: XCTestCase {
     }
 
     /// 由 JavaVirtualMachine 转换：错误占位 / callMethod 为 incompatible / 版本为 0 均判为不可用
-    func testInstallationFromJavaVirtualMachineFlagsIncompatible() {
+    func testInstallationFromJavaVirtualMachineFlagsIncompatible() async {
         let errorPlaceholder = JavaVirtualMachine(
             arch: .arm64,
             version: 21,
@@ -460,7 +460,7 @@ final class JavaResolverTests: XCTestCase {
     }
 
     /// id 以标准化后的可执行文件路径为准，同一份 Java 的不同写法应收敛为同一标识
-    func testInstallationIdentityUsesStandardizedPath() {
+    func testInstallationIdentityUsesStandardizedPath() async {
         let plain = JavaInstallation(
             executableURL: URL(fileURLWithPath: "/opt/java/21/bin/java"),
             majorVersion: 21,

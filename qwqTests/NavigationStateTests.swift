@@ -37,7 +37,7 @@ final class NavigationStateTests: XCTestCase {
     // MARK: - 分类与下标
 
     /// categories 与 Category.all 同序同内容，初始选中首个分类
-    func testCategoriesMirrorCategoryAllAndSelectFirst() {
+    func testCategoriesMirrorCategoryAllAndSelectFirst() async {
         let state = NavigationState()
 
         XCTAssertEqual(state.categories.count, Category.all.count)
@@ -48,7 +48,7 @@ final class NavigationStateTests: XCTestCase {
     }
 
     /// selectedIndex 跟随 selectedCategory
-    func testSelectedIndexFollowsSelectedCategory() {
+    func testSelectedIndexFollowsSelectedCategory() async {
         let state = NavigationState()
 
         state.selectedCategory = state.categories[3]
@@ -59,7 +59,7 @@ final class NavigationStateTests: XCTestCase {
     }
 
     /// 不在 categories 中的分类回落到下标 0，不得越界
-    func testUnknownCategoryFallsBackToFirstIndex() {
+    func testUnknownCategoryFallsBackToFirstIndex() async {
         let state = NavigationState()
         state.selectedCategory = state.categories[2]
 
@@ -71,13 +71,13 @@ final class NavigationStateTests: XCTestCase {
     // MARK: - 手势常量与方向判定
 
     /// 手势常量被冻结（改动等同于改动画与手势行为）
-    func testCanvasGestureConstantsAreFrozen() {
+    func testCanvasGestureConstantsAreFrozen() async {
         XCTAssertEqual(NavigationState.canvasDragMinimumDistance, 20)
         XCTAssertEqual(NavigationState.canvasFlipThresholdRatio, 0.25)
     }
 
     /// 横向位移为主才触发画布换页
-    func testIsHorizontalDrag() {
+    func testIsHorizontalDrag() async {
         XCTAssertTrue(NavigationState.isHorizontalDrag(CGSize(width: 30, height: 10)))
         XCTAssertTrue(NavigationState.isHorizontalDrag(CGSize(width: -30, height: 10)))
         XCTAssertTrue(NavigationState.isHorizontalDrag(CGSize(width: 12, height: -5)))
@@ -91,7 +91,7 @@ final class NavigationStateTests: XCTestCase {
     // MARK: - 拖拽换页目标下标
 
     /// 左移超过阈值 → 下一页（画布宽 400，阈值 100）
-    func testDragLeftBeyondThresholdMovesToNextPage() {
+    func testDragLeftBeyondThresholdMovesToNextPage() async {
         let state = NavigationState()
         state.selectedCategory = state.categories[1]
 
@@ -99,7 +99,7 @@ final class NavigationStateTests: XCTestCase {
     }
 
     /// 恰好等于阈值不换页（判定是严格小于/大于）
-    func testDragExactlyAtThresholdDoesNotMove() {
+    func testDragExactlyAtThresholdDoesNotMove() async {
         let state = NavigationState()
         state.selectedCategory = state.categories[1]
 
@@ -110,7 +110,7 @@ final class NavigationStateTests: XCTestCase {
     }
 
     /// 右移超过阈值 → 上一页
-    func testDragRightBeyondThresholdMovesToPreviousPage() {
+    func testDragRightBeyondThresholdMovesToPreviousPage() async {
         let state = NavigationState()
         state.selectedCategory = state.categories[2]
 
@@ -118,7 +118,7 @@ final class NavigationStateTests: XCTestCase {
     }
 
     /// 首尾边界不得越界
-    func testDragAtBoundaryStaysOnCurrentPage() {
+    func testDragAtBoundaryStaysOnCurrentPage() async {
         let state = NavigationState()
 
         // 已在首页，再怎么右移也不换页
@@ -133,7 +133,7 @@ final class NavigationStateTests: XCTestCase {
 
     /// 画布宽度为 0（布局尚未完成）时阈值为 0：无位移不换页；
     /// 一旦有位移即视为越过阈值——这是当前实现的边界行为，此断言用于锁定它，避免误改。
-    func testZeroWidthCanvasThresholdBehaviour() {
+    func testZeroWidthCanvasThresholdBehaviour() async {
         let state = NavigationState()
         state.selectedCategory = state.categories[1]
 
@@ -144,7 +144,7 @@ final class NavigationStateTests: XCTestCase {
     // MARK: - 下载详情页代理
 
     /// 详情页开关与圆按钮系列属性逐项代理 DownloadDetailManager
-    func testDownloadDetailProxiesMirrorManager() {
+    func testDownloadDetailProxiesMirrorManager() async {
         let state = NavigationState()
         let manager = DownloadDetailManager.shared
 
@@ -155,7 +155,7 @@ final class NavigationStateTests: XCTestCase {
     }
 
     /// toggleDownloadDetail 真正翻转详情页展示状态（状态源在 DownloadDetailManager）
-    func testToggleDownloadDetailFlipsPresentation() {
+    func testToggleDownloadDetailFlipsPresentation() async {
         let state = NavigationState()
 
         state.toggleDownloadDetail()
@@ -167,7 +167,7 @@ final class NavigationStateTests: XCTestCase {
     }
 
     /// DownloadDetailManager 的变化必须透传到 NavigationState 的 objectWillChange
-    func testDownloadDetailChangesAreForwardedToObservers() {
+    func testDownloadDetailChangesAreForwardedToObservers() async {
         let state = NavigationState()
         var emissions = 0
         let cancellable = state.objectWillChange.sink { _ in emissions += 1 }
@@ -182,7 +182,7 @@ final class NavigationStateTests: XCTestCase {
     // MARK: - 切换分类时收起详情页
 
     /// 详情页展开且画布不在拖拽位移中 → 切换分类时收起
-    func testHandleSelectedCategoryChangeCollapsesDetailWhenIdle() {
+    func testHandleSelectedCategoryChangeCollapsesDetailWhenIdle() async {
         let state = NavigationState()
         state.toggleDownloadDetail()
         XCTAssertTrue(state.isShowingDownloadDetail)
@@ -194,7 +194,7 @@ final class NavigationStateTests: XCTestCase {
     }
 
     /// 画布处于拖拽位移中（dragOffset != 0）时不得收起详情页
-    func testHandleSelectedCategoryChangeKeepsDetailDuringDrag() {
+    func testHandleSelectedCategoryChangeKeepsDetailDuringDrag() async {
         let state = NavigationState()
         state.dragOffset = 60
         state.toggleDownloadDetail()
@@ -209,7 +209,7 @@ final class NavigationStateTests: XCTestCase {
     }
 
     /// 详情页本就未展示时，切换分类不得产生额外开关动作
-    func testHandleSelectedCategoryChangeIsNoOpWhenDetailHidden() {
+    func testHandleSelectedCategoryChangeIsNoOpWhenDetailHidden() async {
         let state = NavigationState()
         XCTAssertFalse(state.isShowingDownloadDetail)
 

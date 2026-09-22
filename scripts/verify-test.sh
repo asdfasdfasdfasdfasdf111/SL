@@ -67,9 +67,9 @@ fi
 
 echo ""
 echo "--- 运行测试（会启动 qwq.app 作为宿主）---"
-echo "注意：必须在用户自己的 Terminal 里跑。AI 会话的沙箱会继承给 xcodebuild → 测试宿主 App，"
-echo "      宿主连 testmanagerd 的 XPC 会被拒，表现为 4 分钟无任何用例输出后报"
-echo "      「The test runner hung before establishing connection」。"
+echo "注意：用例必须一律写成 async（见 qwqTests/TESTING.md §五）。同步用例里创建并释放"
+echo "      @MainActor 类实例会让宿主 abort（malloc: pointer being freed was not allocated），"
+echo "      表现为「前几个测试类通过、之后无限重启」。工具链缺陷，与本工程逻辑无关。"
 rm -rf "$RESULT"
 # 显式指定 destination：本机 arm64 / x86_64 两个 destination 同名同 id，
 # 不指定时 xcodebuild 会打印「Using the first of multiple matching destinations」后取第一个，

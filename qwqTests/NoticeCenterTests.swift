@@ -166,7 +166,7 @@ final class NoticeCenterTests: XCTestCase {
     }
 
     /// current 为空时 dismiss 是 no-op
-    func testDismissWithoutCurrentIsNoOp() {
+    func testDismissWithoutCurrentIsNoOp() async {
         XCTAssertNil(center.current)
         center.dismiss()
         XCTAssertNil(center.current)
@@ -270,7 +270,7 @@ final class NoticeCenterTests: XCTestCase {
     }
 
     /// hasPresenter 跟随承载者挂载/卸载
-    func testHasPresenterFollowsRegistration() {
+    func testHasPresenterFollowsRegistration() async {
         center.setPresenter(true)
         XCTAssertTrue(center.hasPresenter)
         center.setPresenter(false)
@@ -280,21 +280,21 @@ final class NoticeCenterTests: XCTestCase {
     // MARK: - 级别映射与文案
 
     /// PopupType → NoticeLevel：三种类型一一对应，无 success 分支
-    func testNoticeLevelFromPopupType() {
+    func testNoticeLevelFromPopupType() async {
         XCTAssertEqual(NoticeLevel(PopupType.info), .info)
         XCTAssertEqual(NoticeLevel(PopupType.warning), .warning)
         XCTAssertEqual(NoticeLevel(PopupType.error), .error)
     }
 
     /// HintType → NoticeLevel：finish 是成功提示（不是 info），critical 是错误
-    func testNoticeLevelFromHintType() {
+    func testNoticeLevelFromHintType() async {
         XCTAssertEqual(NoticeLevel(HintType.info), .info)
         XCTAssertEqual(NoticeLevel(HintType.finish), .success)
         XCTAssertEqual(NoticeLevel(HintType.critical), .error)
     }
 
     /// 四个级别都有非空默认标题（hint 只有正文，标题由此补全）
-    func testDefaultTitlesForEachLevel() {
+    func testDefaultTitlesForEachLevel() async {
         XCTAssertEqual(NoticeLevel.info.defaultTitle, "提示")
         XCTAssertEqual(NoticeLevel.success.defaultTitle, "完成")
         XCTAssertEqual(NoticeLevel.warning.defaultTitle, "注意")
@@ -302,7 +302,7 @@ final class NoticeCenterTests: XCTestCase {
     }
 
     /// 默认按钮：单个「确定」，样式 normal；默认不提供错误报告导出
-    func testDefaultNoticeShape() {
+    func testDefaultNoticeShape() async {
         let notice = Notice(level: .info, title: "提示", message: "正文")
 
         XCTAssertEqual(notice.buttons.count, 1)
@@ -314,7 +314,7 @@ final class NoticeCenterTests: XCTestCase {
     }
 
     /// 由 PopupModel 转换：级别/标题/正文/按钮顺序与样式逐项保留
-    func testNoticeFromPopupModelMapsFieldsAndButtons() {
+    func testNoticeFromPopupModelMapsFieldsAndButtons() async {
         let model = PopupModel(.error,
                                "启动失败",
                                "无法定位 Java 运行时",
@@ -332,7 +332,7 @@ final class NoticeCenterTests: XCTestCase {
     }
 
     /// 不含「导出」按钮时不得出现导出入口
-    func testNoticeFromPopupModelWithoutExportButtonDisablesReportExport() {
+    func testNoticeFromPopupModelWithoutExportButtonDisablesReportExport() async {
         let model = PopupModel(.warning, "注意", "磁盘空间不足", [PopupButton(label: "去清理")])
         let notice = Notice(model)
 
@@ -341,7 +341,7 @@ final class NoticeCenterTests: XCTestCase {
     }
 
     /// 导出判定按「按钮文案包含『导出』」，只要有一个命中即开启
-    func testAllowsReportExportOnlyDependsOnButtonLabels() {
+    func testAllowsReportExportOnlyDependsOnButtonLabels() async {
         let withExport = Notice(PopupModel(.error, "错误", "正文",
                                            [PopupButton(label: "取消"),
                                             PopupButton(label: "导出日志", style: .danger)]))
@@ -356,7 +356,7 @@ final class NoticeCenterTests: XCTestCase {
     // MARK: - Notice 相等语义
 
     /// Notice 的相等按 id 判定（内容相同但 id 不同即不相等）
-    func testNoticeEqualityIsIdentityBased() {
+    func testNoticeEqualityIsIdentityBased() async {
         let id = UUID()
         let lhs = Notice(id: id, level: .info, title: "标题", message: "正文")
         let rhs = Notice(id: id, level: .error, title: "别的标题", message: "别的正文")

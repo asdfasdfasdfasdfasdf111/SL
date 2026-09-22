@@ -46,7 +46,7 @@ final class DownloadVerifierTests: XCTestCase {
     // MARK: - SHA-256
 
     /// 标准测试向量 SHA-256("abc")，校验通过
-    func testSHA256MatchingKnownVectorPasses() throws {
+    func testSHA256MatchingKnownVectorPasses() async throws {
         let url = try makeFile(named: "abc-256.bin", contents: Data("abc".utf8))
         XCTAssertNoThrow(
             try verifier.verify(
@@ -59,7 +59,7 @@ final class DownloadVerifierTests: XCTestCase {
     }
 
     /// SHA-256 不匹配时抛 .checksumMismatch
-    func testSHA256MismatchThrowsChecksumMismatch() throws {
+    func testSHA256MismatchThrowsChecksumMismatch() async throws {
         let url = try makeFile(named: "abc-256-bad.bin", contents: Data("abc".utf8))
         XCTAssertThrowsError(
             try verifier.verify(fileAt: url, expectedSize: nil, sha1: nil, sha256: String(repeating: "0", count: 64))
@@ -69,7 +69,7 @@ final class DownloadVerifierTests: XCTestCase {
     }
 
     /// 实现内部对期望值做 lowercase 归一，大写十六进制应同样通过
-    func testUppercaseSHA256IsAccepted() throws {
+    func testUppercaseSHA256IsAccepted() async throws {
         let url = try makeFile(named: "abc-256-upper.bin", contents: Data("abc".utf8))
         XCTAssertNoThrow(
             try verifier.verify(
@@ -84,7 +84,7 @@ final class DownloadVerifierTests: XCTestCase {
     // MARK: - SHA-1
 
     /// 标准测试向量 SHA-1("abc")，校验通过
-    func testSHA1MatchingKnownVectorPasses() throws {
+    func testSHA1MatchingKnownVectorPasses() async throws {
         let url = try makeFile(named: "abc-1.bin", contents: Data("abc".utf8))
         XCTAssertNoThrow(
             try verifier.verify(
@@ -97,7 +97,7 @@ final class DownloadVerifierTests: XCTestCase {
     }
 
     /// SHA-1 不匹配时抛 .checksumMismatch
-    func testSHA1MismatchThrowsChecksumMismatch() throws {
+    func testSHA1MismatchThrowsChecksumMismatch() async throws {
         let url = try makeFile(named: "abc-1-bad.bin", contents: Data("abc".utf8))
         XCTAssertThrowsError(
             try verifier.verify(fileAt: url, expectedSize: nil, sha1: String(repeating: "0", count: 40), sha256: nil)
@@ -107,7 +107,7 @@ final class DownloadVerifierTests: XCTestCase {
     }
 
     /// 同时给出两个哈希时先校验 SHA-256：sha1 正确、sha256 错误应失败
-    func testSHA256IsCheckedBeforeSHA1() throws {
+    func testSHA256IsCheckedBeforeSHA1() async throws {
         let url = try makeFile(named: "both.bin", contents: Data("abc".utf8))
         XCTAssertThrowsError(
             try verifier.verify(
@@ -138,7 +138,7 @@ final class DownloadVerifierTests: XCTestCase {
     /// 注意：当前实现以 `DownloadError.unknown` 承载大小不符（无专用 case），
     /// 此处按现状断言错误描述；后续若要穷尽处理，建议新增 `.sizeMismatch(expected:actual:)`
     /// 并由调用方同步改造（本测试不修改实现）。
-    func testSizeMismatchThrows() throws {
+    func testSizeMismatchThrows() async throws {
         let url = try makeFile(named: "size.bin", contents: Data("abc".utf8))
         XCTAssertThrowsError(try verifier.verify(fileAt: url, expectedSize: 4, sha1: nil, sha256: nil)) { error in
             guard let downloadError = error as? DownloadError else {
@@ -153,7 +153,7 @@ final class DownloadVerifierTests: XCTestCase {
     }
 
     /// 大小相符且哈希相符时通过
-    func testMatchingSizePasses() throws {
+    func testMatchingSizePasses() async throws {
         let url = try makeFile(named: "size-ok.bin", contents: Data("abc".utf8))
         XCTAssertNoThrow(try verifier.verify(fileAt: url, expectedSize: 3, sha1: nil, sha256: nil))
     }
@@ -161,7 +161,7 @@ final class DownloadVerifierTests: XCTestCase {
     // MARK: - 文件不存在
 
     /// 文件不存在时抛错（三项校验全为 nil 也需先确认存在）
-    func testMissingFileThrows() throws {
+    func testMissingFileThrows() async throws {
         let url = temporaryDirectory.appendingPathComponent("missing.bin")
         XCTAssertThrowsError(try verifier.verify(fileAt: url, expectedSize: nil, sha1: nil, sha256: nil)) { error in
             guard let downloadError = error as? DownloadError, case .unknown(let reason) = downloadError else {
@@ -174,7 +174,7 @@ final class DownloadVerifierTests: XCTestCase {
     // MARK: - 空文件
 
     /// 空文件：空内容的 SHA-1 / SHA-256 与 expectedSize = 0 均应通过
-    func testEmptyFilePassesWithEmptyContentHashes() throws {
+    func testEmptyFilePassesWithEmptyContentHashes() async throws {
         let url = try makeFile(named: "empty.bin", contents: Data())
         XCTAssertNoThrow(
             try verifier.verify(
@@ -192,7 +192,7 @@ final class DownloadVerifierTests: XCTestCase {
 
     /// 8 MiB 文件的 SHA-256 校验：期望值在写入过程中增量计算，
     /// 测试自身不持有完整文件内容，用于确认实现逐块读取而非整文件载入
-    func testLargeFileVerifiesWithStreamingHash() throws {
+    func testLargeFileVerifiesWithStreamingHash() async throws {
         let chunkSize = 1 << 20      // 1 MiB，与实现内部块大小一致
         let chunkCount = 8           // 合计 8 MiB
         let url = temporaryDirectory.appendingPathComponent("large.bin")
@@ -228,19 +228,19 @@ final class DownloadVerifierTests: XCTestCase {
     // MARK: - 跳过校验
 
     /// 三项期望值均为 nil 时只确认文件存在
-    func testNilExpectationsOnlyCheckExistence() throws {
+    func testNilExpectationsOnlyCheckExistence() async throws {
         let url = try makeFile(named: "skip.bin", contents: Data(repeating: 0xAB, count: 1024))
         XCTAssertNoThrow(try verifier.verify(fileAt: url, expectedSize: nil, sha1: nil, sha256: nil))
     }
 
     /// 空字符串哈希视为「未声明」，不参与校验
-    func testEmptyHashStringIsSkipped() throws {
+    func testEmptyHashStringIsSkipped() async throws {
         let url = try makeFile(named: "skip-empty-hash.bin", contents: Data("abc".utf8))
         XCTAssertNoThrow(try verifier.verify(fileAt: url, expectedSize: nil, sha1: "", sha256: ""))
     }
 
     /// 由 CryptoKit 独立算出的哈希与实现结果一致（交叉验证，非硬编码向量）
-    func testHashMatchesCryptoKitReference() throws {
+    func testHashMatchesCryptoKitReference() async throws {
         let payload = Data("Minecraft 1.20.1 client.jar".utf8)
         let url = try makeFile(named: "crossover.bin", contents: payload)
         XCTAssertNoThrow(

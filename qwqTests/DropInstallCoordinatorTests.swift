@@ -51,7 +51,7 @@ final class DropInstallCoordinatorTests: XCTestCase {
     // MARK: - 初始状态
 
     /// 初始态：两个弹窗关闭、暂存字段为空
-    func testInitialState() {
+    func testInitialState() async {
         let coordinator = DropInstallCoordinator()
 
         XCTAssertFalse(coordinator.showModInstallSheet)
@@ -65,7 +65,7 @@ final class DropInstallCoordinatorTests: XCTestCase {
     // MARK: - 整合包分流
 
     /// .zip 直接进入安装位置选择，展示名取去扩展名的文件名
-    func testZipOpensModpackInstallSheet() {
+    func testZipOpensModpackInstallSheet() async {
         let coordinator = DropInstallCoordinator()
 
         coordinator.handle(urls: [url("我的整合包.zip")])
@@ -77,7 +77,7 @@ final class DropInstallCoordinatorTests: XCTestCase {
     }
 
     /// .mrpack 与 .zip 同路径处理
-    func testMrpackOpensModpackInstallSheet() {
+    func testMrpackOpensModpackInstallSheet() async {
         let coordinator = DropInstallCoordinator()
 
         coordinator.handle(urls: [url("BetterMC.mrpack")])
@@ -87,7 +87,7 @@ final class DropInstallCoordinatorTests: XCTestCase {
     }
 
     /// 扩展名判定大小写不敏感
-    func testPathExtensionMatchingIsCaseInsensitive() {
+    func testPathExtensionMatchingIsCaseInsensitive() async {
         let upper = DropInstallCoordinator()
         upper.handle(urls: [url("PACK.ZIP")])
         XCTAssertTrue(upper.showModpackInstallSheet)
@@ -102,7 +102,7 @@ final class DropInstallCoordinatorTests: XCTestCase {
     // MARK: - 模组分流与失败路径
 
     /// 无法识别版本与加载器的 jar：只提示错误，不得打开模组安装弹窗
-    func testJarWithoutDetectableVersionReportsErrorOnly() {
+    func testJarWithoutDetectableVersionReportsErrorOnly() async {
         let coordinator = DropInstallCoordinator()
         let jar = url("qwqTests-\(UUID().uuidString).jar")
 
@@ -119,7 +119,7 @@ final class DropInstallCoordinatorTests: XCTestCase {
     }
 
     /// 不支持的类型一律忽略：不弹窗、不提示、不产生任何暂存数据
-    func testUnsupportedExtensionsAreIgnored() {
+    func testUnsupportedExtensionsAreIgnored() async {
         let coordinator = DropInstallCoordinator()
         let ignored = ["notes.txt", "archive.zipx", "mod.jar.txt", "无扩展名", "数据.json", "pack.7z"]
 
@@ -135,7 +135,7 @@ final class DropInstallCoordinatorTests: XCTestCase {
     }
 
     /// 空列表是 no-op
-    func testEmptyURLListIsNoOp() {
+    func testEmptyURLListIsNoOp() async {
         let coordinator = DropInstallCoordinator()
 
         coordinator.handle(urls: [])
@@ -145,7 +145,7 @@ final class DropInstallCoordinatorTests: XCTestCase {
     }
 
     /// 混合批次只处理可安装文件，忽略项不得干扰暂存数据
-    func testBatchRouteHandlesOnlyInstallableFiles() {
+    func testBatchRouteHandlesOnlyInstallableFiles() async {
         let coordinator = DropInstallCoordinator()
 
         coordinator.handle(urls: [url("说明.txt"), url("整合包.zip"), url("图片.png")])
@@ -155,7 +155,7 @@ final class DropInstallCoordinatorTests: XCTestCase {
     }
 
     /// 一批多个整合包时以最后一个为暂存目标（逐个分流、后写覆盖）
-    func testBatchRouteKeepsLastModpackAsPendingTarget() {
+    func testBatchRouteKeepsLastModpackAsPendingTarget() async {
         let coordinator = DropInstallCoordinator()
 
         coordinator.handle(urls: [url("第一个.zip"), url("第二个.mrpack")])
@@ -165,7 +165,7 @@ final class DropInstallCoordinatorTests: XCTestCase {
     }
 
     /// jar 失败与整合包成功混投：两条分支互不掩盖，均按各自语义执行
-    func testJarFailureAndModpackSuccessAreBothHandled() {
+    func testJarFailureAndModpackSuccessAreBothHandled() async {
         let coordinator = DropInstallCoordinator()
         let jar = url("qwqTests-\(UUID().uuidString).jar")
 
@@ -180,7 +180,7 @@ final class DropInstallCoordinatorTests: XCTestCase {
     // MARK: - 取消与确认
 
     /// 取消整合包安装只关弹窗；暂存数据保留（下次确认仍指向同一文件）
-    func testCancelModpackInstallClosesSheetOnly() {
+    func testCancelModpackInstallClosesSheetOnly() async {
         let coordinator = DropInstallCoordinator()
         coordinator.handle(urls: [url("整合包.zip")])
         XCTAssertTrue(coordinator.showModpackInstallSheet)
@@ -193,7 +193,7 @@ final class DropInstallCoordinatorTests: XCTestCase {
     }
 
     /// 无暂存文件时确认整合包安装是 no-op：不落盘、不提示、不崩溃
-    func testConfirmModpackInstallWithoutStagedFileIsNoOp() {
+    func testConfirmModpackInstallWithoutStagedFileIsNoOp() async {
         let coordinator = DropInstallCoordinator()
 
         coordinator.confirmModpackInstall(folderURL: url("目标目录"))
@@ -205,7 +205,7 @@ final class DropInstallCoordinatorTests: XCTestCase {
     }
 
     /// 无暂存模组时确认模组安装不得报「已安装到 N 个实例」
-    func testConfirmModInstallWithoutStagedFileReportsNothing() {
+    func testConfirmModInstallWithoutStagedFileReportsNothing() async {
         let coordinator = DropInstallCoordinator()
 
         coordinator.confirmModInstall(instances: [])
@@ -217,7 +217,7 @@ final class DropInstallCoordinatorTests: XCTestCase {
     }
 
     /// 弹窗未展示时取消模组安装是幂等 no-op
-    func testCancelModInstallIsIdempotentWhenSheetHidden() {
+    func testCancelModInstallIsIdempotentWhenSheetHidden() async {
         let coordinator = DropInstallCoordinator()
 
         coordinator.cancelModInstall()
@@ -231,7 +231,7 @@ final class DropInstallCoordinatorTests: XCTestCase {
     // MARK: - 拖拽入口返回值
 
     /// 没有 file-url 内容的 provider 一律不接受（含 Text 类型）
-    func testHandleProvidersRejectsNonFileContent() {
+    func testHandleProvidersRejectsNonFileContent() async {
         let coordinator = DropInstallCoordinator()
 
         XCTAssertFalse(coordinator.handle(providers: []), "空 provider 列表不得被视为已接受")
@@ -247,7 +247,7 @@ final class DropInstallCoordinatorTests: XCTestCase {
     // MARK: - 状态发布
 
     /// 打开整合包弹窗时两个 @Published 字段都要通知订阅方
-    func testSheetStateChangesEmitObjectWillChange() {
+    func testSheetStateChangesEmitObjectWillChange() async {
         let coordinator = DropInstallCoordinator()
         var emissions = 0
         let cancellable = coordinator.objectWillChange.sink { _ in emissions += 1 }

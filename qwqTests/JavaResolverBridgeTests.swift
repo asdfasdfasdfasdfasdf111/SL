@@ -25,21 +25,21 @@ final class JavaResolverBridgeTests: XCTestCase {
     // MARK: - 超时路径
 
     /// timeout 为 0 时必然超时返回 nil（detached 任务尚未被调度，信号量不可能提前放行）
-    func testZeroTimeoutReturnsNil() {
+    func testZeroTimeoutReturnsNil() async {
         XCTAssertNil(JavaResolverBridge.resolveSynchronously(minimumMajor: 17,
                                                             mcVersion: "1.20.1",
                                                             timeout: 0))
     }
 
     /// 极小超时同样返回 nil：等待上限必须真正生效
-    func testTinyTimeoutReturnsNil() {
+    func testTinyTimeoutReturnsNil() async {
         XCTAssertNil(JavaResolverBridge.resolveSynchronously(minimumMajor: 21,
                                                             mcVersion: "1.21.4",
                                                             timeout: 0.001))
     }
 
     /// 负数超时（调用方误传）落在过去，按超时处理返回 nil，不得崩溃或永久等待
-    func testNegativeTimeoutReturnsNil() {
+    func testNegativeTimeoutReturnsNil() async {
         XCTAssertNil(JavaResolverBridge.resolveSynchronously(minimumMajor: 8,
                                                             mcVersion: nil,
                                                             timeout: -1))
@@ -47,7 +47,7 @@ final class JavaResolverBridgeTests: XCTestCase {
 
     /// 超时路径的耗时必须有上界：连续 5 次零超时调用应在秒级返回。
     /// 若超时失效，每次调用会等到真实扫描结束（秒~十秒级），启动会被拖死。
-    func testRepeatedTimeoutCallsReturnPromptly() {
+    func testRepeatedTimeoutCallsReturnPromptly() async {
         let start = Date()
         for _ in 0..<5 {
             XCTAssertNil(JavaResolverBridge.resolveSynchronously(minimumMajor: 0,
@@ -61,14 +61,14 @@ final class JavaResolverBridgeTests: XCTestCase {
     // MARK: - 边界输入
 
     /// 负数与极值 `minimumMajor` 会被实现钳到 0，不得因取最小值崩溃
-    func testOutOfRangeMinimumMajorIsTolerated() {
+    func testOutOfRangeMinimumMajorIsTolerated() async {
         XCTAssertNil(JavaResolverBridge.resolveSynchronously(minimumMajor: -5, mcVersion: nil, timeout: 0))
         XCTAssertNil(JavaResolverBridge.resolveSynchronously(minimumMajor: Int.min, mcVersion: "", timeout: 0))
         XCTAssertNil(JavaResolverBridge.resolveSynchronously(minimumMajor: Int.max, mcVersion: nil, timeout: 0))
     }
 
     /// mcVersion 为 nil / 空串（仅用于日志追溯）不得影响调用结果
-    func testMissingMinecraftVersionIsTolerated() {
+    func testMissingMinecraftVersionIsTolerated() async {
         XCTAssertNil(JavaResolverBridge.resolveSynchronously(minimumMajor: 17, mcVersion: nil, timeout: 0))
         XCTAssertNil(JavaResolverBridge.resolveSynchronously(minimumMajor: 17, mcVersion: "", timeout: 0))
         XCTAssertNil(JavaResolverBridge.resolveSynchronously(minimumMajor: 17,
@@ -79,7 +79,7 @@ final class JavaResolverBridgeTests: XCTestCase {
     // MARK: - 并发与独立性
 
     /// 并发调用各持自己的信号量：不得死锁、不得互相污染返回值
-    func testConcurrentCallsReturnNilWithoutDeadlock() {
+    func testConcurrentCallsReturnNilWithoutDeadlock() async {
         DispatchQueue.concurrentPerform(iterations: 4) { index in
             XCTAssertNil(JavaResolverBridge.resolveSynchronously(minimumMajor: index * 4,
                                                                  mcVersion: nil,
@@ -93,7 +93,7 @@ final class JavaResolverBridgeTests: XCTestCase {
     /// 非 nil 结果必须是本机已存在的文件路径。
     /// 说明：本机无可用 Java（CI/沙箱）时走失败分支返回 nil，属预期；
     /// 该分支无法与「超时」区分（实现内部只打日志），故此处不额外断言。
-    func testNonNilResultIsAnExistingLocalFile() {
+    func testNonNilResultIsAnExistingLocalFile() async {
         let result = JavaResolverBridge.resolveSynchronously(minimumMajor: 0,
                                                             mcVersion: "1.20.1",
                                                             timeout: 2)

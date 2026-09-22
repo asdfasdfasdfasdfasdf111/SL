@@ -319,7 +319,7 @@ final class DownloadAdapterTests: XCTestCase {
     }
 
     /// 未知 taskID 一律返回 nil
-    func testLegacyFailureReasonIsNilForUnknownTaskID() {
+    func testLegacyFailureReasonIsNilForUnknownTaskID() async {
         let engine = NetDownloaderDownloadEngine(resolver: SequentialDownloadSourceResolver())
 
         XCTAssertNil(engine.legacyFailureReason(taskID: UUID()))
@@ -391,7 +391,7 @@ final class DownloadAdapterTests: XCTestCase {
     // MARK: - DefaultDownloadVerifier.checker(for:)
 
     /// sha256 优先于 sha1，两者都不会被丢进同一个 checker
-    func testCheckerPrefersSha256OverSha1() {
+    func testCheckerPrefersSha256OverSha1() async {
         let request = DownloadRequest(url: URL(string: "https://example.invalid/a.jar")!,
                                       destinationURL: makeDestination(),
                                       sha1: "a".repeated(40),
@@ -401,7 +401,7 @@ final class DownloadAdapterTests: XCTestCase {
     }
 
     /// 无 sha256 时回退到 sha1；空串视为未提供
-    func testCheckerFallsBackToSha1AndIgnoresEmptyStrings() {
+    func testCheckerFallsBackToSha1AndIgnoresEmptyStrings() async {
         let sha1Only = DownloadRequest(url: URL(string: "https://example.invalid/a.jar")!,
                                        destinationURL: makeDestination(),
                                        sha1: "c".repeated(40),
@@ -422,7 +422,7 @@ final class DownloadAdapterTests: XCTestCase {
     }
 
     /// expectedSize → actualSize（必须相等）；无期望值时 actualSize 为 -1，即「存在即跳过」
-    func testCheckerMapsExpectedSizeAndDefaultsToNoSizeRequirement() {
+    func testCheckerMapsExpectedSizeAndDefaultsToNoSizeRequirement() async {
         let sized = DownloadRequest(url: URL(string: "https://example.invalid/a.jar")!,
                                     destinationURL: makeDestination(),
                                     expectedSize: 4096)
@@ -440,7 +440,7 @@ final class DownloadAdapterTests: XCTestCase {
     }
 
     /// 无校验要求的 checker 对已存在文件返回 nil（存在即可复用），对不存在文件返回描述文本
-    func testCheckerSemanticsForExistingAndMissingFiles() throws {
+    func testCheckerSemanticsForExistingAndMissingFiles() async throws {
         let existing = try makeSkippableDestination()
         defer { try? FileManager.default.removeItem(at: existing) }
 
@@ -457,7 +457,7 @@ final class DownloadAdapterTests: XCTestCase {
     }
 
     /// 校验器自身的失败映射：哈希不符 → checksumMismatch，文件不存在 → unknown
-    func testVerifierMapsFailureDescriptions() throws {
+    func testVerifierMapsFailureDescriptions() async throws {
         let verifier = DefaultDownloadVerifier()
         let existing = try makeSkippableDestination()
         defer { try? FileManager.default.removeItem(at: existing) }

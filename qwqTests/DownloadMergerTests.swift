@@ -96,7 +96,7 @@ final class DownloadMergerTests: XCTestCase {
     // MARK: - 按 offset 合并
 
     /// 乱序传入的分片必须按 offset 升序拼回与源文件一致的内容
-    func testMergeOrdersSlicesByOffset() throws {
+    func testMergeOrdersSlicesByOffset() async throws {
         let payload = Data((0..<4096).map { UInt8($0 % 251) })
         var slices = try writeSlices(of: payload, sliceCount: 4)
         slices.shuffle()
@@ -108,7 +108,7 @@ final class DownloadMergerTests: XCTestCase {
     }
 
     /// 完全倒序传入的分片同样按 offset 升序拼接
-    func testMergeHandlesReverseOrderedSlices() throws {
+    func testMergeHandlesReverseOrderedSlices() async throws {
         let payload = Data((0..<3072).map { UInt8($0 % 199) })
         let slices = try writeSlices(of: payload, sliceCount: 3).reversed()
 
@@ -119,7 +119,7 @@ final class DownloadMergerTests: XCTestCase {
     }
 
     /// 单个分片时结果同样与源一致
-    func testMergeSingleSlice() throws {
+    func testMergeSingleSlice() async throws {
         let payload = Data("single-slice-payload".utf8)
         let slices = try writeSlices(of: payload, sliceCount: 1)
 
@@ -130,7 +130,7 @@ final class DownloadMergerTests: XCTestCase {
     }
 
     /// 目标目录不存在时由实现负责创建
-    func testMergeCreatesMissingDestinationDirectory() throws {
+    func testMergeCreatesMissingDestinationDirectory() async throws {
         let payload = Data((0..<1024).map { UInt8($0 % 97) })
         let slices = try writeSlices(of: payload, sliceCount: 2)
 
@@ -144,7 +144,7 @@ final class DownloadMergerTests: XCTestCase {
     }
 
     /// 已存在的目标文件被整体覆盖
-    func testMergeOverwritesExistingDestination() throws {
+    func testMergeOverwritesExistingDestination() async throws {
         let payload = Data((0..<2048).map { UInt8($0 % 127) })
         let slices = try writeSlices(of: payload, sliceCount: 2)
 
@@ -156,7 +156,7 @@ final class DownloadMergerTests: XCTestCase {
     }
 
     /// 分片临时文件缺失时抛错，且不产出目标文件
-    func testMergeThrowsWhenSliceFileIsMissing() throws {
+    func testMergeThrowsWhenSliceFileIsMissing() async throws {
         let slices = try writeSlices(of: Data((0..<512).map { UInt8($0 % 31) }), sliceCount: 2)
         let missingURL = temporaryDirectory.appendingPathComponent("slice-missing.part")
         var brokenSlices = slices
@@ -175,7 +175,7 @@ final class DownloadMergerTests: XCTestCase {
     }
 
     /// 空分片列表：契约定义为产出空文件
-    func testMergeEmptySliceListProducesEmptyFile() throws {
+    func testMergeEmptySliceListProducesEmptyFile() async throws {
         let destination = temporaryDirectory.appendingPathComponent("empty.bin")
         try merger.merge(slices: [], to: destination)
 
@@ -186,7 +186,7 @@ final class DownloadMergerTests: XCTestCase {
     // MARK: - 分片台账的数据契约
 
     /// `DownloadSlice.undone` 反映断点续传时该分片剩余待下字节数
-    func testSliceUndoneReflectsRemainingBytes() {
+    func testSliceUndoneReflectsRemainingBytes() async {
         let slice = DownloadSlice(
             offset: 0,
             length: 1024,

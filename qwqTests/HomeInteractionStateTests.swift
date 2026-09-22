@@ -20,7 +20,7 @@ import Combine
 final class HomeInteractionStateTests: XCTestCase {
 
     /// 初始态：搜索词为空、拖拽高亮关闭
-    func testInitialState() {
+    func testInitialState() async {
         let state = HomeInteractionState()
 
         XCTAssertEqual(state.searchText, "")
@@ -28,7 +28,7 @@ final class HomeInteractionStateTests: XCTestCase {
     }
 
     /// 搜索词可写（当前根视图未提供搜索入口，字段保留以维持下游接口不变）
-    func testSearchTextIsMutable() {
+    func testSearchTextIsMutable() async {
         let state = HomeInteractionState()
 
         state.searchText = "optifine"
@@ -39,7 +39,7 @@ final class HomeInteractionStateTests: XCTestCase {
     }
 
     /// 拖入高亮开关可写（由 onDrop 的 isTargeted 绑定驱动）
-    func testDropTargetedIsMutable() {
+    func testDropTargetedIsMutable() async {
         let state = HomeInteractionState()
 
         state.isDropTargeted = true
@@ -50,7 +50,7 @@ final class HomeInteractionStateTests: XCTestCase {
     }
 
     /// 两个实例互不影响（根视图级状态，不是全局状态）
-    func testInstancesDoNotShareState() {
+    func testInstancesDoNotShareState() async {
         let first = HomeInteractionState()
         let second = HomeInteractionState()
 
@@ -62,7 +62,7 @@ final class HomeInteractionStateTests: XCTestCase {
     }
 
     /// 每个字段的变化都发出重绘信号
-    func testEachFieldChangeEmitsObjectWillChange() {
+    func testEachFieldChangeEmitsObjectWillChange() async {
         let state = HomeInteractionState()
         var emissions = 0
         let cancellable = state.objectWillChange.sink { _ in emissions += 1 }

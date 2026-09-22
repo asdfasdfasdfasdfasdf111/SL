@@ -15,7 +15,7 @@ final class DownloadStateTests: XCTestCase {
     // MARK: - DownloadProgress.fraction
 
     /// 完成比例落在 [0, 1]，并对越界值做钳制
-    func testFractionIsClampedToUnitRange() {
+    func testFractionIsClampedToUnitRange() async {
         XCTAssertEqual(DownloadProgress(bytesWritten: 0, totalBytes: 100).fraction, 0, accuracy: 1e-12)
         XCTAssertEqual(DownloadProgress(bytesWritten: 25, totalBytes: 100).fraction, 0.25, accuracy: 1e-12)
         XCTAssertEqual(DownloadProgress(bytesWritten: 50, totalBytes: 100).fraction, 0.5, accuracy: 1e-12)
@@ -27,7 +27,7 @@ final class DownloadStateTests: XCTestCase {
     }
 
     /// totalBytes 为 0 或 -1（大小未知）时 fraction 为 0，且不得触发除零
-    func testFractionIsZeroWhenTotalBytesIsUnknown() {
+    func testFractionIsZeroWhenTotalBytesIsUnknown() async {
         XCTAssertEqual(DownloadProgress(bytesWritten: 10, totalBytes: 0).fraction, 0, accuracy: 1e-12)
         XCTAssertEqual(DownloadProgress(bytesWritten: 10, totalBytes: -1).fraction, 0, accuracy: 1e-12)
         XCTAssertFalse(DownloadProgress(bytesWritten: 10, totalBytes: 0).fraction.isNaN)
@@ -37,7 +37,7 @@ final class DownloadStateTests: XCTestCase {
     // MARK: - DownloadProgress.estimatedRemaining
 
     /// 剩余时间 = (总量 - 已写) / 速度
-    func testEstimatedRemainingUsesRemainingBytesOverSpeed() throws {
+    func testEstimatedRemainingUsesRemainingBytesOverSpeed() async throws {
         let progress = DownloadProgress(bytesWritten: 0, totalBytes: 100, speedBytesPerSecond: 50)
         XCTAssertEqual(try XCTUnwrap(progress.estimatedRemaining), 2.0, accuracy: 1e-9)
 
@@ -46,7 +46,7 @@ final class DownloadStateTests: XCTestCase {
     }
 
     /// 速度为 0 / 为负、总大小未知时返回 nil；已写超出总量时钳到 0
-    func testEstimatedRemainingIsNilForUnusableInputs() throws {
+    func testEstimatedRemainingIsNilForUnusableInputs() async throws {
         XCTAssertNil(DownloadProgress(bytesWritten: 0, totalBytes: 100, speedBytesPerSecond: 0).estimatedRemaining)
         XCTAssertNil(DownloadProgress(bytesWritten: 0, totalBytes: 100, speedBytesPerSecond: -1).estimatedRemaining)
         XCTAssertNil(DownloadProgress(bytesWritten: 0, totalBytes: 0, speedBytesPerSecond: 50).estimatedRemaining)
@@ -57,7 +57,7 @@ final class DownloadStateTests: XCTestCase {
     }
 
     /// 起始快照：未写、大小未知、无速度
-    func testZeroProgressSnapshot() {
+    func testZeroProgressSnapshot() async {
         let zero = DownloadProgress.zero
         XCTAssertEqual(zero.bytesWritten, 0)
         XCTAssertEqual(zero.totalBytes, -1)
@@ -68,7 +68,7 @@ final class DownloadStateTests: XCTestCase {
 
     // MARK: - DownloadProgress 值语义
 
-    func testProgressEquatable() {
+    func testProgressEquatable() async {
         let lhs = DownloadProgress(bytesWritten: 1024, totalBytes: 4096, speedBytesPerSecond: 512)
         let rhs = DownloadProgress(bytesWritten: 1024, totalBytes: 4096, speedBytesPerSecond: 512)
         XCTAssertEqual(lhs, rhs)
@@ -79,7 +79,7 @@ final class DownloadStateTests: XCTestCase {
 
     // MARK: - DownloadState 值语义
 
-    func testStateEquatable() {
+    func testStateEquatable() async {
         let progress = DownloadProgress(bytesWritten: 1, totalBytes: 2)
         XCTAssertEqual(DownloadState.idle, .idle)
         XCTAssertEqual(DownloadState.preparing, .preparing)
@@ -102,7 +102,7 @@ final class DownloadStateTests: XCTestCase {
     // MARK: - DownloadState 派生属性
 
     /// 仅 completed / cancelled / failed 为终态
-    func testTerminalStates() {
+    func testTerminalStates() async {
         let progress = DownloadProgress(bytesWritten: 1, totalBytes: 2)
         let terminal: [DownloadState] = [.completed, .cancelled, .failed(.timeout)]
         let nonTerminal: [DownloadState] = [.idle, .preparing, .downloading(progress), .verifying, .merging]
@@ -116,7 +116,7 @@ final class DownloadStateTests: XCTestCase {
     }
 
     /// progress 仅在 downloading 下非空，error 仅在 failed 下非空
-    func testProgressAndErrorAccessors() {
+    func testProgressAndErrorAccessors() async {
         let progress = DownloadProgress(bytesWritten: 512, totalBytes: 1024)
         XCTAssertNil(DownloadState.idle.progress)
         XCTAssertNil(DownloadState.verifying.progress)
@@ -129,7 +129,7 @@ final class DownloadStateTests: XCTestCase {
     }
 
     /// 各错误 case 均有面向用户的中文描述
-    func testDownloadErrorDescriptionsAreLocalized() {
+    func testDownloadErrorDescriptionsAreLocalized() async {
         let cases: [DownloadError] = [
             .sourceUnavailable,
             .httpStatus(404),

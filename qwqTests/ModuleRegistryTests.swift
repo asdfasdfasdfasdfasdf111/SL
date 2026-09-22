@@ -67,7 +67,7 @@ final class ModuleRegistryTests: XCTestCase {
     // MARK: 注册与清单
 
     /// 注册后模块标识按注册顺序进入清单，count 与清单长度一致
-    func testRegisterRecordsIdentifiersInOrder() throws {
+    func testRegisterRecordsIdentifiersInOrder() async throws {
         let registry = ModuleRegistry()
         XCTAssertEqual(registry.count, 0)
         XCTAssertTrue(registry.registeredIdentifiers.isEmpty)
@@ -79,7 +79,7 @@ final class ModuleRegistryTests: XCTestCase {
     }
 
     /// 空清单是合法输入：不抛错、不产生任何登记
-    func testRegisterEmptyListIsNoOp() throws {
+    func testRegisterEmptyListIsNoOp() async throws {
         let registry = ModuleRegistry()
         try registry.register([])
         XCTAssertEqual(registry.count, 0)
@@ -87,7 +87,7 @@ final class ModuleRegistryTests: XCTestCase {
     }
 
     /// 跨批次重复注册：抛 duplicateIdentifier，且第二个模块的 register 完全不被执行
-    func testDuplicateIdentifierAcrossBatchesThrowsAndSkipsRegistration() throws {
+    func testDuplicateIdentifierAcrossBatchesThrowsAndSkipsRegistration() async throws {
         let registry = ModuleRegistry()
         let first = StubModule(identifier: "dup", capabilityValue: "first")
         let second = StubModule(identifier: "dup", capabilityValue: "second")
@@ -108,7 +108,7 @@ final class ModuleRegistryTests: XCTestCase {
     }
 
     /// 同一批次内重复：抛错时首个模块已生效且不回滚（装配期由调用方记录日志）
-    func testDuplicateIdentifierWithinSameBatchKeepsFirstRegistration() {
+    func testDuplicateIdentifierWithinSameBatchKeepsFirstRegistration() async {
         let registry = ModuleRegistry()
         let first = StubModule(identifier: "same", capabilityValue: "kept")
         let second = StubModule(identifier: "same", capabilityValue: "dropped")
@@ -121,7 +121,7 @@ final class ModuleRegistryTests: XCTestCase {
     }
 
     /// 模块自行抛错：错误原样上抛，该模块不登记，批次内后续模块不再尝试
-    func testModuleThrowingDuringRegisterIsNotRecordedAndAbortsBatch() {
+    func testModuleThrowingDuringRegisterIsNotRecordedAndAbortsBatch() async {
         let registry = ModuleRegistry()
         let ok = StubModule(identifier: "ok")
         let failing = StubModule(identifier: "boom", failure: StubModuleError())
@@ -140,7 +140,7 @@ final class ModuleRegistryTests: XCTestCase {
     // MARK: 能力解析
 
     /// 注册后能力可解析；`require` 返回同一份值
-    func testCapabilityIsResolvableAfterRegister() throws {
+    func testCapabilityIsResolvableAfterRegister() async throws {
         let registry = ModuleRegistry()
         try registry.register([StubModule(identifier: "m", capabilityKey: "demo", capabilityValue: "值")])
 
@@ -151,7 +151,7 @@ final class ModuleRegistryTests: XCTestCase {
     }
 
     /// 未注册的能力：resolve 返回 nil，require 抛 capabilityNotFound 且带键名
-    func testRequireThrowsWhenCapabilityMissing() {
+    func testRequireThrowsWhenCapabilityMissing() async {
         let context = ModuleContext()
         let key = ModuleCapabilityKey<Int>("java.resolver")
 
@@ -168,7 +168,7 @@ final class ModuleRegistryTests: XCTestCase {
     }
 
     /// 同名键写入两次：后写覆盖先写，条目数不增长
-    func testRegisteringSameKeyNameOverwritesValue() throws {
+    func testRegisteringSameKeyNameOverwritesValue() async throws {
         let registry = ModuleRegistry()
         try registry.register([
             StubModule(identifier: "a", capabilityKey: "settings.store", capabilityValue: "旧"),
@@ -180,7 +180,7 @@ final class ModuleRegistryTests: XCTestCase {
     }
 
     /// 键按「名称 + 泛型类型」定址：同名不同类型的读取不得互相串读
-    func testCapabilityKeyIsTypeConstrained() {
+    func testCapabilityKeyIsTypeConstrained() async {
         let context = ModuleContext()
         context.register("文本", for: ModuleCapabilityKey<String>("shared.key"))
 
@@ -194,7 +194,7 @@ final class ModuleRegistryTests: XCTestCase {
     // MARK: 引用语义
 
     /// 模块收到的上下文必须与注册表持有的是同一个对象
-    func testModuleReceivesSameContextInstanceAsRegistry() throws {
+    func testModuleReceivesSameContextInstanceAsRegistry() async throws {
         let registry = ModuleRegistry()
         let module = StubModule(identifier: "m")
         try registry.register([module])
@@ -205,7 +205,7 @@ final class ModuleRegistryTests: XCTestCase {
     }
 
     /// 模块内写入的能力对「另行持有的同一上下文引用」可见
-    func testCapabilityWrittenByModuleIsVisibleThroughAliasedReference() throws {
+    func testCapabilityWrittenByModuleIsVisibleThroughAliasedReference() async throws {
         let registry = ModuleRegistry()
         let alias = registry.context
         try registry.register([StubModule(identifier: "m", capabilityValue: "可见")])
@@ -217,7 +217,7 @@ final class ModuleRegistryTests: XCTestCase {
     // MARK: 错误描述
 
     /// 两个错误 case 都有面向调用方的中文描述
-    func testRegistryErrorDescriptionsAreLocalized() {
+    func testRegistryErrorDescriptionsAreLocalized() async {
         let duplicate = ModuleRegistryError.duplicateIdentifier("mod.browser")
         XCTAssertEqual(duplicate.errorDescription, "重复注册模块：mod.browser")
         XCTAssertEqual(duplicate.localizedDescription, "重复注册模块：mod.browser")
@@ -231,7 +231,7 @@ final class ModuleRegistryTests: XCTestCase {
 
     /// 真实装配路径：`AppModuleBootstrap.makeRegistry()` 必须把 settings 模块注册成功。
     /// 该方法内 catch 掉注册错误只打日志，装配失败不会崩溃，因此只能靠本用例发现。
-    func testBootstrapRegistryRegistersSettingsModule() {
+    func testBootstrapRegistryRegistersSettingsModule() async {
         let registry = AppModuleBootstrap.makeRegistry()
 
         XCTAssertEqual(registry.count, 1)

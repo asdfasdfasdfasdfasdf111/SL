@@ -28,7 +28,7 @@ final class LaunchStateTests: XCTestCase {
     // MARK: - 无载荷状态
 
     /// 不带载荷的各状态按 case 判等，不同 case 互不等
-    func testPlainStatesEquality() {
+    func testPlainStatesEquality() async {
         XCTAssertEqual(LaunchState.idle, .idle)
         XCTAssertEqual(LaunchState.preparing, .preparing)
         XCTAssertEqual(LaunchState.resolvingJava, .resolvingJava)
@@ -50,7 +50,7 @@ final class LaunchStateTests: XCTestCase {
     // MARK: - 进度状态
 
     /// 进度状态携带的 Double 参与判等：值相同才相等
-    func testProgressStatesEquality() {
+    func testProgressStatesEquality() async {
         XCTAssertEqual(LaunchState.verifyingFiles(0.3), .verifyingFiles(0.3))
         XCTAssertEqual(LaunchState.downloading(0.75), .downloading(0.75))
         XCTAssertNotEqual(LaunchState.verifyingFiles(0.3), .verifyingFiles(0.4))
@@ -61,7 +61,7 @@ final class LaunchStateTests: XCTestCase {
     }
 
     /// 进度边界值 0 与 1 被原样保留，实现不做钳制
-    func testProgressBoundaryValuesArePreserved() {
+    func testProgressBoundaryValuesArePreserved() async {
         guard case .verifyingFiles(let lower) = LaunchState.verifyingFiles(0) else {
             return XCTFail("无法取出 verifyingFiles 的进度值")
         }
@@ -82,7 +82,7 @@ final class LaunchStateTests: XCTestCase {
     // MARK: - 终态
 
     /// finished 携带的 LaunchResult 参与判等
-    func testFinishedStateEquality() {
+    func testFinishedStateEquality() async {
         let success = LaunchResult(exitCode: 0, sessionID: sessionID, logURL: logURL, duration: 12.5)
         let sameSuccess = LaunchResult(exitCode: 0, sessionID: sessionID, logURL: logURL, duration: 12.5)
         XCTAssertEqual(LaunchState.finished(success), .finished(sameSuccess))
@@ -94,7 +94,7 @@ final class LaunchStateTests: XCTestCase {
     }
 
     /// failed 携带的 LaunchError 参与判等
-    func testFailedStateEquality() {
+    func testFailedStateEquality() async {
         XCTAssertEqual(LaunchState.failed(.cancelled), .failed(.cancelled))
         XCTAssertEqual(LaunchState.failed(.javaNotFound(requiredMajorVersion: 21)), .failed(.javaNotFound(requiredMajorVersion: 21)))
         XCTAssertNotEqual(LaunchState.failed(.cancelled), .failed(.unknown("其他原因")))
@@ -102,7 +102,7 @@ final class LaunchStateTests: XCTestCase {
     }
 
     /// 仅 finished / failed 为终态
-    func testTerminalStates() {
+    func testTerminalStates() async {
         let terminal: [LaunchState] = [
             .finished(LaunchResult(exitCode: 0, sessionID: sessionID)),
             .failed(.cancelled)
@@ -122,7 +122,7 @@ final class LaunchStateTests: XCTestCase {
     // MARK: - LaunchResult
 
     /// 退出码非 0 判为异常退出；默认参数下无日志、时长为 0
-    func testLaunchResultDefaultsAndAbnormalExit() {
+    func testLaunchResultDefaultsAndAbnormalExit() async {
         let defaults = LaunchResult(exitCode: 0, sessionID: sessionID)
         XCTAssertNil(defaults.logURL)
         XCTAssertEqual(defaults.duration, 0)
@@ -137,7 +137,7 @@ final class LaunchStateTests: XCTestCase {
     // MARK: - LaunchError 本地化
 
     /// 每个错误 case 都有非空且含中文的描述
-    func testLaunchErrorDescriptionsAreChinese() {
+    func testLaunchErrorDescriptionsAreChinese() async {
         let errors: [LaunchError] = [
             .instanceNotFound(version: "1.20.1"),
             .javaNotFound(requiredMajorVersion: 21),
@@ -154,7 +154,7 @@ final class LaunchStateTests: XCTestCase {
     }
 
     /// 描述中包含关键参数，便于用户自查
-    func testLaunchErrorDescriptionsCarryKeyParameters() {
+    func testLaunchErrorDescriptionsCarryKeyParameters() async {
         let javaError = LaunchError.javaNotFound(requiredMajorVersion: 21)
         XCTAssertTrue(javaError.errorDescription?.contains("Java 21") == true)
         XCTAssertTrue(javaError.errorDescription?.contains("Java 管理") == true)
