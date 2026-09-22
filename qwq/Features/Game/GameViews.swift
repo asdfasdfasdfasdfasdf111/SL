@@ -243,25 +243,21 @@ struct DownloadCategoryView: View {
                 displayLimit: $viewModel.displayLimit,
                 onOpen: { openDetail($0) },
                 onRequestTranslation: { await translationModel.requestTranslation(for: $0, service: TranslationService.shared) },
-                onReachEnd: { viewModel.loadMore() }
+                onReachEnd: { viewModel.loadMore() },
+                // 搜索结果弹入（已接线）：数据源为 viewModel.searchPopInIds（关键词搜索结果写回时填充，
+                // 见 DownloadCategoryViewModel 内该属性的说明），由结果网格按 contains(item.id) 逐卡
+                // 透传给 Card.isSearchPopIn，动画本体在卡片内复用其入场动画状态实现
+                // （单条动画路径，不与入场动画叠加播放），本视图只做数据透传。
+                //
+                // 曾经（已回退）的替代接法是把 searchPopInIds 接到本网格的 .id() 上，靠 identity
+                // 变化重建子树、让卡片重新 onAppear 间接出动画。回退原因：官方 `View.id(_:)` 明确
+                // identity 变化会重置该视图状态，`.task(id: item.id)` 亦随之被取消重建（每张卡片
+                // 重复发起翻译请求），滚动锚点与分页判定被重置；且官方 `StateObject` / `withAnimation`
+                // 说明「identity 变化时 SwiftUI 不会为视图内部的变化自动加动画」，该接法得到的是重建后
+                // 的 onAppear 动画，并非原设计的卡片级弹簧弹入。
+                // 官方链接：https://developer.apple.com/documentation/swiftui/view/id(_:)
+                popInIds: viewModel.searchPopInIds
             )
-            // 搜索结果弹入动画的逐卡回接点（待接线）：原设计由卡片自身依据
-            // `isSearchPopIn = searchPopInIds.contains(id)` 驱动弹簧弹入，该参数与读取点
-            // 在提交 7bf4044 被移除。读取点位于 `CategoryResultsGrid.swift:41` 的
-            // `ContentCard(...)` 构造处，该文件本轮不可修改，故此处不接线。
-            //
-            // 曾经（已回退）的替代接法是把 `searchPopInIds` 接到本网格的 `.id()` 上，
-            // 靠 identity 变化重建子树、让卡片重新 onAppear 间接出动画。回退原因：
-            // 官方 `View.id(_:)` 明确 identity 变化会重置该视图状态，
-            // `CategoryResultsGrid.swift:74` 的 `.task(id: item.id)` 亦随 identity 变化
-            // 被取消重建 → 每张卡片重复发起翻译请求，滚动锚点与分页判定也被重置；
-            // 且官方 `StateObject` / `withAnimation` 说明「identity 变化时 SwiftUI 不会为
-            // 视图内部的变化自动加动画」，该接法得到的是重建后的 onAppear 动画，
-            // 并非原设计的卡片级弹簧弹入，动画归属从卡片漂移到了网格身份。
-            // 故恢复原本的身份语义，动画待 ModBrowser 放开后在卡片构造处回接。
-            // 官方链接：https://developer.apple.com/documentation/swiftui/view/id(_:)
-            // 官方链接：https://developer.apple.com/documentation/swiftui/stateobject
-            // 官方链接：https://developer.apple.com/documentation/swiftui/view/task(priority:_:)
         }
     }
 

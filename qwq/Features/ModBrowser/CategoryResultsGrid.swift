@@ -23,6 +23,10 @@ struct CategoryResultsGrid: View {
     /// 触底回调：本地条目已全部展示（displayLimit ≥ results.count）且滚到最后一条时触发，
     /// 由外部接网络分页 loadMore()。本地全量目录模式没有更多数据，回调内 guard hasMore 直接空转。
     var onReachEnd: () -> Void = {}
+    /// 搜索结果弹入的 id 集合：来自 `DownloadCategoryViewModel.searchPopInIds`（联网搜索响应写回时填充）。
+    /// 本视图只做逐卡判定并透传（`contains(item.id)` → `ContentCard.isSearchPopIn`），不持有动画状态；
+    /// 卡片身份（`.id(item.id)`）、`.onAppear`、`.task(id:)`、分页与滚动锚点语义均不受该入参影响。
+    var popInIds: Set<String> = []
 
     /// 滚动锚点：仅用于返回列表时恢复位置，无需触发视图重渲染，故不用 @State
     /// （快速滑动时每次 onAppear 写 @State 都会让整个列表 body 重算，是快速滑动卡顿的元凶之一）
@@ -44,6 +48,10 @@ struct CategoryResultsGrid: View {
                             cardWidth: cardWidth,
                             tags: item.tags,
                             action: { onOpen(item) },
+                            // 搜索结果弹入（原设计见提交 5d5769d）：命中本批搜索结果的卡片以更小的
+                            // 起始缩放 + interpolatingSpring 收敛弹入，由 ContentCard 复用其入场动画
+                            // 状态实现（单条动画路径，不叠加播放）；未命中时维持原入场动画参数。
+                            isSearchPopIn: popInIds.contains(item.id),
                             theme: theme
                         )
                         .equatable()

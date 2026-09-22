@@ -77,13 +77,30 @@ final class DownloadCategoryViewModel: ObservableObject {
     private var debouncedSearchText = ""
     private var searchDebounceTask: Task<Void, Never>?
 
-    /// 与收口前一致：仅写入、无读取点（结果网格迁到 CategoryResultsGrid 后弹入动画未回接）
-    /// 本次死状态清理判定：保留。该字段是「结果弹入动画未回接」这一待办的唯一痕迹
-    /// （ContentCard.swift 注释指向同一语义），删除会丢失待接线意图。
+    /// 搜索结果弹入的 id 集合（已接线的数据来源）。
     ///
-    /// 回接尝试与回退记录（本次）：曾以本集合作为结果网格 `.id()` 的身份键，
-    /// 借「identity 变化 → 网格子树重建 → 卡片重新 onAppear」间接播放弹入。
-    /// 该接法已回退，原因是副作用不可接受且动画归属错误：
+    /// 填充点（2 处，均在 `applyFilter` 内，填入**该批结果的全部 id**）：
+    /// 1. 本地全量目录检索结果写回（`LocalModCatalog` 命中分支）；
+    /// 2. 联网检索结果写回（Modrinth 分支）。
+    /// 两处都是「用户输入非空关键词 → 新结果集写回 filteredResults」，即「搜索结果出现」语义；
+    /// 只填联网分支不够：目录随包分发且在 `warmUp()` 中预解析，实际运行时 `LocalModCatalog.isReady`
+    /// 恒为真，联网分支被本地分支提前 return 掉，动画在正式构建中永不播放。
+    ///
+    /// 下列路径保持空集合，保证弹入**只在搜索结果出现时**触发：
+    /// 空串回填（清空搜索词，属结果集复位）、游戏版本页本地过滤（过滤对象是本地版本号列表，
+    /// 基线提交 5d5769d 中该分支即赋空）、本地全量目录加载（`fetchItems`，非搜索路径）。
+    /// 分页 `loadMore` 不做任何写入：追加条目的 id 不在集合内，走常规入场动画；原设计意图是
+    /// 「搜索结果出现」时弹入，加载更多是同一结果集的延续，首批之后的卡片不重复弹入。
+    ///
+    /// 逐卡透传：`GameViews.swift` → `CategoryResultsGrid.popInIds` → `ContentCard.isSearchPopIn`，
+    /// 判定点位于 `CategoryResultsGrid.swift:41` 的 `ContentCard(...)` 构造处。
+    ///
+    /// 刻意不标注 `@Published`：本集合与 items/filteredResults 在同一批 `MainActor.run` 内写入，
+    /// 视图只重渲染一次并在该次渲染中取到最新值，本集合自身不构成独立的重渲染触发源，
+    /// 标注 `@Published` 只会多一次无谓刷新（可见性按「同模块只读」放宽为 `private(set)`）。
+    ///
+    /// 回退记录（勿用）：曾以本集合作为结果网格 `.id()` 的身份键，借「identity 变化 → 网格子树重建
+    /// → 卡片重新 onAppear」间接播放弹入。该接法已回退，原因是副作用不可接受且动画归属错误：
     /// 1. 官方 `View.id(_:)` 说明——When the proxy value specified by the `id` parameter
     ///    changes, the identity of the view — for example, its state — is reset.
     ///    网格子树重建会重置其内全部 `@State`（含 `CategoryResultsGrid` 的滚动锚点
@@ -93,14 +110,11 @@ final class DownloadCategoryViewModel: ObservableObject {
     /// 2. 官方 `StateObject` / `withAnimation` 说明——视图 identity 变化时 SwiftUI
     ///    不会为视图内部的变化自动加动画；即该接法得到的是「重建 + 卡片自身 onAppear
     ///    动画」的观感，而非原设计的卡片级弹簧弹入，动画归属从卡片漂移到了网格身份。
-    /// 3. 原设计的读取点位于 `CategoryResultsGrid.swift:41` 的 `ContentCard(...)` 构造处
-    ///    （透传 `isSearchPopIn`），该文件本轮不允许修改，逐卡 id 判定链路无法在允许范围内接通；
-    ///    `ContentCard` 自身不持有 item id，仅凭环境值注入无法做 id 归属判定。
     /// 官方链接：https://developer.apple.com/documentation/swiftui/view/id(_:)
     /// 官方链接：https://developer.apple.com/documentation/swiftui/stateobject
     /// 官方链接：https://developer.apple.com/documentation/swiftui/view/task(priority:_:)
     /// 官方链接：https://developer.apple.com/documentation/swiftui/withanimation(_:_:)
-    private var searchPopInIds: Set<String> = []
+    private(set) var searchPopInIds: Set<String> = []
 
     // MARK: - 分页
 
@@ -275,11 +289,16 @@ final class DownloadCategoryViewModel: ObservableObject {
             if !local.isEmpty {
                 let filtered = local.filter { ItemFilter.matches($0, query: normalized) }
                 await MainActor.run {
+                    // 搜索结果弹入填充点之一：本分支是「用户输入关键词 → 本地全量目录检索结果写回」，
+                    // 与下面的联网检索同属「搜索结果出现」语义（见 searchPopInIds 声明处的说明）：
+                    // 目录随包分发且 `warmUp()` 预解析，实际运行时 isReady 恒为真、本分支先于联网分支
+                    // 命中并 return，仅填联网分支会导致动画在正式构建里永不播放。
+                    // 先于 filteredResults 写入：确保与触发本次重渲染的写入同批完成。
+                    searchPopInIds = Set(filtered.map { $0.id })
                     debouncedSearchText = searchText
                     activeSearchQuery = ""
                     filteredResults = filtered
                     displayLimit = 120
-                    searchPopInIds = []
                 }
                 translation.prefetch(filtered, service: TranslationService.shared)
                 return
@@ -301,6 +320,12 @@ final class DownloadCategoryViewModel: ObservableObject {
             guard isViewActive else { return }
             await MainActor.run {
                 guard section == self.selectedSection else { return }
+                // 搜索结果弹入填充点之二：本分支是「用户输入关键词 → 联网检索结果写回」，
+                // 与上面的本地目录检索同属「搜索结果出现」语义（见 searchPopInIds 声明处的说明）。
+                // 空串回填、游戏版本页本地过滤、本地全量目录加载都在上面提前 return，不到此处。
+                // 先于 items/filteredResults 写入：确保与触发本次重渲染的那批写入同批完成，
+                // 视图取值时集合已就位。
+                searchPopInIds = Set(result.items.map { $0.id })
                 debouncedSearchText = searchText
                 activeSearchQuery = searchQuery
                 items = result.items
@@ -310,7 +335,6 @@ final class DownloadCategoryViewModel: ObservableObject {
                 hasMore = result.totalHits > result.items.count
                 filteredResults = result.items
                 displayLimit = 120
-                searchPopInIds = []
             }
         }
     }

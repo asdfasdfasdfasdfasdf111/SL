@@ -12,28 +12,35 @@ struct ContentCard: View {
     let cardWidth: CGFloat
     var tags: [String] = []
     var action: (() -> Void)? = nil
+    /// 本卡是否属于「刚由联网搜索响应写回的那一批结果」（已接线的搜索结果弹入开关）。
+    /// 数据来源：`DownloadCategoryViewModel.searchPopInIds`
+    /// （在 `applyFilter` 的联网搜索写回处填充）→ `GameViews.swift` → `CategoryResultsGrid`
+    /// 按 `contains(item.id)` 逐卡透传，见 `CategoryResultsGrid.swift:41` 的构造点。
+    var isSearchPopIn: Bool = false
     /// 主题来源由调用方注入（全局单例外部持有），本视图不持有、不写默认值
     @ObservedObject var theme: ThemeManager
     @State private var scale: CGFloat = 1.0
     // 入场动画：卡片首次出现在网格中时缩放+淡入弹入（LazyVGrid 复用/滚动时重建会再次触发，
     // 符合「进入可视区弹入」的预期；拆分重构时 searchPopInIds 动画丢失导致「有时没有动画」）
     //
-    // 待接线（搜索结果弹入，原设计见提交 5d5769d，读取点丢失于提交 7bf4044）：
-    // 原实现在本视图持有 `isSearchPopIn: Bool` 入参，并在
-    // `.onChange(of: isSearchPopIn) { newValue in ... }` 内把 `popScale` 置 0.6、
-    // `popOpacity` 置 0，再用
-    // `.interpolatingSpring(mass: 0.8, stiffness: 200, damping: 12, initialVelocity: 4)`
-    // 收敛回 1.0（缩放 0.6→1 + 透明度 0→1），通过 `.scaleEffect(popScale)` /
-    // `.opacity(popOpacity)` 施加；触发值由 `searchPopInIds.contains(item.id)` 提供。
+    // 搜索结果弹入（已接线；原设计见提交 5d5769d，读取点与入参丢失于提交 7bf4044）：
+    // 原设计用 `.onChange(of: isSearchPopIn)` 观察入参翻转，把缩放置 0.6、透明度置 0 后以
+    // `.interpolatingSpring(mass: 0.8, stiffness: 200, damping: 12, initialVelocity: 4)` 收敛回 1.0。
+    // 本视图不持有 item id（id 由 `CategoryResultsGrid` 以 `.id(item.id)` 施加，修饰符不回传值），
+    // 因此判定必须在构造点完成——由 `CategoryResultsGrid` 传入 `isSearchPopIn`，本视图只消费结果。
+    // 触发时机不需要 `.onChange`：搜索结果写回后本批卡片是新的 identity（`.id(item.id)` 随结果
+    // 集合变化），首次渲染即走 `.onAppear`，起始值在该帧已就绪。
     //
-    // 当前无法在本文件干净回接：本视图不持有 item id（id 由 `CategoryResultsGrid` 以
-    // `.id(item.id)` 施加，修饰符不回传值），而唯一的构造点
-    // `CategoryResultsGrid.swift:41` 本轮不可修改，故 id 判定链路断在该文件。
-    // 环境值注入只能按 title 之类的替代键匹配，无法保证「只在搜索结果出现时触发」。
-    // 恢复方式：在 `CategoryResultsGrid` 透传 `isSearchPopIn` 后按上述原参数接线；
-    // 不得以结果网格的 `.id()` 触发重建来间接出动画（会重置状态、重跑卡片 `.task`）。
-    // 依据条目：SwiftUI《onChange》旧式 `onChange(of:perform:)` 为 macOS 13.0 唯一可用签名。
-    // 官方链接：https://developer.apple.com/documentation/swiftui/view/onchange(of:perform:)
+    // 单条动画路径（避免与入场动画叠加播放两次）：本视图不新增第二个动画状态，而是复用下文的
+    // `appearScale` / `appearOpacity`——`isSearchPopIn` 为真时把起始缩放取 0.6、收敛动画取上述
+    // interpolatingSpring；为假时维持 0.92 与 `.spring(response: 0.45, dampingFraction: 0.75)`。
+    // 起始缩放的写入位于 `DispatchQueue.main.async` 内、`withAnimation` 之前：此刻
+    // `appearOpacity` 仍为 0（卡片不可见），中途改写起始缩放不会产生可见跳变。
+    //
+    // 不得以结果网格的 `.id()` 触发重建来间接出动画（会重置状态、重跑卡片 `.task`，已回退）。
+    // 依据条目：SwiftUI《Animation》interpolatingSpring(mass:stiffness:damping:initialVelocity:)
+    //   可用版本 iOS 13.0+ / macOS 10.15+ / tvOS 13.0+ / watchOS 6.0+，本工程部署目标 macOS 13.0 可用。
+    // 官方链接：https://developer.apple.com/documentation/swiftui/animation/interpolatingspring(mass:stiffness:damping:initialvelocity:)
     @State private var appearScale: CGFloat = 0.92
     @State private var appearOpacity: Double = 0
 
@@ -102,7 +109,15 @@ struct ContentCard: View {
             // "Modifying state during view update" → UAF 前兆；本组件在分类网格中会成批触发，
             // 正是刷屏警告的主力来源），同时保证 withAnimation 在渲染帧之后生效
             DispatchQueue.main.async {
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.75)) {
+                // 搜索结果弹入的起始态：先改写起始缩放（必须在 withAnimation 之前），
+                // 再一次性收敛回 1.0。此处 appearOpacity 仍为 0，卡片不可见，
+                // 故把起始缩放由 0.92 改为 0.6 不产生可见跳变。
+                if isSearchPopIn {
+                    appearScale = 0.6
+                }
+                withAnimation(isSearchPopIn
+                    ? .interpolatingSpring(mass: 0.8, stiffness: 200, damping: 12, initialVelocity: 4)
+                    : .spring(response: 0.45, dampingFraction: 0.75)) {
                     appearScale = 1.0
                     appearOpacity = 1.0
                 }
@@ -114,11 +129,19 @@ struct ContentCard: View {
 extension ContentCard: Equatable {
     /// 仅比较值类型字段；忽略 action 闭包与内部 @State/主题，
     /// 使翻译完成时只有「真正变化」的卡片被重渲染，避免整列刷新导致的滚动卡顿。
+    ///
+    /// `isSearchPopIn` 必须纳入比较：`.equatable()` 的语义是「新旧值相等则跳过子视图更新」，
+    /// 若漏掉该字段，搜索结果写回时（同一批卡片因翻译回写等原因被重新构造）本字段的变化会被
+    /// 判为「未变化」而丢弃，弹入参数停留在旧值上，动画不生效。
+    /// 依据条目：SwiftUI《View / equatable()》——Prevents the view from updating its child view
+    ///   when its new value is the same as its old value；可用版本 macOS 10.15+。
+    /// 官方链接：https://developer.apple.com/documentation/swiftui/view/equatable()
     static func == (lhs: ContentCard, rhs: ContentCard) -> Bool {
         lhs.title == rhs.title &&
         lhs.subtitle == rhs.subtitle &&
         lhs.cardWidth == rhs.cardWidth &&
-        lhs.tags == rhs.tags
+        lhs.tags == rhs.tags &&
+        lhs.isSearchPopIn == rhs.isSearchPopIn
     }
 }
 
