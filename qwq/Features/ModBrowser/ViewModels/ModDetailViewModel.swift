@@ -165,7 +165,12 @@ final class ModDetailViewModel: ObservableObject {
         }
         if pageType == .shader, !shaderFolderChecked {
             shaderFolderChecked = true
-            hasShaderFolder = GameDirectoryScanner.hasShaderFolder(gameRoot: settings.selectedGameRoot, versions: baseVersions)
+            // 入参语义（GameDirectoryScanner.hasShaderFolder）：`versions` 是一组版本目录名，
+            // 逐个探测 `<gameRoot>/versions/<v>/shaderpacks`，最后回退全局 `<gameRoot>/shaderpacks`。
+            // 旧实现固定传 baseVersions（写死的 4 个版本），其它版本的 shaderpacks 探测不到，
+            // 明明有光影文件夹也会误显示「前置加载器」卡片 —— 改为按当前选中版本探测。
+            hasShaderFolder = GameDirectoryScanner.hasShaderFolder(gameRoot: settings.selectedGameRoot,
+                                                                   versions: [selectedVersion])
         }
         if pageType == .modpack, modpackVersions.isEmpty {
             fetchModpackVersions(itemId: item.id)
@@ -178,8 +183,21 @@ final class ModDetailViewModel: ObservableObject {
 
     // MARK: - 项目详情
 
+    /// 当前 `projectGameVersions` / `projectLoaders` 属于哪个项目（nil = 尚未取到任何项目详情）。
+    ///
+    /// 判据必须是「项 id」而不是「列表是否为空」：滑页的基础页与前置加载器页（Sodium / Iris 等）
+    /// 由同一个 `ModDetailView` 渲染、共用同一个本类实例，前置页也要拉自己的详情；
+    /// 沿用 `projectGameVersions.isEmpty` 作一次性守卫时，第二个项目永远被拦掉 ——
+    /// 前置页停在基础项的版本 / 加载器上，其自身详情永不拉取。
+    private var projectDetailItemId: String?
+
     func fetchProjectDetails(itemId: String, pageType: DetailPageType) {
-        guard !itemId.isEmpty, projectGameVersions.isEmpty else { return }
+        guard !itemId.isEmpty, projectDetailItemId != itemId else { return }
+        // 立即登记归属：同一项目不重复取数
+        projectDetailItemId = itemId
+        // 切换项目先清空上一项的详情，避免新页面在自身数据到达前显示上一项的版本 / 加载器
+        projectGameVersions = []
+        projectLoaders = []
         Task {
             do {
                 // 项目详情经 ModBrowser 服务层读取：DefaultModBrowserService.projectDetail
@@ -223,8 +241,20 @@ final class ModDetailViewModel: ObservableObject {
                     }
                 }
             } catch {
-                // 项目详情取数失败：静默保留本地版本列表，不提示错误
-                // （原实现仅在此复位 isLoadingProject，该死状态已删除）
+                // 项目详情取数失败：此前完全静默，用户无法把它与「该模组本就没有兼容当前版本的版本」
+                // （成功的空结果）区分开。现接入项目统一提示通道 NoticeCenter 告知失败原因，
+                // 本地版本列表仍照旧保留（页面继续可用）。
+                // 用非阻塞的 `post` 而不是 `presentAndWait`：后者会把本次投递登记进 NoticeCenter 的
+                // 等待槽（continuation）并挂起，而这里没有任何调用方等待用户点选，
+                // 登记只会平白占槽（投递语义已由 post 覆盖）。
+                await MainActor.run {
+                    guard isViewActive else { return }
+                    NoticeCenter.shared.post(
+                        Notice(level: .warning,
+                               title: "项目信息获取失败",
+                               message: "暂时无法获取该项目的支持版本与加载器（\(error.localizedDescription)）。页面仍可使用本地版本继续操作。")
+                    )
+                }
             }
         }
     }

@@ -42,6 +42,11 @@ struct ModDetailView: View {
     @State private var bounceTask: Task<Void, Never>?
     @State private var backNavTask: Task<Void, Never>?
 
+    /// 基础页（滑页栈第 0 页）进入时的页面类型。
+    /// 进入前置加载器页时宿主会把分类切到「模组」，本视图的 `pageType` 随之变为 `.mod`，
+    /// 返回时需按这里记住的原类型重建基础页数据（滑页各页共用同一个 ViewModel，细节见 goBack）。
+    @State private var basePageType: DetailPageType?
+
     // 页签副标题翻译状态与调度走共享 CardTranslationModel（与列表页同一套
     // 「内存→磁盘→网络」按需翻译流程；视图销毁后 model 不再写回，UAF 防护）
     @StateObject private var translationModel = CardTranslationModel()
@@ -74,6 +79,7 @@ struct ModDetailView: View {
                     }
                     translationModel.activate()
                     viewModel.activate()
+                    basePageType = pageType
                     viewModel.applyDefaultVersionSelection(pageType: pageType, itemName: item.name)
                     viewModel.triggerPageLoads(pageType: pageType,
                                                item: item,
@@ -138,6 +144,15 @@ struct ModDetailView: View {
     private func navigateToPrerequisite(_ prereq: DownloadedItem) {
         onNavigateToMod?(prereq)
         prerequisiteStack.append(prereq)
+        // 前置内容页与基础页共用同一个 ViewModel（同一实例，按 index 横向排布），
+        // 而它没有自己的 onAppear —— 此前只有基础页在 onAppear 取过数，前置页因此显示
+        // 基础项的版本 / 加载器，自身详情永不拉取。故在此显式触发该前置项的取数。
+        // 页面类型与 detailPageContent 的渲染口径一致：栈内非首页按 .mod 渲染。
+        viewModel.triggerPageLoads(pageType: .mod,
+                                   item: prereq,
+                                   gameSubCategory: gameSubCategory,
+                                   pages: [prereq],
+                                   translation: translationModel)
         withAnimation(.spring(response: 0.4, dampingFraction: 0.82)) {
             navSlideOffset -= pageWidth
         }
@@ -147,6 +162,15 @@ struct ModDetailView: View {
         if !prerequisiteStack.isEmpty {
             // 从前置加载器页返回原分类（光影/资源包）：通知宿主恢复侧栏高亮
             onNavigateBackFromMod?()
+            // 基础页数据已被前置页的取数覆盖（滑页共用一个 ViewModel），按其进入前的页面类型
+            // 重新取数，否则版本下拉与「支持版本 / 加载器」会停留在前置项的取值上。
+            if let basePageType {
+                viewModel.triggerPageLoads(pageType: basePageType,
+                                           item: item,
+                                           gameSubCategory: gameSubCategory,
+                                           pages: [item],
+                                           translation: translationModel)
+            }
             withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                 navSlideOffset += pageWidth
             }

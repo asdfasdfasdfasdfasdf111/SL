@@ -44,7 +44,12 @@ class ModVersionDetector {
             return true
         }
 
-        if gameTrimmed.hasPrefix(trimmed) && trimmed.contains(".") {
+        // 版本段边界前缀匹配：模组声明 `1.20` 时，实例 `1.20.1` 也算兼容；
+        // 但声明 `1.1` 不得匹配 `1.10.2` —— 旧实现用 `gameTrimmed.hasPrefix(trimmed)` 做字符级前缀，
+        // `1.10.2` 以 `1.1` 开头即被判为兼容，模组因此被装进不兼容的实例。
+        // 故要求前缀之后紧跟版本段分隔符 `.`，即「多出的部分是一个完整版本段」。
+        // （实例目录名带加载器后缀如 `1.20.1-Forge` 的情形由下方「主次版本相同」分支覆盖。）
+        if trimmed.contains(".") && gameTrimmed.hasPrefix(trimmed + ".") {
             return true
         }
 
@@ -64,6 +69,12 @@ class ModVersionDetector {
             let maxVer = String(trimmed.dropFirst(1)).trimmingCharacters(in: .whitespaces)
             return compareVersions(gameTrimmed, maxVer) < 0
         }
+        // Maven 区间写法：Forge 的 mods.toml `versionRange`（如 `[1.20.1,1.21)`、`[1.14.4]`）
+        // 用的就是该语法，检出后即按它定论。缺失这一步时，第 2 条修好之后的区间字符串
+        // 仍会被下面的分支判为不匹配，拖拽安装依旧恒失败。
+        if let bracketResult = mavenRangeResult(trimmed, gameVersion: gameTrimmed) {
+            return bracketResult
+        }
         if trimmed.contains("-") {
             let parts = trimmed.split(separator: "-", maxSplits: 1)
             if parts.count == 2 {
@@ -82,8 +93,48 @@ class ModVersionDetector {
         return false
     }
 
+    /// Maven 版本区间的区间判定。
+    /// - Returns: `nil` 表示该字符串不是 Maven 区间写法（由调用方的其余分支处理）；
+    ///   否则给出「游戏版本是否落在该区间内」的定论。
+    ///
+    /// 语法（含闭开括号语义）：`[a,b]` 闭区间、`[a,b)` / `(a,b]` 半开区间、
+    /// `[a,)` / `(,b]` 单边区间、`[a]` 精确版本。a 为空表示不设下限，b 为空表示不设上限。
+    /// 依据：Forge 官方文档「Mod Files」明确 “All version ranges use the Maven Version Range
+    /// Specification.” https://docs.minecraftforge.net/en/1.20.1/gettingstarted/modfiles/
+    /// 语法定义见 Maven 官方「Dependency Version Requirement Specification」
+    /// https://maven.apache.org/enforcer/enforcer-rules/versionRanges.html
+    private func mavenRangeResult(_ range: String, gameVersion: String) -> Bool? {
+        guard range.count >= 3,
+              let open = range.first, open == "[" || open == "(",
+              let close = range.last, close == "]" || close == ")" else { return nil }
+        let parts = range.dropFirst().dropLast()
+            .split(separator: ",", maxSplits: 1, omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        // `[a]`：精确版本
+        if parts.count == 1 {
+            guard !parts[0].isEmpty else { return nil }
+            return compareVersions(gameVersion, parts[0]) == 0
+        }
+        let lower = parts[0], upper = parts[1]
+        if !lower.isEmpty {
+            let c = compareVersions(gameVersion, lower)
+            if open == "[" ? c < 0 : c <= 0 { return false }
+        }
+        if !upper.isEmpty {
+            let c = compareVersions(gameVersion, upper)
+            if close == "]" ? c > 0 : c >= 0 { return false }
+        }
+        return true
+    }
+
     private func compareVersions(_ a: String, _ b: String) -> Int {
-        GameVersionHelper.compare(a, b).signum()
+        // 复用加载器候选判定同一口径（LoaderSupportChecker.versionCompare）：按版本号基数比较，
+        // 忽略 `-preN` / `-rcN` 后缀。原实现用 GameVersionHelper.compare —— 它以 compactMap
+        // 丢弃非数字段，`1.21-pre1` 退化为 [1] 而低于 `1.20.1`，预发布 / 候选版的区间判定因此错位。
+        // 依据：SemVer 2.0.0（预发布低于对应正式版，主/次/补丁按数值比较）https://semver.org/
+        // 与 Minecraft Wiki「Java Edition version history」（`1.21-pre1` / `1.21.4-rc1` 形态）
+        // https://minecraft.wiki/w/Java_Edition_version_history
+        return LoaderSupportChecker.versionCompare(a, b)
     }
 
     // MARK: - JAR 内容读取（使用 ProcessPool）
@@ -151,67 +202,86 @@ class ModVersionDetector {
         return nil
     }
 
+    /// 读取 META-INF/mods.toml 中「Minecraft 依赖」的版本区间（Forge / NeoForge 模组）。
+    ///
+    /// TOML 结构依据（Forge 官方文档「Mod Files」的 Dependency Configurations 一节）：
+    /// 依赖以**数组表**声明，表头为 `[[dependencies.<声明方自己的 modId>]]` ——
+    /// 表头里写的是**本模组自己**的 modId（示例即 `[[dependencies.examplemod]]`），
+    /// 因此表头中永远不含被依赖方的名字；被依赖的模组由块内 `modId` 字段指明
+    /// （如 `modId="forge"` / `modId="minecraft"`），块内 `versionRange` 才是该依赖的
+    /// Maven 版本区间（`[1.20.1,1.21)` 这类）。
+    /// 官方链接：https://docs.minecraftforge.net/en/1.20.1/gettingstarted/modfiles/
+    /// 另见 1.14.x 同节（`[[dependencies.examplemod]] modId="minecraft" versionRange="[1.14.4]"`）：
+    /// https://docs.minecraftforge.net/en/1.14.x/gettingstarted/structuring/
+    ///
+    /// 旧实现的两处错误即源于忽略该结构：
+    /// ① 按行匹配 `[[dependencies.` 且要求该行含字面 "minecraft" —— 表头不含它，分支永不命中；
+    /// ② 回退分支取「文件里第一个 versionRange」—— 那通常是 `modId="forge"` 的加载器区间，
+    ///    于是把 Forge 加载器版本当成所需游戏版本，拖拽安装恒报「未找到匹配的游戏版本」。
+    /// 现按块处理：切出依赖块 → 块内找 `modId == "minecraft"` → 取**同一块内**的 `versionRange`。
     private func readModsTOML(from jarURL: URL, entries: Set<String>?) -> ModVersionInfo? {
         guard let data = readFileFromJar(jarURL: jarURL, entryName: "META-INF/mods.toml", entries: entries) else { return nil }
         guard let content = String(data: data, encoding: .utf8) else { return nil }
 
-        let lines = content.components(separatedBy: .newlines)
-        var inMinecraftDep = false
-        // 该模式每一行都要用一次，提到循环外只编译一次：旧写法把 NSRegularExpression 建在逐行
-        // 循环体内，minecraft 依赖块里的每一行都会重新编译同一个（已固定的）模式。
-        // 依据：NSRegularExpression 是「编译后的正则」的不可变表示，构造即编译，成本与待匹配
-        // 字符串无关；官方明确其不可变且线程安全，可安全复用同一实例。
-        // 官方链接：https://developer.apple.com/documentation/foundation/nsregularexpression
-        let minecraftModIdRegex = try? NSRegularExpression(
-            pattern: #"#?modId\s*=\s*"minecraft""#,
-            options: .caseInsensitive
-        )
-
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("[[dependencies.") && trimmed.contains("minecraft") {
-                inMinecraftDep = true
-                continue
+        for block in tomlBlocks(in: content) where block.key.hasPrefix("dependencies.") {
+            var modId: String?
+            var versionRange: String?
+            for line in block.body {
+                // 注释不是数据（TOML 中 `#` 起为注释）：跳过，避免把模板里注释掉的示例读成真实依赖
+                if modId == nil, let value = extractTOMLString(line, key: "modId") { modId = value }
+                if versionRange == nil, let value = extractTOMLString(line, key: "versionRange") { versionRange = value }
             }
-            if inMinecraftDep && trimmed.hasPrefix("[[dependencies.") {
-                inMinecraftDep = false
-                continue
-            }
-            // 匹配模式、选项与匹配范围（整行）均与旧实现一致，仅编译时机改变
-            if inMinecraftDep,
-               let match = minecraftModIdRegex?.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)),
-               match.numberOfRanges > 0 {
-                for l in lines {
-                    let t = l.trimmingCharacters(in: .whitespaces)
-                    if t.hasPrefix("versionRange") || t.hasPrefix("#versionRange") {
-                        if let range = extractTOMLValue(t, key: "versionRange") {
-                            return ModVersionInfo(versionRange: range, loader: "forge")
-                        }
-                    }
-                }
-            }
+            // 键值对顺序在 TOML 中无约束，故先收齐整块再判定；versionRange 缺失或为空表示「匹配任意版本」，
+            // 无法据此判定游戏版本，继续找下一个依赖块
+            guard modId?.lowercased() == "minecraft", let versionRange, !versionRange.isEmpty else { continue }
+            return ModVersionInfo(versionRange: versionRange, loader: "forge")
         }
-
-        let versionPattern = #"(?:#?\s*)versionRange\s*=\s*"([^"]*)""#
-        if let regex = try? NSRegularExpression(pattern: versionPattern, options: .caseInsensitive),
-           let match = regex.firstMatch(in: content, range: NSRange(content.startIndex..., in: content)),
-           let range = Range(match.range(at: 1), in: content) {
-            let versionStr = String(content[range])
-            if versionStr.contains("minecraft") || !versionStr.isEmpty {
-                for line in lines {
-                    if line.contains("modId") && line.contains("minecraft") {
-                        return ModVersionInfo(versionRange: versionStr, loader: "forge")
-                    }
-                }
-                return ModVersionInfo(versionRange: versionStr, loader: "forge")
-            }
-        }
-
         return nil
     }
 
-    private func extractTOMLValue(_ line: String, key: String) -> String? {
-        let pattern = #"(?:#?\s*)"# + key + #"\s*=\s*"([^"]*)""#
+    /// 按 TOML 表头切块：表头行开启新块，其余行归入当前块；首个表头之前的文件头属性丢弃。
+    /// - Returns: `(表头键名, 该块的正文行)`；表头键名即 `[[a.b]]` / `[a.b]` 中的 `a.b`
+    private func tomlBlocks(in content: String) -> [(key: String, body: [String])] {
+        var blocks: [(key: String, body: [String])] = []
+        var currentKey: String?
+        var currentBody: [String] = []
+
+        func flushCurrentBlock() {
+            if let currentKey { blocks.append((currentKey, currentBody)) }
+            currentBody = []
+        }
+
+        for line in content.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if !trimmed.hasPrefix("#"), let key = tableHeaderKey(trimmed) {
+                flushCurrentBlock()
+                currentKey = key
+            } else if currentKey != nil {
+                currentBody.append(line)
+            }
+        }
+        flushCurrentBlock()
+        return blocks
+    }
+
+    /// 解析 TOML 表头行，返回表头内的键名；非表头返回 nil。
+    /// 兼容三种现实写法：`[[dependencies.examplemod]]`、带引号的点分键
+    /// `[[dependencies."my-mod"]]`（模板常见）、以及行尾注释 `[[dependencies.examplemod]] # optional`。
+    private func tableHeaderKey(_ trimmedLine: String) -> String? {
+        // TOML 允许表头后跟行尾注释，先剥掉注释部分再判形
+        let line = trimmedLine.prefix { $0 != "#" }.trimmingCharacters(in: .whitespaces)
+        guard line.hasPrefix("["), line.hasSuffix("]") else { return nil }
+        var key = line[...]
+        while key.hasPrefix("[") { key = key.dropFirst() }
+        while key.hasSuffix("]") { key = key.dropLast() }
+        let name = key.trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? nil : name
+    }
+
+    /// 取一行 TOML 键值对中的字符串值（键须在行首，值须为双引号字符串）。
+    /// 与旧实现相比去掉了对 `#` 前缀键的容忍：注释掉的行不该被当成依赖数据。
+    private func extractTOMLString(_ line: String, key: String) -> String? {
+        let pattern = #"^\s*"# + key + #"\s*=\s*"([^"]*)""#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
               let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
               let range = Range(match.range(at: 1), in: line) else { return nil }

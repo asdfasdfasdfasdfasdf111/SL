@@ -273,6 +273,9 @@ public class ModDownloader {
         case noCompatibleVersion
         case noGameVersionSet
         case noGameRootSet
+        /// 全库无引用，待清理（`downloadMod` 解析主文件地址失败时改抛 `noDownloadableFile`，
+        /// 本 case 已无任何构造点；保留以维持错误枚举与既有文案表不变）。
+        @available(*, deprecated, message: "全库无引用，待清理")
         case invalidURL
         case hashMismatch(String)
 

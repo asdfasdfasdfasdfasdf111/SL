@@ -180,6 +180,10 @@ extension LoaderSupportChecker {
 
     /// 同步查询缓存命中（supported 名称列表）：nil = 未缓存；[] = 已缓存但明确不支持。
     /// 供 UI 层先查一次：命中时直接展示、不闪烁 loading；未命中再走流式检测。
+    ///
+    /// 全库无引用，待清理：唯一调用点在同文件的 `supportedLoaders(for:)` 内，而该方法本身
+    /// 已无任何调用方（已标注待清理）。此处用注释而非 `@available` 标注 ——
+    /// 加 `@available` 会让上述调用点新增编译告警，故保持文案一致的注释。
     public static func cachedLoaders(for version: String) -> [String]? {
         guard let states = cachedLoaderStates(for: version) else { return nil }
         return states.compactMap { $0.value == .supported ? $0.key : nil }.sorted { orderIndex($0) < orderIndex($1) }

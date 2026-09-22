@@ -79,6 +79,27 @@ extension LoaderSupportChecker {
         return true
     }
 
+    /// 版本号三向比较（`a < b` 返回负数、相等返回 0、`a > b` 返回正数），供模组版本区间判定使用。
+    ///
+    /// 与 `versionAtLeast` 共用同一 `versionBase` 解析口径（按版本号基数比较，忽略 `-preN` / `-rcN` 后缀），
+    /// 避免再出现第二套解析规则。原调用点 `ModVersionDetector.compareVersions` 走
+    /// `GameVersionHelper.compare`，后者以 `compactMap` 丢弃非数字段：`1.21-pre1` 退化为 `[1]`，
+    /// 低于 `1.20.1`，使预发布 / 候选版的区间判定与排序错位。
+    /// 依据一（形态）：Minecraft Java 版版本 ID 含 `1.21-pre1` / `1.21.4-rc1` 这类写法。
+    /// 来源：Minecraft Wiki「Java Edition version history」
+    /// https://minecraft.wiki/w/Java_Edition_version_history
+    /// 依据二（优先级）：SemVer 2.0.0 —— 预发布版本优先级低于其对应正式版，主/次/补丁号按数值比较。
+    /// 官方链接：https://semver.org/
+    static func versionCompare(_ a: String, _ b: String) -> Int {
+        let pa = versionBase(a), pb = versionBase(b)
+        for i in 0..<max(pa.count, pb.count) {
+            let x = i < pa.count ? pa[i] : 0
+            let y = i < pb.count ? pb[i] : 0
+            if x != y { return x > y ? 1 : -1 }
+        }
+        return 0
+    }
+
     /// 版本号基数：首段必须整体为数字（否则判定为远古编号，如 a1.2.6 / b1.7.3 / 2point0_blue → 空），
     /// 其后逐段取「前导数字」，遇到不以数字开头的段即停止（`1.21-pre1` → [1, 21]，
     /// `1.20.2-rc1` → [1, 20, 2]）。返回值恒不含空段，保证候选集不会因解析失败而意外变空。

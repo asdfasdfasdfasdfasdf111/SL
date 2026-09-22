@@ -41,6 +41,11 @@ extension LoaderSupportChecker {
     }
 
     /// 兼容旧调用：聚合三态结果（内部走单加载器缓存 + 未定论项检测）
+    ///
+    /// 全库无引用，待清理：UI 层已改走 `streamLoaderStates` / `cachedLoaderStates` 流式状态机，
+    /// 本聚合入口没有调用方（其内部调用的 `cachedLoaders` 因此也只剩这一处调用点）。
+    /// 保留以实现与文案不变，仅标注待清理。
+    @available(*, deprecated, message: "全库无引用，待清理")
     public static func supportedLoaders(for version: String) async -> LoaderSupportResult {
         // 缓存短路必须同时满足两个条件：有缓存 + 缓存已覆盖全部候选。
         // `cachedLoaders` 返回 `[]` 只说明「缓存里有记录但没有 supported 项」，

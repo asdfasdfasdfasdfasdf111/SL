@@ -103,6 +103,17 @@ extension ForgeInstaller {
         ]
         process.arguments!.append(contentsOf: processor.args.map(replaceWithValue(_:)))
         try Util.runProcessWithTimeout(process, timeout: 120)
+        // 处理器退出码判定：`runProcessWithTimeout` 只负责「等到进程结束或超时」，
+        // 超时抛错、正常退出则直接返回——于是非 0 退出码（依赖缺失、参数不合法、处理器内部异常）
+        // 会被当成成功，安装照常收尾并报成功，直到进游戏才崩。
+        // 依据：《Process.terminationStatus》——进程结束后该属性给出退出状态；
+        // 按 POSIX / Foundation 约定，0 为成功、非 0 为失败。
+        // 官方链接：https://developer.apple.com/documentation/foundation/process/terminationstatus
+        if process.terminationStatus != 0 {
+            throw MyLocalizedError(
+                reason: "安装器处理器执行失败（处理器 \(processor.jarPath)，退出码 \(process.terminationStatus)）"
+            )
+        }
     }
     
     // MARK: - 执行所有处理器任务
