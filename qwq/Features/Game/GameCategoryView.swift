@@ -4,6 +4,9 @@
 //  原文件剩余 DownloadCategoryView（下载游戏页）。
 //  第二十五批：版本卡片区块下沉 VersionPickerCard（qwq/VersionPickerCard.swift），
 //  扫描逻辑提炼 GameScanService（qwq/GameScanService.swift），本文件退化为 UI 编排 + 状态持有。
+//  第二十六批（本次）：扫描状态与业务决策整体下沉
+//  ViewModels/GameCategoryViewModel.swift（超时判定、结果决议、全盘查找、目录校验、Java 标签派生），
+//  本文件只保留布局、AppKit 面板呈现、省略号计时器与全部 withAnimation 时序。
 //
 
 import SwiftUI
@@ -14,45 +17,33 @@ struct GameCategoryView: View {
     @EnvironmentObject var settings: LauncherSettings
     /// 主题来源由调用方注入（全局单例外部持有），本视图透传给版本卡片
     let theme: ThemeManager
-    @State private var isLoading = true
-    @State private var showCard = false
+
+    // 扫描状态（检索中 / 卡片显隐 / 版本清单 / 超时标记）与全部业务决策（超时判定、
+    // 结果决议、全盘查找、目录校验、Java 标签派生）归 ViewModels/GameCategoryViewModel.swift，
+    // 本视图只订阅展示状态，并在既有动画事务内驱动其展示状态写入。
+    @StateObject private var viewModel = GameCategoryViewModel()
+
+    // 以下为纯视图状态：「游戏检索中...」省略号逐帧计数（文案常量与计数均不参与业务决策）
     @State private var loadingText = "游戏检索中"
     @State private var dotCount = 1
-    @State private var versions: [String] = []
-    @State private var hasVersions = false
-    @State private var scanTimedOut = false
     @State private var loadingTimer: Timer?
-
-    private var javaPickerLabel: String {
-        if let path = settings.selectedJavaPath {
-            let list = settings.availableJavaList
-            if let info = list.first(where: { $0.path == path }) {
-                return "Java \(info.majorVersion)"
-            }
-            return "Java 自定义"
-        }
-        if settings.isJavaScanning {
-            return "扫描中..."
-        }
-        return "自动选择 Java"
-    }
 
     var body: some View {
         ZStack {
-            if isLoading {
+            if viewModel.isLoading {
                 Text(loadingText + String(repeating: ".", count: dotCount))
                     .font(.system(size: 48, weight: .bold))
                     .foregroundColor(.primary)
                     .transition(.opacity)
             }
-            if showCard {
+            if viewModel.showCard {
                 VersionPickerCard(
                     theme: theme,
-                    versions: versions,
-                    hasVersions: hasVersions,
+                    versions: viewModel.versions,
+                    hasVersions: viewModel.hasVersions,
                     selectedVersion: settings.selectedMinecraftVersion,
-                    javaPickerLabel: javaPickerLabel,
-                    showBottomButtons: hasVersions || (versions.isEmpty && !isLoading),
+                    javaPickerLabel: viewModel.javaPickerLabel,
+                    showBottomButtons: viewModel.showBottomButtons,
                     selectedJavaPath: $settings.selectedJavaPath,
                     onSelect: { version in
                         withAnimation(.explosiveSpring) {
@@ -60,21 +51,23 @@ struct GameCategoryView: View {
                         }
                     },
                     onOpenFolderPicker: openFolderPicker,
-                    onFullDiskScan: fullDiskScan
+                    onFullDiskScan: { viewModel.fullDiskScan() }
                 )
                 .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(.easeOut(duration: 0.4), value: showCard)
-        .animation(.easeOut(duration: 0.4), value: isLoading)
-        .onChange(of: isLoading) { newValue in
+        .animation(.easeOut(duration: 0.4), value: viewModel.showCard)
+        .animation(.easeOut(duration: 0.4), value: viewModel.isLoading)
+        // 本工程部署目标为 macOS 13.0：onChange(of:initial:_:) 需 macOS 14.0+，不可用，
+        // 沿用旧签名 onChange(of: perform:)（省略号计时器只读取新值，不依赖闭包捕获语义）
+        .onChange(of: viewModel.isLoading) { newValue in
             if newValue { startLoadingAnimation() }
             else { stopLoadingAnimation() }
         }
         .onAppear {
-            // ⚠️ startScanning 开头同步写 isLoading/showCard/hasVersions/scanTimedOut 四个 @State，
-            // onAppear 处于视图更新事务中，同步写会触发 "Modifying state during view update"（UAF 前兆），
+            // ⚠️ startScanning 经 ViewModel 同步重置四个展示状态，onAppear 处于视图更新事务中，
+            // 同步写会触发 "Modifying state during view update"（UAF 前兆），
             // 整体延迟到渲染事务外执行（扫描逻辑本身异步，晚一帧启动无感知）
             DispatchQueue.main.async {
                 startScanning()
@@ -85,6 +78,8 @@ struct GameCategoryView: View {
             loadingTimer = nil
         }
     }
+
+    // MARK: - 省略号计时器（纯展示动画）
 
     private func startLoadingAnimation() {
         loadingTimer?.invalidate()
@@ -100,60 +95,41 @@ struct GameCategoryView: View {
         loadingTimer = nil
     }
 
+    // MARK: - 扫描时序
+
+    /// 扫描编排：重置、超时判定、结果决议与全部业务规则在 ViewModel；
+    /// 本函数只保留既有动画事务（0.8s 超时退化 / 0.8s 卡片出现 / 0.4s 载入结束）与时序，
+    /// 语句顺序与收口前逐字一致（重置 → 发起扫描 → 挂超时 → 等结果）。
     private func startScanning() {
-        isLoading = true; showCard = false; hasVersions = false; scanTimedOut = false
-        let scanTask = Task.detached(priority: .userInitiated) { () -> (root: String, versions: [String])? in
-            let savedRoot = await MainActor.run { settings.selectedGameRoot }
-            return await GameScanService.resolveGameRoot(savedRoot: savedRoot)
-        }
+        viewModel.resetScanState()
+        let scanTask = viewModel.beginScan()
         DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
-            if isLoading && !scanTimedOut {
-                scanTimedOut = true
-                withAnimation(.easeOut(duration: 0.8)) { showCard = true; hasVersions = false; isLoading = false }
+            guard viewModel.shouldApplyScanTimeout() else { return }
+            withAnimation(.easeOut(duration: 0.8)) {
+                viewModel.applyScanTimeoutPresentation()
             }
         }
         Task {
             let result = await scanTask.value
             await MainActor.run {
-                if !scanTimedOut {
-                    if let (root, versionList) = result, !versionList.isEmpty {
-                        versions = versionList
-                        if settings.selectedGameRoot.isEmpty || settings.selectedGameRoot != root { settings.selectedGameRoot = root }
-                        if settings.selectedMinecraftVersion.isEmpty || !versionList.contains(settings.selectedMinecraftVersion) {
-                            settings.selectedMinecraftVersion = versions.first ?? ""
-                            DispatchQueue.main.async {
-                                NotificationCenter.default.post(name: NSNotification.Name("GameVersionSelected"), object: nil)
-                            }
-                        }
-                        hasVersions = true
-                    } else { hasVersions = false }
-                    withAnimation(.easeOut(duration: 0.8)) { showCard = true }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        withAnimation(.easeOut(duration: 0.4)) { isLoading = false }
+                guard !viewModel.scanTimedOut else { return }
+                viewModel.applyScanResult(result)
+                withAnimation(.easeOut(duration: 0.8)) {
+                    viewModel.presentScanCard()
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    withAnimation(.easeOut(duration: 0.4)) {
+                        viewModel.finishScanLoading()
                     }
                 }
             }
         }
     }
 
-    private func fullDiskScan() {
-        isLoading = true
-        Task.detached(priority: .userInitiated) {
-            let result = await GameScanService.fullDiskScanGames()
-            await MainActor.run {
-                isLoading = false
-                showCard = true
-                LaunchPanelState.shared.presentMessage("已找到 \(result.count) 个游戏")
-                if let first = result.first {
-                    versions = first.versions
-                    settings.selectedGameRoot = first.root
-                    settings.selectedMinecraftVersion = first.versions.first ?? ""
-                    hasVersions = true
-                }
-            }
-        }
-    }
+    // MARK: - 手动选择游戏目录
 
+    /// 仅负责 AppKit 面板的呈现与回调接线；目录校验与落库决策在
+    /// `GameCategoryViewModel.applyChosenGameRoot(path:)`。
     private func openFolderPicker() {
         let openPanel = NSOpenPanel()
         openPanel.title = "选择 Minecraft 游戏根目录（包含 versions 文件夹的目录）"
@@ -163,21 +139,7 @@ struct GameCategoryView: View {
         openPanel.allowsMultipleSelection = false
         openPanel.begin { response in
             if response == .OK, let url = openPanel.url {
-                let chosenPath = url.path
-                let versionsPath = chosenPath + "/versions"
-                if FileManager.default.fileExists(atPath: versionsPath) {
-                    let versionList = MinecraftVersionManager.getVersions(from: chosenPath)
-                    if !versionList.isEmpty {
-                        versions = versionList
-                        settings.selectedGameRoot = chosenPath
-                        settings.selectedMinecraftVersion = versions.first ?? ""
-                        hasVersions = true
-                    } else {
-                        LaunchPanelState.shared.presentError("所选文件夹的 versions 目录下没有找到任何版本")
-                    }
-                } else {
-                    LaunchPanelState.shared.presentError("所选文件夹不包含 versions 子目录")
-                }
+                viewModel.applyChosenGameRoot(path: url.path)
             }
         }
     }

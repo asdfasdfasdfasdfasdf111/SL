@@ -202,29 +202,9 @@ struct ModDetailView: View {
             }
         }
         
-        // 游戏版本页：点下载 = 真正下载安装所选版本（+ 可选加载器），对标 PCL.Mac DownloadPage
-        if pageType == .loaderSelector {
-            GameVersionDownloadStarter.start(
-                versionStr: viewModel.selectedVersion,
-                loader: viewModel.selectedLoader.lowercased(),
-                loaderSupported: viewModel.availableLoaders.contains { $0.lowercased() == viewModel.selectedLoader.lowercased() },
-                settings: settings,
-                manager: manager
-            )
-            return
-        }
-
-        // 真正的下载逻辑（mod/shader/resourcePack/modpack）：解析目标文件 → 创建下载任务 →
-        // 打开详情页 → 启动任务。编排逻辑在 ModFileDownloadStarter，视图只传值，不持有闭包。
-        ModFileDownloadStarter.start(
-            pageType: pageType,
-            item: item,
-            selectedVersion: viewModel.selectedVersion,
-            selectedLoader: viewModel.selectedLoader,
-            selectedModpackVersionId: viewModel.selectedModpackVersionId,
-            settings: settings,
-            manager: manager
-        )
+        // 下载路径决策（游戏版本页 → 版本安装；其余页面 → 文件下载）与加载器支持判定在 ViewModel；
+        // 本视图只保留上述提示与动画调度，调用时点与收口前逐字一致
+        viewModel.performDownload(pageType: pageType, item: item, manager: downloadDetail)
     }
 
     @ViewBuilder

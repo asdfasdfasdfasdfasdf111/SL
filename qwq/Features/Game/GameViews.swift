@@ -8,6 +8,7 @@ import zlib
 // JavaSelectionPopup, JavaPickerView, JavaPickerRow → UI/JavaPickerView.swift
 // GameSubCategory, GameSidebarSection, ModrinthTagMap, DownloadedItem → Models/GameModels.swift
 // 状态与业务决策（选中态/搜索/分页/取数）→ ViewModels/DownloadCategoryViewModel.swift
+// 视图入口编排决策（数据源预热/本地目录就绪刷新/详情页进出归属）→ ViewModels/DownloadCategoryViewModel+Orchestration.swift
 
 struct DownloadCategoryView: View {
     /// 主题来源由调用方注入（全局单例外部持有），本视图仅向下透传
@@ -56,9 +57,8 @@ struct DownloadCategoryView: View {
         .onAppear {
             viewModel.activate()
             translationModel.activate()
-            ModrinthCategoryCache.loadFromDisk()
-            LocalModCatalog.warmUp()
-            LocalModCatalog.preTranslateAll()
+            // 数据源预热（磁盘分类缓存 / 本地全量目录解析 / 预翻译）的调用顺序在 ViewModel 内保留
+            viewModel.prepareDataSources()
             // ⚠️ onAppear 处于视图更新事务中：sectionHighlightY 是 @State、fetchItems()
             // 内部会同步写 isLoading/items/filteredResults 等状态，同步执行会触发
             // "Modifying state during view update"（UAF 前兆），整体延迟到渲染事务外执行
@@ -81,13 +81,8 @@ struct DownloadCategoryView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: LocalModCatalog.readyNotification)) { _ in
             // 本地目录后台解析完成后，若正停在 mod/资源包/光影/整合包页，自动刷新为全量本地目录
-            // ⚠️ fetchItems 内部同步写 isLoading/items/filteredResults 等状态，通知回调与
-            // 渲染事务可能重叠，延迟到渲染事务外执行
-            if viewModel.selectedSection != .game {
-                DispatchQueue.main.async {
-                    viewModel.fetchItems(translation: translationModel)
-                }
-            }
+            // （「非游戏分类才刷新」的判定与渲染事务外延迟均在 ViewModel 内，与收口前逐字一致）
+            viewModel.handleLocalCatalogReady(translation: translationModel)
         }
         .onChange(of: viewModel.searchText) { _ in
             // ⚠️ onChange 处于视图更新事务中，而 applyFilter() 首行即同步写状态
@@ -148,23 +143,20 @@ struct DownloadCategoryView: View {
                     item: item,
                     pageType: viewModel.currentDetailPageType,
                     onClose: { closeDetail() },
-                    onNavigateToMod: { modItem in
-                        // 进入前置加载器（Sodium/Iris）详情前记住当前分类，返回时恢复侧栏高亮
-                        if viewModel.pendingReturnSection == nil {
-                            viewModel.pendingReturnSection = viewModel.selectedSection
-                        }
-                        viewModel.selectedSection = .mod
-                        viewModel.selectedSubCategory = nil
-                        navigateTo(SidebarHighlight.index(for: .mod, sub: nil))
+                    onNavigateToMod: { _ in
+                        // 进入前置加载器（Sodium/Iris）详情：来源分类的记住与分类切换由
+                        // ViewModel 决策，本视图只把侧栏高亮位移到新分类
+                        viewModel.enterPrerequisiteDetail()
+                        navigateTo(SidebarHighlight.index(for: viewModel.selectedSection,
+                                                          sub: viewModel.selectedSubCategory))
                     },
                     onNavigateBackFromMod: {
-                        // 从前置加载器详情返回原分类（如光影），侧栏高亮同步跳回
-                        if let restore = viewModel.pendingReturnSection {
-                            viewModel.selectedSection = restore
-                            viewModel.selectedSubCategory = nil
-                            navigateTo(SidebarHighlight.index(for: restore, sub: nil))
+                        // 从前置加载器详情返回原分类（如光影），侧栏高亮同步跳回；
+                        // 无待恢复分类时不位移（与收口前行为一致）
+                        if let restore = viewModel.restoreFromPrerequisiteDetail() {
+                            navigateTo(SidebarHighlight.index(for: restore,
+                                                              sub: viewModel.selectedSubCategory))
                         }
-                        viewModel.pendingReturnSection = nil
                     },
                     gameSubCategory: viewModel.selectedSubCategory,
                     theme: theme,
@@ -269,7 +261,9 @@ struct DownloadCategoryView: View {
     }
 
     private func closeDetail() {
-        viewModel.pendingReturnSection = nil
+        // 待恢复分类的清理属 ViewModel 决策；selectedModItem/showDetail 的写入留在本视图的
+        // withAnimation 事务内（两者分属不同事务点，故不合并为一次调用）
+        viewModel.prepareDetailClose()
         withAnimation(.easeInOut(duration: 0.25)) {
             viewModel.showDetail = false
             viewModel.selectedModItem = nil

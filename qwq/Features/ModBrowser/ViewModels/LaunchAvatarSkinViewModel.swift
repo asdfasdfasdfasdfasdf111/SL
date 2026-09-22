@@ -11,7 +11,8 @@
 //  刻意留在视图层的部分：
 //  - 启动面板全部布局（卡片尺寸、日志面板位移与透明度、材质与描边）、卡片弹跳与输入框缩放动画；
 //  - 离线用户名提示文案的展示（校验规则本身已在 OfflineUsernameValidator）；
-//  - 分类路由（category.name → 子页面）与启动触发（已整体下沉 LaunchCoordinator，仅剩一行转发）；
+//  - 分类路由（category.name → 子页面）；启动触发不在本类型范围（先经 LaunchEntryViewModel
+//    做版本前置校验与重复启动拦截，再由 LaunchCoordinator 承担启动编排）；
 //  - 首帧焦点兜底 AppKit 占位视图（FirstResponderReset / FocusSinkView 不可脱离视图层）；
 //  - 皮肤文件变更的订阅点（.onChange(of: settings.skinImageURL)）保留在视图，仅把处理转发到本类型。
 //

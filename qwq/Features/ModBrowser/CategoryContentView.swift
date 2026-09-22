@@ -16,6 +16,10 @@ struct CategoryContentView: View {
     /// 本视图只订阅其 @Published 展示状态并转发意图
     @StateObject private var skinViewModel = LaunchAvatarSkinViewModel()
 
+    /// 启动按钮的入口决策（版本前置校验 + 重复启动拦截 + 转交 LaunchCoordinator）归
+    /// ViewModels/LaunchEntryViewModel.swift，本视图只清焦点并转发点击
+    @StateObject private var launchEntry = LaunchEntryViewModel()
+
     @State private var usernameFieldScale: CGFloat = 1.0
     @FocusState private var isUsernameFocused: Bool
     @State private var skinButtonScale: CGFloat = 1.0
@@ -89,12 +93,10 @@ struct CategoryContentView: View {
                 darkProgress: sessionManager.darkProgress,
                 onTap: {
                     isUsernameFocused = false
-                    guard !settings.selectedMinecraftVersion.isEmpty else {
-                        LaunchPanelState.shared.presentError("请先在「游戏」分类中选择一个版本")
-                        return
-                    }
-                    guard !sessionManager.isLaunching else { return }
-                    startLaunch()
+                    // 版本前置校验与重复启动拦截在 LaunchEntryViewModel；
+                    // 启动编排本体已在 LaunchCoordinator（版本/用户名再校验 → 皮肤准备 →
+                    // 构造 LaunchRequest 六段事件 → 会话登记）
+                    launchEntry.requestLaunch()
                 }
             )
         }
@@ -282,11 +284,6 @@ struct CategoryContentView: View {
         .onDisappear {
             skinViewModel.handleViewDisappear()
         }
-    }
-    
-    /// 启动编排已整体下沉到 LaunchCoordinator（版本/用户名校验 → 皮肤准备 → pclLaunch 六段回调 → 会话登记）
-    private func startLaunch() {
-        LaunchCoordinator.start(settings: settings, sessionManager: sessionManager)
     }
 }
 

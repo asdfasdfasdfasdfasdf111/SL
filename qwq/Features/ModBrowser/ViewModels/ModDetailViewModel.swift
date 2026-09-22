@@ -10,14 +10,16 @@
 //  - 加载器支持检测状态机：缓存定论初始化、流式逐项回写、请求归属校验、相邻版本预取、
 //    错误映射（unavailable → 可重试提示）、可用加载器派生与选中回退；
 //  - 整合包版本取数与唯一游戏版本分组缓存、跨版本自动匹配查找；
-//  - 副标题翻译调度（逐条走共享 CardTranslationModel）与视图存活标记。
+//  - 副标题翻译调度（逐条走共享 CardTranslationModel）与视图存活标记；
+//  - 「下载」按钮的路径决策（游戏版本页 → GameVersionDownloadStarter；其余页面 → ModFileDownloadStarter）
+//    与所选加载器是否受支持的判定。
 //
 //  刻意留在视图层的部分：
 //  - 全部布局（页面横向位移 offset、卡片与按钮间距、内容缩进）与所有 withAnimation 调用及动画参数；
 //  - 页面滑动栈（prerequisiteStack / navSlideOffset / pageWidth）与返回延迟任务 backNavTask、
 //    下载按钮弹跳 bounceTask：二者写的是视图坐标与动画状态，迁入 ViewModel 只会把手势/事务语义引入状态层；
-//  - 下载触发 startDownload：仅做「页面类型 → 已下沉的 GameVersionDownloadStarter /
-//    ModFileDownloadStarter」分支转发与动画调度，未含业务决策，故与启动器提示一并留在视图；
+//  - 「下载开始」提示投递、下载按钮弹跳与圆按钮弹入的动画调度：均为视图事务与提示通道，
+//    与 `performDownload`（纯路径决策）分属两段，故前者留在视图；
 //  - 翻译状态对象 CardTranslationModel 的生命周期（视图以 @StateObject 持有，本类型按需接收其引用调度）。
 //
 //  线程约定：与收口前一致——所有异步回写经 MainActor.run，onAppear/onChange 内的状态写入
@@ -370,6 +372,44 @@ final class ModDetailViewModel: ObservableObject {
             target: targetVersion,
             pageType: pageType,
             gameRoot: settings.selectedGameRoot
+        )
+    }
+
+    // MARK: - 下载路径决策
+
+    /// 所选加载器是否真的受当前版本支持（按实时检测结果判定，大小写不敏感）。
+    /// 供 `performDownload` 传入 GameVersionDownloadStarter：不支持时该启动器装纯原版。
+    private var isSelectedLoaderSupported: Bool {
+        availableLoaders.contains { $0.lowercased() == selectedLoader.lowercased() }
+    }
+
+    /// 「下载」按钮的路径决策（业务）：
+    /// - 游戏版本页（loaderSelector）：点下载 = 真正下载安装所选版本（+ 可选加载器）；
+    /// - 其余页面（mod/shader/resourcePack/modpack）：解析目标文件 → 创建下载任务 → 打开详情页。
+    ///
+    /// 参数逐字取自收口前 `ModDetailView.startDownload` 的两条调用分支：
+    /// loader 传小写、loaderSupported 取实时检测结果、整合包另传所选整合包版本 id。
+    /// 调用方（视图）负责调起时点：既有「下载开始」提示、按钮弹跳与圆按钮弹入等
+    /// 动画调度仍留在视图，本方法只做路径分支，不写视图状态。
+    func performDownload(pageType: DetailPageType, item: DownloadedItem, manager: DownloadDetailManager) {
+        if pageType == .loaderSelector {
+            GameVersionDownloadStarter.start(
+                versionStr: selectedVersion,
+                loader: selectedLoader.lowercased(),
+                loaderSupported: isSelectedLoaderSupported,
+                settings: settings,
+                manager: manager
+            )
+            return
+        }
+        ModFileDownloadStarter.start(
+            pageType: pageType,
+            item: item,
+            selectedVersion: selectedVersion,
+            selectedLoader: selectedLoader,
+            selectedModpackVersionId: selectedModpackVersionId,
+            settings: settings,
+            manager: manager
         )
     }
 
