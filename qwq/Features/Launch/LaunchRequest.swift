@@ -3,7 +3,7 @@
 //  启动用例层：一次启动请求的完整入参（值类型，可跨任务传递）
 //
 //  字段来源对照（均为现有代码中真实存在的入参，未新增概念）：
-//  - version / gameRoot      ← pclLaunch(version:gameDir:) 与 LauncherSettings.selectedMinecraftVersion/selectedGameRoot
+//  - version / gameRoot      ← slLaunch(version:gameDir:) 与 LauncherSettings.selectedMinecraftVersion/selectedGameRoot
 //  - instanceID              ← MinecraftInstance.id（实例已存在时直接定位，省去目录探测）
 //  - runningDirectory        ← MinecraftInstance.runningDirectory（= gameRoot/versions/<version>）
 //  - offlineUsername         ← LaunchOptions.playerName（OfflineAccount 名称）

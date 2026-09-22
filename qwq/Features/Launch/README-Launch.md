@@ -9,7 +9,7 @@
 
 | | 原始 PCL.Mac 流程 | SL 新桥接流程 |
 |---|---|---|
-| 入口 | `MinecraftInstance.launch(_:)`（`PCLCore/Minecraft/MinecraftInstance.swift`） | `pclLaunch(...)` → `pclLaunchInternal(...)`（`PCLCore/PCLLaunchBridge.swift`） |
+| 入口 | `MinecraftInstance.launch(_:)`（`SLCore/Minecraft/MinecraftInstance.swift`） | `slLaunch(...)` → `slLaunchInternal(...)`（`SLCore/SLLaunchBridge.swift`） |
 | 调用方 | PCL.Mac 原有 UI | `LaunchCoordinator.start`（`Features/Launch/LaunchCoordinator.swift`） |
 | 用户名校验 | `validateOfflineUsername` | `validateOfflineUsername`（重复实现） |
 | 目录建实例 | 调用方持有 instance | 自己用 `MinecraftDirectory` + `MinecraftInstance.create` |
@@ -19,7 +19,7 @@
 | 进程与日志 | `MinecraftLauncher.launch` | 自己起 `Task` 轮询日志 / CGWindowList |
 
 桥接层等于第二套启动实现，任何一处策略调整都要改两遍（历史上已经出现「改了旧流程没改桥接」的偏差）。
-此外 `PCLCore/Minecraft/Launch/LaunchFix.swift` 是「什么缺了都由我修」的上帝对象，
+此外 `SLCore/Minecraft/Launch/LaunchFix.swift` 是「什么缺了都由我修」的上帝对象，
 一个函数同时做 client / library / asset / natives 四类校验与安装，无法单独测试或替换其中一类。
 
 ## 二、本层的文件与职责
@@ -58,7 +58,7 @@
 
 ### 第 1 步：让桥接层只做参数转换
 
-- `PCLLaunchBridge.swift` 中 `pclLaunchInternal` 的职责收缩为：
+- `SLLaunchBridge.swift` 中 `slLaunchInternal` 的职责收缩为：
   把 `version / username / gameDir` 等入参转换成一个 `LaunchRequest`，交给 `LaunchService.launch(_:)`，
   再把 `LaunchState` 流转回六段回调（progress / phase / log / success / ready / completion），供现有 UI 继续使用。
 - 桥接层**不再**自己做用户名校验、建目录、建实例、选 Java、改 JVM 参数、监听日志；
@@ -68,7 +68,7 @@
 
 ### 第 2 步：让 LaunchCoordinator 只做 UI 意图转发
 
-- `LaunchCoordinator.start` 不再直接调 `pclLaunch`，而是构造 `LaunchRequest`
+- `LaunchCoordinator.start` 不再直接调 `slLaunch`，而是构造 `LaunchRequest`
   （version / gameRoot / offlineUsername / javaExecutable / memoryMB …），调用 `LaunchService.launch(_:)`，
   并订阅 `GameSessionStore.observe(sessionID:)` 的 `AsyncStream<LaunchState>` 驱动 UI。
 - `LaunchSessionManager`（`ObservableObject`）退化为适配器：订阅状态流 → 写 `@Published`，
@@ -79,7 +79,7 @@
 
 ### 第 3 步：删除桥接层
 
-- 确认无任何调用方后删除 `pclLaunch` / `pclLaunchInternal` 及 `PCLLaunchBridge.swift` 中的兼容扩展
+- 确认无任何调用方后删除 `slLaunch` / `slLaunchInternal` 及 `SLLaunchBridge.swift` 中的兼容扩展
   （`isCancelled`、`isUserTerminated`、`terminate()`、`pendingLogs` 等 objc 关联对象实现）。
 - `MinecraftInstance.launch(_:)` 中与新用例层重复的分支（资源检查、崩溃弹窗）下沉到用例层，
   或保留为 PCL.Mac 兼容性入口并标注废弃。
@@ -102,5 +102,5 @@
   > 待真机验证清单，统一记录在 `Adapters/DUAL_FLOW.md` 第六节，本文件不再重复。
   >
   > 与上文第 2 步描述的差异：UI 侧暂**不**订阅 `AsyncStream<LaunchState>`，而是经由
-  > `LaunchEvent` 兼容通道接收与旧 `pclLaunch` 回调等时序的事件；
+  > `LaunchEvent` 兼容通道接收与旧 `slLaunch` 回调等时序的事件；
   > 原因见 DUAL_FLOW.md 第 6.1 节列出的风险点 T1 / T2 / T8 / T9。

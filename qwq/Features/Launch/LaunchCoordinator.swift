@@ -4,8 +4,8 @@ import AppKit
 /// 游戏启动编排 + 启动会话生命周期管理（CategoryContentView.startLaunch/closeSession/handleCloseSessionTap 下沉）。
 ///
 /// 启动入口由用例层 `LaunchService` 承担（实现为 `Adapters/MinecraftInstanceLaunchService`，
-/// 内部仍委托桥接层 `pclLaunch`）：本文件只构造 `LaunchRequest` 并处理 `LaunchEvent`，
-/// 不再直接依赖 `pclLaunch` 的六段回调签名。事件处理与原回调逐条等价（时序与文案一致），
+/// 内部仍委托桥接层 `slLaunch`）：本文件只构造 `LaunchRequest` 并处理 `LaunchEvent`，
+/// 不再直接依赖 `slLaunch` 的六段回调签名。事件处理与原回调逐条等价（时序与文案一致），
 /// 迁移计划、差异分析与不可迁移项见 `Adapters/DUAL_FLOW.md`。
 /// 回退：还原本文件的启动入口接线即可恢复旧路径（桥接层与旧流程未被删除）。
 ///
@@ -46,7 +46,7 @@ enum LaunchCoordinator {
                 return
             }
         }
-        // 游戏根目录：取值口径与桥接层 `pclLaunchInternal` 的 `resolvedGameDir` 完全一致
+        // 游戏根目录：取值口径与桥接层 `slLaunchInternal` 的 `resolvedGameDir` 完全一致
         // （selectedGameRoot 优先，为空则取当前实例目录）。同一路径随后也用于皮肤包与 options.txt 写入。
         let resolvedGameDirPath = settings.selectedGameRoot.isEmpty
             ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "")
@@ -82,7 +82,7 @@ enum LaunchCoordinator {
                 gameRoot: URL(fileURLWithPath: resolvedGameDirPath),
                 offlineUsername: finalUsername
             )
-            // 事件 → UI 的翻译逐条对应原 pclLaunch 六段回调，投递线程与调用点亦一致。
+            // 事件 → UI 的翻译逐条对应原 slLaunch 六段回调，投递线程与调用点亦一致。
             // 用例层规范结果是 launch(_:) 的返回值/抛出值；本通道为迁移期兼容缝（见适配器文件头）。
             //
             // **接线现状（缺陷：会话登记等全部空转）**：此处只传了 `events`，
@@ -208,7 +208,7 @@ enum LaunchCoordinator {
                     reportLaunchFailure(error)
                 }
             })
-            // 用例层入口是 async：发起后立即返回（与旧 pclLaunch 同为非阻塞）。
+            // 用例层入口是 async：发起后立即返回（与旧 slLaunch 同为非阻塞）。
             // 用例层在进入桥接之前抛出的失败（离线用户名非法等）不会产生 `.failed` 事件，
             // 旧实现的 `try?` 会把它连同 UI 提示一并丢弃；此处捕获后走同一上报通道。
             Task {
@@ -224,7 +224,7 @@ enum LaunchCoordinator {
         // 后台执行避免阻塞主线程。JAR 替换对 1.13+ 无效（默认皮肤在 entity/player/{slim,wide}/ 下），
         // 资源包方案全版本生效（1.19.3+ 与旧版路径都写入）。
         // 语言与皮肤写入串行在同一个后台队列（都改 options.txt，避免竞态互相覆盖）。
-        // 实际游戏运行目录是 gameRoot/versions/<版本>（instance.runningDirectory，pclLaunch 实证），
+        // 实际游戏运行目录是 gameRoot/versions/<版本>（instance.runningDirectory，slLaunch 实证），
         // 皮肤包与 options.txt 必须写到这里；此前写到 gameRoot 根目录游戏读不到（潜伏错误）。
         let versionGameDir: URL? = {
             guard !resolvedGameDirPath.isEmpty, !version.isEmpty else { return nil }

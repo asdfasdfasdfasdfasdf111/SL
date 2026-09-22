@@ -1,6 +1,6 @@
 //
 //  DownloadScheduler.swift
-//  PCL.Mac
+//  SL启动器
 //
 //  调度器职责：并发额度分配、分片切分、失败重试、源切换、进度发布。
 //  旧实现中这些都写在 `NetManager` 这一个 actor 内（889 行），

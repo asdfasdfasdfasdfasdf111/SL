@@ -1,6 +1,6 @@
 //
 //  DownloadError.swift
-//  PCL.Mac
+//  SL启动器
 //
 //  下载领域的统一错误类型。旧实现中 `NetDownloadError`、`MyLocalizedError`、
 //  字符串 failReason 三种错误载体在此收敛为一个枚举，便于调用方穷尽处理。

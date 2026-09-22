@@ -1,6 +1,6 @@
 //
 //  DownloadTask.swift
-//  PCL.Mac
+//  SL启动器
 //
 //  下载任务的持久化视图（请求 + 当前状态）与状态存储协议。
 //  旧实现把状态散落在 `NetManager.FileRecord` 私有类里，无法被外部观测；

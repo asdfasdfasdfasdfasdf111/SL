@@ -2,15 +2,15 @@
 //  MinecraftInstanceInfo.swift
 //  模块化拆分：Minecraft 模块的只读实例快照
 //
-//  `MinecraftInstance`（`qwq/PCLCore/Minecraft/MinecraftInstance.swift`）是启动核心：
-//  构造即产生副作用（解析清单、自动选 Java、写回 `.PCL_Mac.json`），因此本阶段只做只读抽象，
+//  `MinecraftInstance`（`qwq/SLCore/Minecraft/MinecraftInstance.swift`）是启动核心：
+//  构造即产生副作用（解析清单、自动选 Java、写回 `.SL.json`），因此本阶段只做只读抽象，
 //  不改动它，也不在本模型里持有它。
 //
-//  本模型只抽取**真实存在的属性**，把非 Sendable 的 PCLCore 类型镜像为自身枚举，
+//  本模型只抽取**真实存在的属性**，把非 Sendable 的 SLCore 类型镜像为自身枚举，
 //  从而可以跨任务传递（与 `JavaInstallation` 镜像 `Architecture` 的做法一致）。
 //
 //  刻意未建模的字段：
-//  - 「最后启动时间」：`MinecraftInstance` 与 `.PCL_Mac.json` 均**没有**该字段，
+//  - 「最后启动时间」：`MinecraftInstance` 与 `.SL.json` 均**没有**该字段，
 //    全库也没有任何写入点。不臆造字段，改用文件系统时间需要先定义语义（是启动时间、还是清单修改时间），
 //    该定义属新增能力，留待确认后再加。
 //  - `isUsingRosetta`：运行期瞬时状态（由启动时的 JVM 架构判定），不是实例的持久属性。
@@ -23,7 +23,7 @@ import Foundation
 
 /// 实例的加载器类型，镜像 `ClientBrand`（`MinecraftInstance.clientBrand`）。
 ///
-/// 单独建模的原因：`ClientBrand` 是 PCLCore 的公开非 frozen 枚举，未声明 `Sendable`，
+/// 单独建模的原因：`ClientBrand` 是 SLCore 的公开非 frozen 枚举，未声明 `Sendable`，
 /// 不能作为本模块值类型快照的字段。
 enum MinecraftLoaderKind: String, Sendable, Hashable, CaseIterable {
     case vanilla
@@ -89,7 +89,7 @@ enum MinecraftVersionKind: String, Sendable, Hashable, CaseIterable {
 
 // MARK: - 实例快照
 
-/// 实例的只读快照。可跨线程传递，不含任何 PCLCore 引用类型。
+/// 实例的只读快照。可跨线程传递，不含任何 SLCore 引用类型。
 struct MinecraftInstanceInfo: Sendable, Hashable, Identifiable {
 
     /// 以版本目录的绝对路径作为标识：同一目录无论从哪条路径发现，都合并为同一条记录。
@@ -124,7 +124,7 @@ struct MinecraftInstanceInfo: Sendable, Hashable, Identifiable {
 
     /// 实例配置文件路径（对应 `MinecraftInstance.configPath`）
     var configPath: URL {
-        runningDirectory.appendingPathComponent(".PCL_Mac.json")
+        runningDirectory.appendingPathComponent(".SL.json")
     }
 }
 

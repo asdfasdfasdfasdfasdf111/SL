@@ -2,7 +2,7 @@
 //  LaunchPreflight.swift
 //  启动用例层：启动前校验的职责拆分
 //
-//  `PCLCore/Minecraft/Launch/LaunchFix.swift` 当前一个函数承担 client / library / asset / natives
+//  `SLCore/Minecraft/Launch/LaunchFix.swift` 当前一个函数承担 client / library / asset / natives
 //  四类校验与安装（PCL2 DlClientFix 移植）。本文件只做**职责边界的定义**，不修改 LaunchFix，
 //  供后续接线阶段把 LaunchFix.perform 的四段逻辑分别落到四个实现里。
 //

@@ -1,11 +1,11 @@
 //
 //  NetDownloaderDownloadEngine.swift
-//  PCL.Mac
+//  SL启动器
 //
-//  适配器：以现有 `NetManager`（PCLCore/Download/NetDownloader.swift）为后端实现 `DownloadEngine`。
+//  适配器：以现有 `NetManager`（SLCore/Download/NetDownloader.swift）为后端实现 `DownloadEngine`。
 //
 //  本文件只做两层转换，不改变任何下载行为：
-//  1. `DownloadRequest` → `PCLNetFile`（候选源由 `DownloadSourceResolver` 给出，校验参数由
+//  1. `DownloadRequest` → `SLNetFile`（候选源由 `DownloadSourceResolver` 给出，校验参数由
 //     `DefaultDownloadVerifier.checker(for:)` 翻译）；
 //  2. 旧引擎的回调式进度 `(Double) -> Void` → `AsyncStream<DownloadState>`。
 //
@@ -77,7 +77,7 @@ public final class NetDownloaderDownloadEngine: DownloadEngine, @unchecked Senda
         let candidates = await resolver.candidateURLs(for: request)
         guard !candidates.isEmpty else { throw DownloadError.sourceUnavailable }
 
-        let file = PCLNetFile(
+        let file = SLNetFile(
             urls: candidates,
             destination: request.destinationURL,
             checker: DefaultDownloadVerifier.checker(for: request),
@@ -171,7 +171,7 @@ public final class NetDownloaderDownloadEngine: DownloadEngine, @unchecked Senda
 
     // MARK: - 执行与状态发布
 
-    private func run(taskID: UUID, file: PCLNetFile, expectedSize: Int64?) async {
+    private func run(taskID: UUID, file: SLNetFile, expectedSize: Int64?) async {
         publish(.preparing, for: taskID)
         do {
             try await NetManager.shared.download(file) { [weak self] fraction in

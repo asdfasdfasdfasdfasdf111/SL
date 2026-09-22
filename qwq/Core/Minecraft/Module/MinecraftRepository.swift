@@ -3,7 +3,7 @@
 //  模块化拆分：Minecraft 实例仓储协议与只读扫描实现
 //
 //  只读抽象：本文件**不构造** `MinecraftInstance`。
-//  `MinecraftInstance.create` 会解析清单、自动选择 Java 并写回 `.PCL_Mac.json`（有副作用），
+//  `MinecraftInstance.create` 会解析清单、自动选择 Java 并写回 `.SL.json`（有副作用），
 //  只读查询不应触发实例初始化，因此默认实现直接读版本目录与清单 JSON。
 //
 //  扫描结果的字段可得性低于 `MinecraftInstanceInfo(_:)`（后者取自已初始化的实例）：

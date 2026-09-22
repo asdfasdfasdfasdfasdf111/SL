@@ -22,7 +22,7 @@
 
 | 快照字段 | 真实来源 |
 | --- | --- |
-| `id` | `MinecraftVersion.displayName`（PCLCore/Minecraft/MinecraftVersion.swift:11）；与清单条目 `"id"` 同语义 |
+| `id` | `MinecraftVersion.displayName`（SLCore/Minecraft/MinecraftVersion.swift:11）；与清单条目 `"id"` 同语义 |
 | `type` | 清单条目 `"type"` 原文；取值与 `VersionType`（同文件 :49）rawValue 一致 |
 | `releaseTime` | 清单条目 `"releaseTime"` 原文（保留 ISO8601 字符串，按字符串比较即得时间序） |
 | `manifestURL` | 清单条目 `"url"`（该版本的客户端清单地址） |

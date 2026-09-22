@@ -5,7 +5,7 @@ import Foundation
 // 第三十一批清理死代码：删除无调用者的 authlib-injector 下载/JVM 参数构建与 JAR 修改方式
 // （downloadAuthlibInjector/buildOfflineSkinMeta/buildAuthlibInjectorArgs/applySkinToJar/
 // restoreOriginalJar/isAuthlibInjectorAvailable/getAuthlibInjectorPath/runCommand），
-// 离线登录走 PCLCore（MinecraftLauncher.downloadAuthlibInjector），离线皮肤走资源包方案。
+// 离线登录走 SLCore（MinecraftLauncher.downloadAuthlibInjector），离线皮肤走资源包方案。
 // 本类仅保留皮肤持久化（saveSkin/getSkinData/skinsDirectory）。
 
 class MinecraftSkinManager {

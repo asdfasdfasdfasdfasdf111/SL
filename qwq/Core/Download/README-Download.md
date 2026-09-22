@@ -1,7 +1,7 @@
 # Core/Download
 
 下载领域的**目标结构**。本目录当前只定义数据与协议，不改变任何现有下载行为：
-旧的 `qwq/PCLCore/Download/NetDownloader.swift` 原样保留，仍是实际生效的代码路径。
+旧的 `qwq/SLCore/Download/NetDownloader.swift` 原样保留，仍是实际生效的代码路径。
 
 ## 文件职责
 
@@ -26,7 +26,7 @@
 
 | 旧（NetDownloader.swift） | 新 |
 | --- | --- |
-| `PCLNetFile` | `DownloadRequest` |
+| `SLNetFile` | `DownloadRequest` |
 | `FileChecker.check` 返回 `String?` | `DownloadVerifier.verify` throws |
 | `NetManager.Slice`（私有类） | `DownloadSlice` + `DownloadSliceStore` |
 | `NetManager.pickSource` + 源黑名单 | `DownloadSourceResolver` |
@@ -41,7 +41,7 @@
 
 **第 1 步：接入 Engine 门面（不改旧逻辑）**
 新增一个 `DownloadEngine` 实现，内部直接转发到现有 `NetManager.download(_:progress:)`：
-把 `DownloadRequest` 转成 `PCLNetFile`，把 `DownloadState` 用进度闭包驱动。
+把 `DownloadRequest` 转成 `SLNetFile`，把 `DownloadState` 用进度闭包驱动。
 此时新模块只是旧引擎的适配器，行为完全不变，UI 侧可先切换观测方式。
 
 **第 2 步：抽出校验**

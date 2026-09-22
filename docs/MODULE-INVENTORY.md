@@ -17,10 +17,10 @@
 | 8 | Theme | 121 行 / 4 文件 | ✅ | ❌ | `ThemeManager` 与 `AppSettingsStore` 曾双写同一 key（已收敛），但服务层是 async 取值、界面是订阅式，接入会读到过期色 |
 | 9 | **Game** | 2372 行 / 18 文件 | ✅ | ❌ | 原 **0 个模块件**；`GameViews` 591 行、`GameCards` 286 行、`VersionSelectionSection` 227 行。收口进展：新增 `Module/` 模块内核 4 文件 + `README-Game.md`，`GameViews` 591→303 行（业务决策收口到 `ViewModels/DownloadCategoryViewModel`），`GameModule` 注册能力 `game.versionCatalog` / `game.versionFilter`，`GameVersionFilter` 改为 `VersionFilterUseCase` 适配器；`AppModuleBootstrap` 沿用未登记状态，故接线仍为未接 |
 | 10 | **Translation** | 537 行 / 7 文件 | ❌ | ❌ | `TranslationService` 144 行、`CardTranslationModel` 140 行 |
-| 11 | **Account / 兼容层** | 7526 行 / 41 文件 | ❌ | ❌ | `PCLCore` 全域；含 **11 个单例** |
+| 11 | **Account / 兼容层** | 7526 行 / 41 文件 | ❌ | ❌ | `SLCore` 全域；含 **11 个单例** |
 | 12 | **UI** | 1423 行 | 🔶 部分 | — | `Notices`、`Shell`、`Modifiers` 为新建；`ViewComponents` 182 行仍未归口 |
 | 13 | **App** | 1052 行 | 🔶 部分 | — | `ContentView` 297 → 132 行，已抽 4 个 ViewModel |
-| 14 | **Infra** | 391 行 | ❌ | ❌ | `Services`（CacheManager 303 行）、`Models`、`PCLCore/Utils` 未归口 |
+| 14 | **Infra** | 391 行 | ❌ | ❌ | `Services`（CacheManager 303 行）、`Models`、`SLCore/Utils` 未归口 |
 
 ## 二、完成度量化
 
@@ -48,7 +48,7 @@
 
 ## 四、剩余模块扫描结果（按优先级）
 
-### P0：`PCLCore`（7526 行、41 文件、11 个单例）—— 最大的未模块化区
+### P0：`SLCore`（7526 行、41 文件、11 个单例）—— 最大的未模块化区
 | 文件 | 行数 | 问题 |
 |---|---|---|
 | `Download/NetDownloader.swift` | **889** | 单文件承担预检、多源、分片、重试、黑名单、测速、合并、校验、调度、取消；抽象层已建，但批量路径未切 |
@@ -82,5 +82,5 @@
 ## 五、结论
 
 - **模块化进度：骨架 8/14，接线 3/14，代码覆盖约 46%**
-- **最大缺口：`PCLCore`（7526 行、11 单例）与 `Features/Game`（2372 行）**
+- **最大缺口：`SLCore`（7526 行、11 单例）与 `Features/Game`（2372 行）**
 - **优化：已完成 3 处性能 + 20+ 项缺陷；已知待做 3 处**

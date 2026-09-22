@@ -1,24 +1,24 @@
 //
 //  MinecraftInstanceLaunchService.swift
-//  启动用例层适配器：`LaunchService` → 现有桥接启动流程（`pclLaunch`）的包装
+//  启动用例层适配器：`LaunchService` → 现有桥接启动流程（`slLaunch`）的包装
 //
 //  本文件是**包装层**，不是合并层：它把 `LaunchRequest` 与六段回调互相翻译，
-//  内部调用的仍是 `PCLLaunchBridge.pclLaunch`（即现有的第二套启动实现），
+//  内部调用的仍是 `SLLaunchBridge.slLaunch`（即现有的第二套启动实现），
 //  `MinecraftInstance.launch(_:)` 那条流程原样保留、未被触碰。
 //
-//  MARK: - 为什么包 `pclLaunch` 而不是 `MinecraftInstance.launch(_:)`
+//  MARK: - 为什么包 `slLaunch` 而不是 `MinecraftInstance.launch(_:)`
 //
 //  `LaunchService.launch` 契约要求返回退出码、会话标识与日志位置；
 //  `MinecraftInstance.launch(_:)` 是 `async` 且**无返回值**（退出码只在内部用于弹窗），
-//  无法满足契约；`pclLaunch` 的 `completion` 携带
+//  无法满足契约；`slLaunch` 的 `completion` 携带
 //  `(MinecraftLauncher?, Result<Int32, Error>)`，是当前唯一能提供退出码与 launcher 引用的入口。
 //  两条流程的完整差异见 `Adapters/DUAL_FLOW.md`。
 //
 //  MARK: - 回调 → LaunchState 映射
 //
-//  | pclLaunch 回调 / 相位 | 触发时机（桥接层）                        | 本服务投递的状态 |
+//  | slLaunch 回调 / 相位 | 触发时机（桥接层）                        | 本服务投递的状态 |
 //  |----------------------|------------------------------------------|-----------------|
-//  | （进入 launch）        | 调用 pclLaunch 之前                       | `.preparing` |
+//  | （进入 launch）        | 调用 slLaunch 之前                       | `.preparing` |
 //  | `phaseHandler("downloading")` | 调用 LaunchFix 之前               | `.downloading(0)` |
 //  | `progressHandler(p)`  | LaunchFix 的 onProgress（每文件回调）      | `.downloading(p)`（1% 阈值合并） |
 //  | `phaseHandler("launching")` | LaunchFix 完成后、Java 选择之前      | `.resolvingJava` |
@@ -39,8 +39,8 @@
 //
 //  | LaunchRequest 字段        | 现状 | 说明 |
 //  |--------------------------|------|------|
-//  | version / gameRoot        | 已使用 | 直接对应 `pclLaunch(version:gameDir:)`，gameDir 语义即 `MinecraftDirectory.rootURL` |
-//  | offlineUsername           | 已使用 | 直接对应 `pclLaunch(username:)`；校验与空值兜底已上移到本服务（`validatedUsername`），桥接层不再重复校验 |
+//  | version / gameRoot        | 已使用 | 直接对应 `slLaunch(version:gameDir:)`，gameDir 语义即 `MinecraftDirectory.rootURL` |
+//  | offlineUsername           | 已使用 | 直接对应 `slLaunch(username:)`；校验与空值兜底已上移到本服务（`validatedUsername`），桥接层不再重复校验 |
 //  | instanceID / runningDirectory | 未使用 | 桥接层自行用 `MinecraftDirectory` + `MinecraftInstance.create` 建实例 |
 //  | javaExecutable            | 未使用 | 桥接层自行走 JavaResolverBridge → DataManager → JavaManager 三级选择 |
 //  | memoryMB / qualityOfServiceRawValue | 未使用 | 内存与 QoS 取自 `instance.config.maxMemory` / `.qualityOfService`，不经过请求 |
@@ -58,14 +58,14 @@
 //  MARK: - `LaunchEvent` 兼容通道（迁移期，稳定后删除）
 //
 //  UI 侧（`LaunchCoordinator`）改由本服务发起启动后，仍需「同一时序、同一文案」地收到
-//  旧路径 `pclLaunch` 的六段回调，否则会引入用户可感知的行为变化。当前不能直接改用
+//  旧路径 `slLaunch` 的六段回调，否则会引入用户可感知的行为变化。当前不能直接改用
 //  `LaunchState` 状态流，原因：
 //    - T1：`phaseHandler("launching")` 发生在 Java 选择**之前**，若由 `.resolvingJava`
 //      驱动 UI，UI 的「launching」相位会推迟到 `onLauncherReady` 之后，进度条观感变化；
 //    - T2：UI 需要在 `onLauncherReady` 时刻拿到 `MinecraftLauncher` 引用（会话绑定与
 //      `terminate()` 都依赖它），而 `LaunchState` 不携带该引用；
 //    - T8/T9：状态由松散 `Task` 投递且无重放，UI 可能收到乱序或漏掉早期状态。
-//  故本服务额外提供一条**与 `pclLaunch` 回调调用点逐条对应、同步投递**的事件通道：
+//  故本服务额外提供一条**与 `slLaunch` 回调调用点逐条对应、同步投递**的事件通道：
 //  `LaunchEvent` 只是迁移期的兼容缝，用例层的规范结果仍是 `launch(_:)` 的返回值与抛出值。
 //  待 T1/T2/T8/T9 落实（进程创建早于 `onLauncherReady`、状态带引用、store 支持重放）后，
 //  本通道与 `logSink` 一并删除，UI 改为订阅 `GameSessionStore.observe(sessionID:)`。
@@ -74,22 +74,22 @@
 import Foundation
 import os
 
-/// 启动过程事件：与桥接层 `pclLaunch` 的六段回调**逐条对应**，在各自原调用点同步投递。
+/// 启动过程事件：与桥接层 `slLaunch` 的六段回调**逐条对应**，在各自原调用点同步投递。
 /// 仅作 UI 迁移期的兼容通道，不是用例层契约（见文件头「LaunchEvent 兼容通道」）。
 public enum LaunchEvent {
-    /// 文件补全进度（0~1）→ `pclLaunch.progressHandler`（不节流，UI 侧自行做「只前进」钳制）
+    /// 文件补全进度（0~1）→ `slLaunch.progressHandler`（不节流，UI 侧自行做「只前进」钳制）
     case progress(Double)
-    /// 桥接相位名（`downloading` / `launching`）→ `pclLaunch.phaseHandler`
+    /// 桥接相位名（`downloading` / `launching`）→ `slLaunch.phaseHandler`
     case phase(String)
-    /// 游戏日志行 → `pclLaunch.logHandler`
+    /// 游戏日志行 → `slLaunch.logHandler`
     case log(String)
-    /// 启动器引用就绪（此时进程尚未拉起）→ `pclLaunch.onLauncherReady`
+    /// 启动器引用就绪（此时进程尚未拉起）→ `slLaunch.onLauncherReady`
     case launcherReady(MinecraftLauncher)
-    /// 游戏窗口已出现，或进程以退出码 0 结束 → `pclLaunch.launchSuccess`
+    /// 游戏窗口已出现，或进程以退出码 0 结束 → `slLaunch.launchSuccess`
     case running
-    /// 进程退出（含退出码）→ `pclLaunch.completion` 的 `.success` 分支
+    /// 进程退出（含退出码）→ `slLaunch.completion` 的 `.success` 分支
     case finished(LaunchResult)
-    /// 启动失败（携带桥接层原始错误）→ `pclLaunch.completion` 的 `.failure` 分支。
+    /// 启动失败（携带桥接层原始错误）→ `slLaunch.completion` 的 `.failure` 分支。
     /// 携带原始 `Error` 而非 `LaunchError`：桥接层文案尚未类型化（见 DUAL_FLOW.md 风险点 R5），
     /// 转成 `LaunchError` 会改变 UI 展示文案，迁移期必须保持原文案。
     case failed(Error)
@@ -133,7 +133,7 @@ public final class MinecraftInstanceLaunchService: LaunchService, @unchecked Sen
 
     @discardableResult
     public func launch(_ request: LaunchRequest) async throws -> LaunchResult {
-        // 启动前参数预处理：离线用户名校验（原桥接层 pclLaunchInternal 首段上移至用例层，判定逐条等价）
+        // 启动前参数预处理：离线用户名校验（原桥接层 slLaunchInternal 首段上移至用例层，判定逐条等价）
         let safeUsername = try Self.validatedUsername(request.offlineUsername)
         let sessionID = UUID()
         let startedAt = Date()
@@ -147,7 +147,7 @@ public final class MinecraftInstanceLaunchService: LaunchService, @unchecked Sen
         await sessionStore?.update(.preparing, for: sessionID)
 
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<LaunchResult, Error>) in
-            pclLaunch(
+            slLaunch(
                 version: request.version,
                 username: safeUsername,
                 gameDir: request.gameRoot.path,
@@ -277,7 +277,7 @@ public final class MinecraftInstanceLaunchService: LaunchService, @unchecked Sen
 
     /// 离线用户名预处理（PCL2 风格）：trim → 空则取 `"Player"` → 校验（非空 / 无英文引号 / ≤16 UTF-16 code unit）。
     ///
-    /// 判定与兜底逐条移植自原桥接层 `pclLaunchInternal` 首段（该段已在本次改动中删除），
+    /// 判定与兜底逐条移植自原桥接层 `slLaunchInternal` 首段（该段已在本次改动中删除），
     /// 校验规则仍由唯一的 `validateOfflineUsername` 提供，未新增任何规则。
     /// 已论证的等价性：
     ///  - 判定与兜底：trim / 空值取 `"Player"` / 同一校验函数，且仍在「实例解析之前」执行，失败时机不变；

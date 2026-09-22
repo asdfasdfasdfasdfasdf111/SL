@@ -40,7 +40,7 @@
 | 10 | 工程配置清理 | `5e410aa` | 删除 iOS/visionOS 残留，`SUPPORTED_PLATFORMS = macosx` | 低 |
 | 11 | UI 收口（第一批） | `0c0fd53` | `ContentView` 297 → 216 行，抽出 3 个 ViewModel | 中 |
 | 12 | 测试体系 | `35d9a61` | 65 个单元测试（Java 选择 / 下载校验 / 分片合并 / 状态边界） | 低 |
-| 13 | **大文件按职责拆分** | `48ad4f4` `c7c3250` `a5f639b` `a6c0bed` | PCLCore 七个大文件与两个 UI 大文件按职责拆分（纯搬迁）。最大文件 889 → 487 行。**拆分后真机编译 BUILD SUCCEEDED** | 中 |
+| 13 | **大文件按职责拆分** | `48ad4f4` `c7c3250` `a5f639b` `a6c0bed` | SLCore 七个大文件与两个 UI 大文件按职责拆分（纯搬迁）。最大文件 889 → 487 行。**拆分后真机编译 BUILD SUCCEEDED** | 中 |
 | 14 | **真实编译打通** | `d95064c` | 修掉拆分引入的 5 个编译错误，`verify-build.sh` 可用 | — |
 | 15 | **qwqTests 接入工程** | `8172dbf` | 测试 target + scheme + `verify-test.sh`；**TEST BUILD SUCCEEDED**，14 文件 180 用例可编译 | 中 |
 | 16 | 一批确认缺陷修复 | `6d0541f` `ade90b3` `ab02506` `2364ea4` `3c028fb` | 下载核心 3 条、加载器 4 条、清单 2 条、UI 2 条；弹入动画接线 | 中 |
@@ -58,9 +58,9 @@
 | B | `qwqTests` 加入工程 target | 中 | ✅ **已完成**（`8172dbf`）：可编译；**运行**需在 Terminal（脱离 AI 沙箱）执行 `./scripts/verify-test.sh run`，AI 沙箱内 testmanagerd 的 XPC 连接会被阻断 |
 | C | UI 剩余职责 | 中 | ✅ **已收口**（`6801bb6`）：抽出 `GameCategoryViewModel` / `DownloadCategoryViewModel+Orchestration` / `LaunchEntryViewModel`，`ModDetailViewModel` 补 `performDownload`。**窗口壳 / `searchText` / `isDropTargeted` / 画布手势与 spring 参数位于冻结的 `qwq/App`**，本轮不可动；`ModDetailView.settings` 订阅与 `CategoryContentView.searchText` 因无法静态证否而保留并记录 |
 | D | 启动缺陷 D1–D6 | 中 | ✅ **已全部收口**：D1 按你的决定落地——缺客户端文件 → 拦住不启动 + 弹窗（样式对齐「下载中」气泡），见 `708b3f9`；D2–D6 由 `cb93219` 修复（启动链路 5 处）。另 D7/D8 由 `03820d9` 修复。**§三 九条缺陷已全部关闭** |
-| E | 旧兼容层清理（`PCLStubs` / `PCLLaunchBridge`） | 中-高 | **被 F 阻塞**：需先完成双流程合并，否则会断掉回退路径。`PCLStubs` 487 行，普查出 9 项无引用 |
+| E | 旧兼容层清理（`Stubs` / `SLLaunchBridge`） | 中-高 | **被 F 阻塞**：需先完成双流程合并，否则会断掉回退路径。`Stubs` 487 行，普查出 9 项无引用 |
 | F | 双启动流程合并 | **高** | 🟡 **验证门槛已过，合并本体未开始**：真机启动已由 AI 跑通（见 §七 证据），且走的是 `LaunchCoordinator` → 用例层 → 桥接的**生产同一条路径**。合并本体的四个验证点（Java 扫描等待、日志 flush、进程退出回调时序、`skipResourceCheck` 语义）现在是可跑可测的，不再是「AI 无法代跑」 |
-| G | 配置回退遗留残留清理（`LockCompat` / `CompatModifiers`） | 低 | ✅ **已完成**（未提交）：根因是 `17cca21` 把部署目标由 12.0 回退到 13.0 时**只改 `project.pbxproj` 4 行、未清理为 12 写的兼容层**，两者从此成为孤儿。已删除 `PCLCore/Utils/LockCompat.swift`、`UI/CompatModifiers.swift`（等 2 个文件），`withUnfairLock` → `OSAllocatedUnfairLock`、`withLockCompat` → 原生 `withLock`、`contentTransitionOpacityCompat` → 原生 `.contentTransition(.opacity)`，`semaphoreWait` 迁至 `PCLCore/Utils/NoasyncBridge.swift`。判定依据是用户既定决定「macOS 12 支持单独隔离处理、主目标锁定 13.0」。**验证**：两口径 0 错误且告警集合与基线逐条一致（44/56），真实 `xcodebuild` 编译通过 |
+| G | 配置回退遗留残留清理（`LockCompat` / `CompatModifiers`） | 低 | ✅ **已完成**（未提交）：根因是 `17cca21` 把部署目标由 12.0 回退到 13.0 时**只改 `project.pbxproj` 4 行、未清理为 12 写的兼容层**，两者从此成为孤儿。已删除 `SLCore/Utils/LockCompat.swift`、`UI/CompatModifiers.swift`（等 2 个文件），`withUnfairLock` → `OSAllocatedUnfairLock`、`withLockCompat` → 原生 `withLock`、`contentTransitionOpacityCompat` → 原生 `.contentTransition(.opacity)`，`semaphoreWait` 迁至 `SLCore/Utils/NoasyncBridge.swift`。判定依据是用户既定决定「macOS 12 支持单独隔离处理、主目标锁定 13.0」。**验证**：两口径 0 错误且告警集合与基线逐条一致（44/56），真实 `xcodebuild` 编译通过 |
 | H | 默认窗口尺寸 900×660 现无生效声明 | 低 | ⏸ **待你拍板，未动**：`e62d7f3`（降 12.0）删掉了 `qwqApp.swift` 的 `.defaultSize(width: 900, height: 660)`，改用 `AppDelegate` 里 `if #unavailable(macOS 13.0)` 的兜底；`17cca21` 回退到 13.0 后该分支**永不执行**（四处目标均为 13.0），而更晚的 `e624d33` 窗口尺寸审计只处理了 **minSize**、未发现 defaultSize 已丢。现状：全库无任何地方声明默认窗口尺寸（`ContentView.swift` 的 900×650 在 `PreviewProvider` 里，仅预览）。修法一行：在 `.windowStyle` 后恢复 `.defaultSize(width: 900, height: 660)`。属用户可见的行为改动，按规矩先问。**注**：曾尝试用 `CGWindowListCopyWindowInfo` 实测窗口尺寸，量得 81×102 且与 `.frame(minWidth: 800, minHeight: 590)` 下限矛盾，说明该环境下窗口未正常布局，**故不以实测为据**，仅采信代码事实 |
 
 
@@ -149,10 +149,10 @@ SL_DEBUG_AUTO_LAUNCH=1 SL_DEBUG_AUTO_LAUNCH_DELAY=4 \
 
 ```
 [21:31:42.624] [DEBUG] MinecraftInstanceJava.swift:32: 沿用缓存 Java: microsoft-25.jdk (major=25, 需要>=25)
-[21:31:44.653] [INFO]  PCLLaunchBridge.swift:190: 启动前补全完成：缺失的库/资源已补齐
-[21:31:44.657] [INFO]  PCLLaunchBridge.swift:249: 最低 Java 要求: 25 (manifest.javaVersion = 25, 版本推断 = 21)
-[21:31:44.658] [INFO]  PCLLaunchBridge.swift:307: Java 版本校验: major=25, 要求>=25, 满足=true
-[21:31:44.658] [INFO]  PCLLaunchBridge.swift:313: Java 架构与系统兼容，使用直接运行
+[21:31:44.653] [INFO]  SLLaunchBridge.swift:190: 启动前补全完成：缺失的库/资源已补齐
+[21:31:44.657] [INFO]  SLLaunchBridge.swift:249: 最低 Java 要求: 25 (manifest.javaVersion = 25, 版本推断 = 21)
+[21:31:44.658] [INFO]  SLLaunchBridge.swift:307: Java 版本校验: major=25, 要求>=25, 满足=true
+[21:31:44.658] [INFO]  SLLaunchBridge.swift:313: Java 架构与系统兼容，使用直接运行
 [21:31:50.102] [INFO]  MinecraftLauncher.swift:143: 窗口已出现
 ```
 
@@ -176,7 +176,7 @@ SL_DEBUG_AUTO_LAUNCH=1 SL_DEBUG_AUTO_LAUNCH_DELAY=4 \
 ```
 [21:34:08.198] [ERROR] MinecraftVersion.swift:61: 版本清单加载时机错误，请将此问题报告给开发者
 [21:34:08.199] [DEBUG] MinecraftInstanceJava.swift:32: 沿用缓存 Java: microsoft-25.jdk (major=25, 需要>=25)
-[21:34:08.200] [INFO]  PCLLaunchBridge.swift:167: 客户端 JAR 校验失败：…/26.2-Fabric.jar（文件不存在：26.2-Fabric.jar）
+[21:34:08.200] [INFO]  SLLaunchBridge.swift:167: 客户端 JAR 校验失败：…/26.2-Fabric.jar（文件不存在：26.2-Fabric.jar）
 ```
 
 - 距清单加载只隔 **2 毫秒**；**没有**「启动前补全完成」这一行 → `LaunchFix` 一次都没跑
@@ -190,5 +190,5 @@ SL_DEBUG_AUTO_LAUNCH=1 SL_DEBUG_AUTO_LAUNCH_DELAY=4 \
   任务状态气泡与失败提示渲染的是同一个类型、同一个锚点、同一套入场退场动画，
   样式**由代码保证相同**，不存在两边各改一半的余地。两个入口唯一的差异是停留时长
   （1.5s → 6s，失败提示是用户唯一能看到的失败原因，一闪而过等于没提示）。
-- `F` 的合并本体（把 `MinecraftInstance.launch` 与 `pclLaunch` 合成一条）**尚未开始**，
+- `F` 的合并本体（把 `MinecraftInstance.launch` 与 `slLaunch` 合成一条）**尚未开始**，
   本轮只打通了它的验证手段。

@@ -3,7 +3,7 @@ import os
 
 /// Java 解析的同步桥接层。
 ///
-/// 背景：`PCLLaunchBridge.pclLaunchInternal` 运行在同步上下文里（内部用 `DispatchSemaphore`
+/// 背景：`SLLaunchBridge.slLaunchInternal` 运行在同步上下文里（内部用 `DispatchSemaphore`
 /// 等待扫描结果），而统一的 `JavaResolver` 是 async 接口。直接把启动桥改成异步会牵动
 /// 整条进程启动链路，风险过高。
 ///
@@ -11,7 +11,7 @@ import os
 /// 失败或超时返回 `nil`，由调用方回退到旧链路，保证行为不退化。
 ///
 /// 调用方实际所在线程（实读调用链，结论见 `docs/SWIFT_LANGUAGE_CHECKLIST.md` §8.2）：
-/// `pclLaunchInternal` 由 `PCLLaunchBridge.pclLaunch` 内的
+/// `slLaunchInternal` 由 `SLLaunchBridge.slLaunch` 内的
 /// `DispatchQueue.global(qos: .userInitiated).async` 驱动，恒运行在 GCD 全局并发队列的工作线程上，
 /// **不在主线程**；因此本桥接正常路径仍会阻塞等待，阻塞的是该 GCD 线程而非 UI 线程。
 /// 头部的主线程判断是为「将来有人从 MainActor 直接调用」这一情形兜底，而非当前路径的常态。
@@ -76,7 +76,7 @@ nonisolated enum JavaResolverBridge {
                 (JavaRequirement(
                     minimumMajor: max(0, minimumMajor),
                     mcVersion: mcVersion,
-                    remarks: "PCLLaunchBridge 同步桥接"
+                    remarks: "SLLaunchBridge 同步桥接"
                 ), DefaultJavaResolver())
             }
 

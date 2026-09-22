@@ -1,6 +1,6 @@
 //
 //  DefaultDownloadVerifier.swift
-//  PCL.Mac
+//  SL启动器
 //
 //  适配器：下载结果校验。
 //  - 协议方法复用已有的 `CryptoKitDownloadVerifier`（流式 SHA1/SHA256 + 大小）；

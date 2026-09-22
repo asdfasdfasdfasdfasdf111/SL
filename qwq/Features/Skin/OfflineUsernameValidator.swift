@@ -1,7 +1,7 @@
 import Foundation
 
 // MARK: - 离线用户名合法性提示（自 CategoryContentView 拆出，PCL2 语义）
-// 与 PCLCore.validateOfflineUsername（启动前硬校验）互补：这里只算「提示文案」，
+// 与 SLCore.validateOfflineUsername（启动前硬校验）互补：这里只算「提示文案」，
 // 不弹窗、不打断，供输入框下方内联展示。
 
 enum OfflineUsernameValidator {

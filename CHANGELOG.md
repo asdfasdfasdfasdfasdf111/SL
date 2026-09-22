@@ -6,10 +6,10 @@
 
 **背景**：`17cca21`「部署目标回退至 macOS 13.0」只改了 `project.pbxproj` 的 4 行（2 增 2 删），**没有清理**此前为 macOS 12.0 目标（`e62d7f3`）增补的兼容代码——这些代码从此成为死状态。按既定决定（macOS 12 支持单独隔离处理、主目标锁定 13.0）予以清理。
 
-- **并发**：删除 `PCLCore/Utils/LockCompat.swift`
+- **并发**：删除 `SLCore/Utils/LockCompat.swift`
   - `withUnfairLock`（`os_unfair_lock` 作值类型属性 + `&lock` 取地址）→ `ModrinthSearchCache` 改用 `OSAllocatedUnfairLock`（macOS 13.0+）。Apple 文档明确警告前者的不安全之处：「it's unsafe to use `os_unfair_lock` from Swift because it's a value type… Instead, use `OSAllocatedUnfairLock`, which avoids that pitfall」。同时把 `cached` / `inFlight` **并入锁所保护的状态**，此后无任何路径能在不持锁时访问这两个字典。因泛型 `Value` 无约束、而 `withLock` 要求 `R: Sendable` 且闭包 `@Sendable`，故使用官方等价变体 `withLockUnchecked`（加锁语义完全相同，仅不做 Sendable 检查）
   - `NSLock.withLockCompat`（冗余：`NSLock.withLock` 在 SDK 中声明为 `macOS 10.10+` 并经 `@_alwaysEmitIntoClient` 回部署，本项目 13.0 目标本就直接可用）→ Translation 模块 5 处改用原生 `withLock`；两处闭包单表达式的返回值非 Void，补 `_ =` 承接原 `@discardableResult` 的「显式丢弃」语义
-  - `semaphoreWait` **保留**（它是 Swift 书认可的 `noasync` 正规规避方式），迁至 `PCLCore/Utils/NoasyncBridge.swift` 并订正注释
+  - `semaphoreWait` **保留**（它是 Swift 书认可的 `noasync` 正规规避方式），迁至 `SLCore/Utils/NoasyncBridge.swift` 并订正注释
 - **SwiftUI**：删除 `UI/CompatModifiers.swift`——其立论前提「项目最低部署目标为 macOS 12」与工程实际（四处均为 `MACOSX_DEPLOYMENT_TARGET = 13.0`，无 xcconfig 覆盖）不符，且 `defaultFocusCompat` 全库零调用方 → `ContentCard.swift` 改用原生 `.contentTransition(.opacity)`
 - **验证**：`./scripts/typecheck.sh` 两口径 **0 错误**，告警**集合逐条等于基线**（口径一 44 / 口径二 56，用 `git archive HEAD` 导出基线单独实测后 diff 得出）；`./scripts/verify-build.sh` 真实 `xcodebuild` **编译通过，0 错误**
 - **顺带发现（未改，待确认）**：**默认窗口尺寸 900×660 现已无任何生效声明**。`e62d7f3` 删掉了 `qwqApp.swift` 的 `.defaultSize(width: 900, height: 660)`，改用 `AppDelegate` 中 `if #unavailable(macOS 13.0)` 的兜底；`17cca21` 把部署目标回退到 13.0 后该分支永不执行，兜底实际从未生效；而 `e624d33` 那次窗口尺寸审计只覆盖了 **minSize**，未发现 defaultSize 已丢失。修法一行：在 `.windowStyle` 后恢复 `.defaultSize(width: 900, height: 660)`——属用户可见的行为改动，本次仅订正注释并记录，未实施
@@ -23,7 +23,7 @@
 ## 编译警告清零（2026-08-17）
 
 - 全项目编译警告 34 → **0**（macOS 12 目标、Swift 5 语言模式全量构建验证）
-- 并发：新增 `PCLCore/Utils/LockCompat.swift`，`withUnfairLock` / `NSLock.withLockCompat` / `semaphoreWait` 同步中转函数（Apple 建议的 `OSAllocatedUnfairLock` 需 macOS 13，本方案 12 可用且加锁语义与原 lock/unlock 配对完全一致）；`ModpackDownloader`、`ModDownloader`、`SearchTranslator`、`TranslationService` 中 async 上下文内的裸锁调用全部改为作用域锁，去重逻辑保持「检查+登记」原子性
+- 并发：新增 `SLCore/Utils/LockCompat.swift`，`withUnfairLock` / `NSLock.withLockCompat` / `semaphoreWait` 同步中转函数（Apple 建议的 `OSAllocatedUnfairLock` 需 macOS 13，本方案 12 可用且加锁语义与原 lock/unlock 配对完全一致）；`ModpackDownloader`、`ModDownloader`、`SearchTranslator`、`TranslationService` 中 async 上下文内的裸锁调用全部改为作用域锁，去重逻辑保持「检查+登记」原子性
 - Sendable：`CardTranslationModel` weak self 捕获改为进 `MainActor.run` 前拷成强引用常量（写回仍受 `isActive` 守卫）；`ModFileDownloadStarter` 捕获 var 改常量拷贝、移除未使用捕获
 - 机械项：删除无意义 `try?`（2 处）、`withAnimation` 结果丢弃（1 处）、多余的 `nonisolated(unsafe)`（2 处）
 
@@ -44,7 +44,7 @@
 
 - 新增 `README.md`（项目介绍、功能状态清单、构建说明、PCL2/PCLMac 致谢与引用说明）与 `LICENSE`（GPL-3.0），修复公开仓库无许可证即默认保留所有权利的问题
 - 修复 Bundle ID：`-23.qwq`（横杠开头，不合法）→ `io.github.asdfasdfasdfasdfasdf111.SL`（按 GitHub 用户名反向域名约定）
-- 源码目录重组：`qwq/` 下 88 个平铺的 Swift 文件按功能归入 `App/`、`Features/`（Launch / Game / Download / ModBrowser / Translation / Skin / Java / Settings）、`Services/`、`UI/`，与既有的 `PCLCore/`、`Models/` 结构统一；纯磁盘移动，未改动任何代码
+- 源码目录重组：`qwq/` 下 88 个平铺的 Swift 文件按功能归入 `App/`、`Features/`（Launch / Game / Download / ModBrowser / Translation / Skin / Java / Settings）、`Services/`、`UI/`，与既有的 `SLCore/`、`Models/` 结构统一；纯磁盘移动，未改动任何代码
 - 根目录清理：删除空的 `build_and_run.sh`；`crawl_modrinth.py`、`slice_merge.swift`、`test_catalog.swift` 移入 `scripts/`
 - `.gitignore`：本地构建目录合并为 `/build_*/` 通配
 
@@ -58,7 +58,7 @@
 新增检测响应数据复用：加载器支持检测请求到的版本数组（Fabric/Quilt loader 数组、Forge/NeoForge 版本数组）存入内存缓存，下载时 LoaderVersionResolver 直接复用解析加载器最新版本号，检测与下载解析不再各请求一次同一端点
 
 优化 build_audit/（303MB ASan 审计构建产物目录）加入 .gitignore 忽略，与 build_asan/、build_asan2/、build_asan3/ 等同系列构建目录统一不再入库
-优化游戏日志管道解码：readabilityHandler 的 availableData 边界不是 UTF-8 字符/日志行边界，逐块解码会让多字节中文/emoji 跨块变乱码、长行被拆成两行；改为跨回调保留尾部字节的缓冲区，仅在遇到换行符才解码整行（与 PCLLaunchBridge 增量日志读取同款方案），非法 UTF-8 行丢弃、不再产生替换乱码
+优化游戏日志管道解码：readabilityHandler 的 availableData 边界不是 UTF-8 字符/日志行边界，逐块解码会让多字节中文/emoji 跨块变乱码、长行被拆成两行；改为跨回调保留尾部字节的缓冲区，仅在遇到换行符才解码整行（与 SLLaunchBridge 增量日志读取同款方案），非法 UTF-8 行丢弃、不再产生替换乱码
 优化导航栏分类切换动画：从 Downloads 中旧版同名工程直接移回原始分类画布实现——所有分类页完整横向 HStack 排布，点击导航使用旧版 spring（response 0.6 / damping 0.65 / blend 0.15）连续滑动，从第 1 项跳到第 5 项会真实经过中间页面；恢复 DragGesture.onChanged 实时跟手与松手 25% 阈值切页/原位回弹。替换当前版「仅当前页+起点页完整、其余轻量占位」方案，同时保留下载详情覆盖层及其导航栏常驻逻辑
 优化加载器检测请求：每加载器从「每端点 2 次重试 × 8s 超时」收敛为单请求 4s 请求 / 6s 资源超时（列表展示无需下载级等待），最坏等待从 16~32 秒降至 4 秒级；双源加载器（Fabric/Quilt）改为主源立即请求 + 700ms 后并行备用源的延迟并发，不再等主源完整超时才兜底
 优化同版本请求合并：同一 MC 版本的并发检测（详情页重复进入 / 切回 / 预加载与前台同时触发）复用同一个 in-flight 检测任务，绝不重复向四个加载器端点发请求
@@ -123,7 +123,7 @@
 新增分类切换画布平移动画：从分类 1 切到 5 时动画真实经过 2/3/4 中间页（快速、非线性），中间页只渲染「图标+名称」轻量占位（零数据加载、零网络请求），后台不同时实例化 5 个完整页面，整页滑过的动画感与性能两者兼得
 新增模组版本多级降级匹配：精确过滤失败后自动按「精确版本 → 主版本前缀（1.20 ↔ 1.20.x）→ 放弃加载器过滤 → 最新版本」逐级放宽，不再因版本号细微差异（如 1.20 与 1.20.1、快照版）直接报「未找到兼容的模组版本」
 
-优化单文件下载多源化：原版 json / 资源索引 / 原版 jar 全部改为「主源+镜像源」双 URL 顺序下载（PCLNetFile 多源失败切换），原版 jar 下载失败不再卡死在官方源
+优化单文件下载多源化：原版 json / 资源索引 / 原版 jar 全部改为「主源+镜像源」双 URL 顺序下载（SLNetFile 多源失败切换），原版 jar 下载失败不再卡死在官方源
 优化下载源测速切换：测速下载失败即时切换镜像源（测速失败本身就是官方源不可用的强信号），且不再在每次测速时把已切到镜像的源重置回官方（旧实现切换是一次性的）
 优化下载源状态线程安全：源状态加 NSLock 保护，消除后台测速 Task 写入与读取方之间的数据竞争
 

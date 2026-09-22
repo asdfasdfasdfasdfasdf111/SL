@@ -50,7 +50,7 @@ View → ViewModel → UseCase → Service → Infrastructure
 
 ## 五、Java 模块
 
-问题：Java 数据源此前分裂成四套（`DataManager.javaVirtualMachines`、`LauncherSettings.availableJavaList`、`JavaManager`、`MinecraftInstance.findSuitableJava`），`PCLLaunchBridge` 里还有一条四级降级链。
+问题：Java 数据源此前分裂成四套（`DataManager.javaVirtualMachines`、`LauncherSettings.availableJavaList`、`JavaManager`、`MinecraftInstance.findSuitableJava`），`SLLaunchBridge` 里还有一条四级降级链。
 
 新增（`qwq/Features/Java/`）：
 
@@ -72,7 +72,7 @@ View → ViewModel → UseCase → Service → Infrastructure
 
 ## 七、启动模块
 
-问题：存在两套启动流程（`MinecraftInstance.launch()` 与 `pclLaunchInternal()`），`LaunchFix` 是"什么缺了都由我修"的上帝对象。
+问题：存在两套启动流程（`MinecraftInstance.launch()` 与 `slLaunchInternal()`），`LaunchFix` 是"什么缺了都由我修"的上帝对象。
 
 新增（`qwq/Features/Launch/`）：`LaunchRequest`、`LaunchState`、`LaunchResult`、`LaunchError`、`LaunchPreflight`（含 client / library / asset / natives 四类校验的拆分）、`LaunchArgumentBuilder`、`GameProcessController`、`GameSessionStore`、`LaunchService`。
 
@@ -91,7 +91,7 @@ View → ViewModel → UseCase → Service → Infrastructure
 3. Java 模块 —— **结构已完成，待接线**
 4. 下载模块 —— **结构已完成，待接线**
 5. 启动模块 —— **结构已完成，待接线**
-6. 账号与伪实现治理（`PCLStubs` 中 `AnyAccount.microsoft` / `.yggdrasil` 实为 `OfflineAccount`，需改为明确报错）
+6. 账号与伪实现治理（`Stubs` 中 `AnyAccount.microsoft` / `.yggdrasil` 实为 `OfflineAccount`，需改为明确报错）
 7. ModBrowser / Minecraft / Skin / Theme 模块化
 8. UI 收口（`ContentView` 只保留窗口壳、导航、全局任务入口）
 9. 工程配置清理（移除 `project.pbxproj` 中的 iOS / visionOS 配置，统一部署目标）
@@ -101,6 +101,6 @@ View → ViewModel → UseCase → Service → Infrastructure
 新模块目前是"只新增、未接线"状态：既有代码行为完全未变。接线需要满足：
 
 - 能对整个工程执行编译验证（当前受 Swift Package 依赖解析限制）
-- `PCLLaunchBridge` 的 Java 选择段是同步上下文（内部用 `DispatchSemaphore` 忙等扫描），改成 async resolver 需要同步改造整个桥接函数
+- `SLLaunchBridge` 的 Java 选择段是同步上下文（内部用 `DispatchSemaphore` 忙等扫描），改成 async resolver 需要同步改造整个桥接函数
 
 因此接线按模块逐步进行，每接一处跑一次编译验证。

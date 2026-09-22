@@ -67,7 +67,7 @@ xcrun swiftc -typecheck \
 | --- | --- | --- |
 | `-sdk` / `-F "$FW"` / `-I "$LIB"` | `no such module 'XCTest'` | `XCTest` 的 Swift 模块不在 SDK 里，位于 Xcode 的 MacOSX Platform Developer 目录 |
 | `-module-name qwq` | `no such module 'qwq'` | 不加时所有源文件被视为无模块名，`@testable import qwq` 无从解析 |
-| `-I /tmp/deps` | `no such module 'SwiftyJSON'`（`PCLCore/Utils/Requests.swift`） | 第三方依赖（SwiftyJSON / ZIPFoundation）以预编译模块放在 `/tmp/deps` |
+| `-I /tmp/deps` | `no such module 'SwiftyJSON'`（`SLCore/Utils/Requests.swift`） | 第三方依赖（SwiftyJSON / ZIPFoundation）以预编译模块放在 `/tmp/deps` |
 
 单模块编译下，`@testable import qwq` 会产生一条
 `file ... is part of module 'qwq'; ignoring import` 警告，属预期，不影响结果。
@@ -114,22 +114,22 @@ func preScan() {
 - `ModuleRegistryTests.swift` → `Core/Module/SLModule.swift`、`ModuleRegistry.swift`、`Features/Settings/AppSettingsStore.swift`
 - `JavaResolverBridgeTests.swift` → `Features/Java/` 下 `JavaResolverBridge.swift`、`JavaResolver.swift`、
   `JavaRepository.swift`、`JavaRequirement.swift`、`JavaInstallation.swift`、`JavaInfo.swift`
-- `NoticeCenterTests.swift` → `UI/Notices/NoticeCenter.swift`、`PCLCore/PCLStubs.swift`
+- `NoticeCenterTests.swift` → `UI/Notices/NoticeCenter.swift`、`SLCore/Stubs.swift`
 - `NavigationStateTests.swift` → `App/ViewModels/NavigationState.swift`、`Features/ModBrowser/Category.swift`、`Features/Download/DownloadDetailManager.swift`
 - `LaunchPanelStateTests.swift` → `App/ViewModels/LaunchPanelState.swift`、`Features/Settings/ThemeManager.swift`
 - `HomeInteractionStateTests.swift` → `App/ViewModels/HomeInteractionState.swift`
 - `DropInstallCoordinatorTests.swift` → `App/ViewModels/DropInstallCoordinator.swift`、`Features/ModBrowser/ModVersionDetector.swift`、`Services/DragDropHandler.swift`
 - `DownloadAdapterTests.swift` → `Core/Download/DownloadSourceResolver.swift`、`Adapters/` 下
   `DefaultDownloadSourceResolver.swift`、`DefaultDownloadVerifier.swift`、`NetDownloaderDownloadEngine.swift`、
-  `PCLCore/Download/NetDownloader.swift`、`MultiFileDownloader.swift`、`DownloadSourceManager.swift`
+  `SLCore/Download/NetDownloader.swift`、`MultiFileDownloader.swift`、`DownloadSourceManager.swift`
 - `JavaResolverTests.swift` → `Features/Java/` 下 `JavaResolver.swift`、`JavaInstallation.swift`、
-  `JavaRequirement.swift`、`JavaInfo.swift`，外加 `PCLCore` 的 `Architecture.swift`、
+  `JavaRequirement.swift`、`JavaInfo.swift`，外加 `SLCore` 的 `Architecture.swift`、
   `Java/JavaVirtualMachine.swift`、`Utils/MyLocalizedError.swift`、`Utils/PropertiesParser.swift`
 
 > `JavaResolverTests` 的命令行校验有个已知折中：被测主体（`JavaResolver` / `JavaInstallation` /
 > `JavaRequirement` / `JavaVirtualMachine`）都是真实源码，但三处**直接依赖**用签名一致的替身
 > 顶替，否则会牵出整条依赖链（`JavaRepository` → `JavaManager` → `LauncherSettings` /
-> `AppContext` / SwiftUI；`URL.parent()` 所在的 `PCLStubs.swift` 依赖 `VersionManifest` /
+> `AppContext` / SwiftUI；`URL.parent()` 所在的 `Stubs.swift` 依赖 `VersionManifest` /
 > `MinecraftDirectory`；全局 `err()` 所在的 `LogManager.swift` 依赖 `SharedConstants`）。
 > 替身放在 `/tmp`，不入库；在 Xcode 里跑真身 target 时不受此影响。
 

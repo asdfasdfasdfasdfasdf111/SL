@@ -1,6 +1,6 @@
 //
 //  DownloadMerger.swift
-//  PCL.Mac
+//  SL启动器
 //
 //  分片合并。旧实现在 `NetManager.merge` 里同时处理覆盖策略、拼接、
 //  临时文件清理与校验；这里只保留「按序拼成目标文件」这一件事。

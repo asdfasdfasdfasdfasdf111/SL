@@ -5,7 +5,7 @@ Minecraft 实例领域的**只读抽象**。当前阶段只做「建立结构」
 
 ## 一、为什么只做只读
 
-`qwq/PCLCore/Minecraft/` 是启动链路的心脏，规模与耦合度如下：
+`qwq/SLCore/Minecraft/` 是启动链路的心脏，规模与耦合度如下：
 
 | 文件 | 行数 | 说明 |
 | --- | --- | --- |
@@ -18,7 +18,7 @@ Minecraft 实例领域的**只读抽象**。当前阶段只做「建立结构」
 | `MinecraftDirectory.swift` / `MinecraftVersion.swift` / `AssetIndex.swift` / `VersionManifest.swift` | 94 / 71 / 40 / 135 | 目录、版本、资源索引、版本清单 |
 
 `MinecraftInstance` 的关键约束是**构造即副作用**：`create` → `setup` → `loadConfig` / `loadManifest`
-→ `detectVersion` → `resolveAndApplyJava` → `saveConfig`（会自动挑 Java 并把结果写回 `.PCL_Mac.json`）。
+→ `detectVersion` → `resolveAndApplyJava` → `saveConfig`（会自动挑 Java 并把结果写回 `.SL.json`）。
 
 因此本阶段**只做只读抽象**，不试图改造它。UI 需要的只是「有哪些实例、各自什么版本/加载器」，
 这类查询不应触发实例初始化与配置写回。
@@ -27,15 +27,15 @@ Minecraft 实例领域的**只读抽象**。当前阶段只做「建立结构」
 
 | 文件 | 内容 | 说明 |
 | --- | --- | --- |
-| `MinecraftInstanceInfo.swift` | `MinecraftLoaderKind`、`MinecraftVersionKind`、`MinecraftInstanceInfo` | 只读快照 + PCLCore 枚举的镜像 |
+| `MinecraftInstanceInfo.swift` | `MinecraftLoaderKind`、`MinecraftVersionKind`、`MinecraftInstanceInfo` | 只读快照 + SLCore 枚举的镜像 |
 | `MinecraftRepository.swift` | `MinecraftRepository`、`DirectoryScanningMinecraftRepository` | 实例查询协议与只读扫描实现 |
 | `MinecraftModule.swift` | `MinecraftModule` | `SLModule` 实现，注册能力键 `minecraft.repository` |
 
 ### 关于两个镜像枚举
 
 `MinecraftInstance.clientBrand` 的类型 `ClientBrand` 与 `MinecraftVersion.type` 的类型 `VersionType`
-都是 PCLCore 的公开非 frozen 枚举，未声明 `Sendable`，不能作为本模块值类型快照的字段。
-故各自镜像一份（`MinecraftLoaderKind` / `MinecraftVersionKind`），取值字符串与 PCLCore 完全一致，
+都是 SLCore 的公开非 frozen 枚举，未声明 `Sendable`，不能作为本模块值类型快照的字段。
+故各自镜像一份（`MinecraftLoaderKind` / `MinecraftVersionKind`），取值字符串与 SLCore 完全一致，
 并提供单向转换。这与 `JavaArchitecture` 镜像 `Architecture` 是同一处理方式。
 
 ## 三、快照字段的来源与可得性
@@ -49,14 +49,14 @@ Minecraft 实例领域的**只读抽象**。当前阶段只做「建立结构」
 | `versionKind` | `version.type` | 清单 `type`，缺失回落 `.release` | `version.type` |
 | `loader` | `clientBrand` | 清单文本关键字判定 | `clientBrand`（可为 `quilt`） |
 | `manifestJavaVersion` | `manifest.javaVersion` | 清单 `javaVersion` | `manifest.javaVersion` |
-| `manifestPath` / `configPath` | 计算属性 | `<name>.json` / `.PCL_Mac.json` | 同左 |
+| `manifestPath` / `configPath` | 计算属性 | `<name>.json` / `.SL.json` | 同左 |
 
 两条路径的**判定口径一致**，但扫描路径的字段可得性更低：清单损坏或缺失时只会回落，
 不会像 `MinecraftInstance.create` 那样直接构造失败。
 
 ## 四、刻意没有建模的字段
 
-- **最后启动时间**：`MinecraftInstance` 与 `.PCL_Mac.json` 均**无此字段**，全库也没有任何写入点
+- **最后启动时间**：`MinecraftInstance` 与 `.SL.json` 均**无此字段**，全库也没有任何写入点
   （`grep -n "lastLaunch\|launchedAt"` → 0 命中）。可用文件系统时间近似，但需要先定义语义
   （是启动时间，还是清单被改写的时间），属新增能力，确认前不写入模型。
 - **`isUsingRosetta`**：启动时的瞬时判定结果（由所选 JVM 架构决定），不是实例的持久属性。
@@ -106,7 +106,7 @@ Minecraft 实例领域的**只读抽象**。当前阶段只做「建立结构」
 
 | 目标 | 调用点 | 状态 |
 | --- | --- | --- |
-| 实例列表 / 单实例查询 | `MinecraftDirectory.loadInnerInstances` 全库**调用点 0 处**；`MinecraftInstance.create` 的调用点集中在 `qwq/PCLCore/**` 与 `qwq/Features/Launch/Adapters/**` | 未接线：没有落在 `qwq/Core/Minecraft/Module/**` 内的调用点，而本模块本轮只允许改这一目录 |
+| 实例列表 / 单实例查询 | `MinecraftDirectory.loadInnerInstances` 全库**调用点 0 处**；`MinecraftInstance.create` 的调用点集中在 `qwq/SLCore/**` 与 `qwq/Features/Launch/Adapters/**` | 未接线：没有落在 `qwq/Core/Minecraft/Module/**` 内的调用点，而本模块本轮只允许改这一目录 |
 | UI 版本列表 | `Features/Game/GameScanService.swift:14`、`Features/Game/GameCategoryView.swift:169`、`Features/Download/ModDragInstaller.swift:15` | 未接线：走的是 `MinecraftVersionManager.getVersions(from:)`（字符串列表），与本仓储的实例快照不是同一数据结构，且调用点不在允许范围 |
 
 **接线前必须先解决的语义不一致**：`MinecraftRepository` 的默认根目录来源是

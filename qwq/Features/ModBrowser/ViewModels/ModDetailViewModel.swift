@@ -296,7 +296,7 @@ final class ModDetailViewModel: ObservableObject {
         }
     }
 
-    // MARK: - 加载器支持检测（已下沉到 PCLCore 后端：LoaderSupportChecker）
+    // MARK: - 加载器支持检测（已下沉到 SLCore 后端：LoaderSupportChecker）
     // UI 只消费结果，不直接联网、不直接读写缓存文件；内存/磁盘缓存、联网并发检测
     // 与失败回退均在核心层完成（三级策略：内存 → 磁盘 7 天 TTL → 联网，失败回退旧缓存）。
 

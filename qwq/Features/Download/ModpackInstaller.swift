@@ -153,8 +153,8 @@ class ModpackInstaller {
     /// 旧实现只 `log` + `warn` 后正常返回，调用方随即提示「整合包安装完成」——
     /// 实例实际没有加载器，模组一个都不会被加载，用户拿到的是「假成功」。
     ///
-    /// 为什么没有接线（普查结论：`qwq/PCLCore/Minecraft/Mod/Loader/**` +
-    /// `PCLCore/Minecraft/Download/LoaderInstallTasks.swift` + `MinecraftInstaller.swift`）：
+    /// 为什么没有接线（普查结论：`qwq/SLCore/Minecraft/Mod/Loader/**` +
+    /// `SLCore/Minecraft/Download/LoaderInstallTasks.swift` + `MinecraftInstaller.swift`）：
     ///  - **Fabric**：`FabricInstaller.installFabric(version:minecraftDirectory:runningDirectory:_:)`
     ///    签名可直接调用，但它写入的是 `inheritsFrom: <原版版本>` 的**加载器清单**，必须落在
     ///    独立版本目录 `<原版版本>-<加载器>`：`MinecraftInstance.loadManifest` 只认

@@ -6,12 +6,12 @@
 //
 //  | 本模型字段   | 真实来源                                                                       |
 //  | ------------ | ------------------------------------------------------------------------------ |
-//  | `id`         | `MinecraftVersion.displayName`（PCLCore/Minecraft/MinecraftVersion.swift:11）   |
+//  | `id`         | `MinecraftVersion.displayName`（SLCore/Minecraft/MinecraftVersion.swift:11）   |
 //  |              | 与 Mojang 清单条目的 `"id"`（GameVersionManifest 合并清单的取值键）同一语义     |
 //  | `type`       | 清单条目 `"type"` 原文；与 `VersionType`（同名文件 :49）的 rawValue 取值一致     |
 //  | `releaseTime`| 清单条目 `"releaseTime"` 原文（ISO8601 字符串，按字符串比较即得时间先后）        |
 //  | `manifestURL`| 清单条目 `"url"`（该版本的客户端清单地址）                                       |
-//  | `client`     | `ClientManifest`（PCLCore/Minecraft/ClientManifest.swift:11）公开属性快照        |
+//  | `client`     | `ClientManifest`（SLCore/Minecraft/ClientManifest.swift:11）公开属性快照        |
 //
 //  版本类型不另建枚举，直接复用既有 `MinecraftVersionKind`
 //  （Core/Minecraft/Module/MinecraftInstanceInfo.swift:68，镜像 `VersionType`）。

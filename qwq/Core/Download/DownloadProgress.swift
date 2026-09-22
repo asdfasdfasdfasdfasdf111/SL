@@ -1,6 +1,6 @@
 //
 //  DownloadProgress.swift
-//  PCL.Mac
+//  SL启动器
 //
 //  下载进度快照。由调度器周期性产出，经 `DownloadState.downloading` 向订阅方发布。
 //

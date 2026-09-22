@@ -11,7 +11,7 @@
 | --- | --- | --- |
 | `Features/Settings/ThemeManager.swift:21` | `ThemeManager.shared.accentColor`（`@Published`，didSet 归档 `NSColor` 写 `UserDefaults[UDK.accentColor]`） | **当前唯一生效的主题来源**，约 19 处视图以 `@ObservedObject var theme = ThemeManager.shared` 读取 |
 | `Features/Settings/AppSettingsStore.swift:18` | `accentColor`（`@Published`，didSet 写同一个 `UserDefaults[UDK.accentColor]`） | 设置模块的存储点，已注册为能力键 `settings.store` |
-| `PCLCore/PCLStubs.swift:342` | `Theme`（桩实现，仅 `id` 字段，`load(id:)` 不读文件不解析配色） | **不参与任何渲染**，属历史遗留接口 |
+| `SLCore/Stubs.swift:342` | `Theme`（桩实现，仅 `id` 字段，`load(id:)` 不读文件不解析配色） | **不参与任何渲染**，属历史遗留接口 |
 
 需要注意的一致性问题：前两者是**两个独立的内存副本**，写的是同一个 UserDefaults 键。
 `ThemeManager` 与 `AppSettingsStore` 各自在 `init` 时读取一次，之后互不通知，
@@ -34,7 +34,7 @@
 现有实现中真实可主题化的内容只有强调色一项：
 
 - `ThemeManager` / `AppSettingsStore` 都只提供 `accentColor`；
-- `PCLStubs.Theme` 的 `id` 不具备渲染语义（`Theme.load(id:)` 只做对象构造）；
+- `Stubs.Theme` 的 `id` 不具备渲染语义（`Theme.load(id:)` 只做对象构造）；
 - 全库不存在主题目录、明暗变体、字体、圆角等配置。
 
 因此 `ThemeDefinition` 只声明 `accentColor`。**不虚构尚未存在的配置项**，
@@ -45,9 +45,9 @@
 - **写入（切换强调色）**：`ColorPickerView.swift:29` 现在直接写
   `theme.accentColor = color`（即写 `ThemeManager`）。写入能力的收窄属设置模块职责，
   且 `AppSettingsStore.swift` 本轮不允许修改，故本阶段服务保持只读。
-- **明暗模式**（`AppSettings.ColorSchemeOption`）：`PCLStubs.AppSettings` 中的 `ColorSchemeOption`
+- **明暗模式**（`AppSettings.ColorSchemeOption`）：`Stubs.AppSettings` 中的 `ColorSchemeOption`
   属桩字段，无写入点，与主题渲染无关联。
-- **`PCLStubs.Theme`**：桩实现，无渲染语义，不纳入也不删除（删除需改既有文件）。
+- **`Stubs.Theme`**：桩实现，无渲染语义，不纳入也不删除（删除需改既有文件）。
 
 ## 五、迁移步骤（后续执行，当前未做任何改动）
 
@@ -69,7 +69,7 @@
 验收：`context.require(ModuleCapabilityKey<ThemeService>("theme.service"))` 可取到实例。
 
 **第 4 步：删除兼容层**
-确认无读取点后删除 `ThemeManager`，并处理 `PCLStubs.Theme`（属既有文件，需单独评审）。
+确认无读取点后删除 `ThemeManager`，并处理 `Stubs.Theme`（属既有文件，需单独评审）。
 
 ## 六、接线状态
 

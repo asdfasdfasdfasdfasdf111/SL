@@ -1,7 +1,7 @@
 //
 //  LaunchSessionManager.swift
 //  模块化拆分：从 CategoryContentView 迁出「游戏启动会话 + 日志面板 + 启动进度」全局单例。
-//  启动回调（pclLaunch 六段）一律只操作本管理器（引用类型）与 LauncherSettings（引用类型），
+//  启动回调（slLaunch 六段）一律只操作本管理器（引用类型）与 LauncherSettings（引用类型），
 //  零视图 self 捕获——视图销毁后回调触发也不会写已释放的 @State storage（UAF 根治，
 //  与 DownloadDetailManager 治理模式一致：游戏可运行数小时后 completion 才触发，视图早已切走销毁）。
 //

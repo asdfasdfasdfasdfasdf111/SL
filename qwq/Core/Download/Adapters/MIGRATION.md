@@ -3,7 +3,7 @@
 本目录只放**适配器**：把 `qwq/Core/Download/` 的协议接到现有实现上，不改变任何下载行为，也不切换调用方。
 当前状态：`NetDownloader.swift`（`NetManager`）仍是唯一实际生效的下载路径；`DownloadEngine` 已由
 `Features/Download/ModFileDownloadTask.swift` 首个接入，并由
-`PCLCore/Minecraft/Mod/Loader/Forge/ForgeInstaller.swift` 的两处**单文件**下载第二个接入，
+`SLCore/Minecraft/Mod/Loader/Forge/ForgeInstaller.swift` 的两处**单文件**下载第二个接入，
 再由 `FabricInstaller`、`MinecraftInstaller` 的三个前置单文件、`CustomFileDownloadTask`、
 `downloadAuthlibInjector` 第四个批次接入（均见「六、切换记录」）；
 **批量调用方（`MultiFileDownloader` 各调用点）与绕过引擎的 `URLSession` 直连路径仍走旧链路**。
@@ -20,9 +20,9 @@
 
 ```swift
 // NetDownloader.swift:253
-NetManager.shared.download(_ file: PCLNetFile, progress: ((Double) -> Void)? = nil) async throws
+NetManager.shared.download(_ file: SLNetFile, progress: ((Double) -> Void)? = nil) async throws
 // NetDownloader.swift:286
-NetManager.shared.downloadAll(_ files: [PCLNetFile], overallProgress: ((Double, Int) -> Void)?, onFileCompleted: (() -> Void)?) async throws
+NetManager.shared.downloadAll(_ files: [SLNetFile], overallProgress: ((Double, Int) -> Void)?, onFileCompleted: (() -> Void)?) async throws
 ```
 
 关键事实：
@@ -31,12 +31,12 @@ NetManager.shared.downloadAll(_ files: [PCLNetFile], overallProgress: ((Double, 
 - 进度回调由 `NetManager` 自行切到 `@MainActor`（`NetDownloader.swift:256`、`439`）；
 - **取消以 Swift Task 取消表达**：`waitForCompletion` 内 `Task.checkCancellation()`（`NetDownloader.swift:831`）
   会在取消时抛出，`download` 的 `catch` 随即取消全部分片任务并清理临时文件（`NetDownloader.swift:274`）；
-- 输入类型 `PCLNetFile(urls:destination:checker:replaceMethod:)`，覆盖率策略（`.skip` / `.replace` / `.throw`）与
+- 输入类型 `SLNetFile(urls:destination:checker:replaceMethod:)`，覆盖率策略（`.skip` / `.replace` / `.throw`）与
   校验参数（`FileChecker`），`DownloadRequest` 中都没有对应字段。
 
 ### 适配器的对接方式
 
-1. `DownloadRequest` → `PCLNetFile`
+1. `DownloadRequest` → `SLNetFile`
    - `urls`：`DefaultDownloadSourceResolver.candidateURLs(for:)`（请求主源优先，`.both` 模式下补镜像）；
    - `checker`：`DefaultDownloadVerifier.checker(for:)`，`sha256` → `sha1` 取非空者，`expectedSize` → `actualSize`；
    - `replaceMethod`：`submit(_:)` 用引擎级缺省 `.skip`，需要 `.replace` / `.throw` 的调用方走
@@ -55,25 +55,25 @@ NetManager.shared.downloadAll(_ files: [PCLNetFile], overallProgress: ((Double, 
 
 直接触达 `NetManager` 的只有两个薄封装，其余调用方全部经由它们：
 
-- `qwq/PCLCore/Download/SingleFileDownloader.swift:45` → `NetManager.shared.download(file) { p in ... }`
-- `qwq/PCLCore/Download/MultiFileDownloader.swift:106` → `NetManager.shared.downloadAll(...)`
+- `qwq/SLCore/Download/SingleFileDownloader.swift:45` → `NetManager.shared.download(file) { p in ... }`
+- `qwq/SLCore/Download/MultiFileDownloader.swift:106` → `NetManager.shared.downloadAll(...)`
 
 上层调用方（行号为实际调用点）：
 
 | # | 调用方 | 形态 | 切换需要改什么 |
 | --- | --- | --- | --- |
 | 1 | `Features/Download/ModFileDownloadTask.swift:43` | 单文件 `SingleFileDownloader.download(task:url:destination:replaceMethod:.replace)` | 只换提交方式；进度写入 `currentStagePercentage`、成功 `completeOneFile()/complete()`、失败 `failureReason` 需分别由 `observe` 流与 `DownloadHandle` 承担（**已切换**） |
-| 2 | `PCLCore/Minecraft/Download/MinecraftInstaller.swift:46` | 单文件（客户端清单），`.replace` | 同上；`.replace` 必须显式传 `replaceMethod:`（**已切换**） |
+| 2 | `SLCore/Minecraft/Download/MinecraftInstaller.swift:46` | 单文件（客户端清单），`.replace` | 同上；`.replace` 必须显式传 `replaceMethod:`（**已切换**） |
 | 3 | `MinecraftInstaller.swift:73` | 单文件（客户端 jar），`expectedSHA1` + `stage: .clientJar` | `expectedSHA1` → `request.sha1`；`stage` 的 `beginParallelStage/finishParallelStage` 需在流的终态处配对，否则并行阶段计数不归零（**已切换**） |
 | 4 | `MinecraftInstaller.swift:108` | 单文件（资源索引），`expectedSHA1` | 同上（**已切换**） |
 | 5 | `MinecraftInstaller.swift:145 / 177 / 214` | 批量 `MultiFileDownloader(task:items:stage:)`（散列资源 / 依赖库 / natives） | 需把批次拆成每文件一个 `submit`，批进度与 `onFileCompleted` 由各任务状态聚合；这一组与 `InstallTask` 的总文件数/剩余文件数耦合最深 |
-| 6 | `PCLCore/Minecraft/Launch/LaunchFix.swift:79 / 100` | 批量 `MultiFileDownloader(items:concurrentLimit:32)` | 同 5，且并发上限 32 在旧链路由 `NetManager.config.maxSlices` 统一兜底，新链路需确认调度器等价 |
-| 7 | `PCLCore/Minecraft/Mod/Loader/Forge/ForgeInstaller.swift:134 / 172` | 单文件（mappings / installer） | 同 2、3；`:172` 的进度回调按 `progress * 0.2` 折算，需在状态流上做同样折算（**已切换**） |
+| 6 | `SLCore/Minecraft/Launch/LaunchFix.swift:79 / 100` | 批量 `MultiFileDownloader(items:concurrentLimit:32)` | 同 5，且并发上限 32 在旧链路由 `NetManager.config.maxSlices` 统一兜底，新链路需确认调度器等价 |
+| 7 | `SLCore/Minecraft/Mod/Loader/Forge/ForgeInstaller.swift:134 / 172` | 单文件（mappings / installer） | 同 2、3；`:172` 的进度回调按 `progress * 0.2` 折算，需在状态流上做同样折算（**已切换**） |
 | 8 | `ForgeInstaller.swift:236` | 批量 `MultiFileDownloader(urls:destinations:replaceMethod:.skip)` | 同 5；`.skip` 为缺省值，可不传 |
-| 9 | `PCLCore/Minecraft/Mod/Loader/Fabric/FabricInstaller.swift:28` | 单文件，`.replace` | 同 2（**已切换**） |
-| 10 | `PCLCore/Minecraft/Launch/MinecraftLauncher.swift:327` | 单文件（authlib-injector） | 同 2；`:332` 的 `FileChecker(sha256).check` 预检**保持原样**（移入请求会改变校验时机与文案，**已切换**） |
-| 11 | `PCLCore/Minecraft/Download/InstallTask.swift:412` | 单文件 + 进度 | 同 1（**已切换**） |
-| 12 | `PCLCore/Download/DownloadSourceManager.swift:108` | 测速自用（内部 `SingleFileDownloader`） | **保持旧链路**。若改为 `DownloadEngine`，resolver 委托 `DownloadSourceManager` 会形成「测速 → 下载 → 解析源 → 测速」递归 |
+| 9 | `SLCore/Minecraft/Mod/Loader/Fabric/FabricInstaller.swift:28` | 单文件，`.replace` | 同 2（**已切换**） |
+| 10 | `SLCore/Minecraft/Launch/MinecraftLauncher.swift:327` | 单文件（authlib-injector） | 同 2；`:332` 的 `FileChecker(sha256).check` 预检**保持原样**（移入请求会改变校验时机与文案，**已切换**） |
+| 11 | `SLCore/Minecraft/Download/InstallTask.swift:412` | 单文件 + 进度 | 同 1（**已切换**） |
+| 12 | `SLCore/Download/DownloadSourceManager.swift:108` | 测速自用（内部 `SingleFileDownloader`） | **保持旧链路**。若改为 `DownloadEngine`，resolver 委托 `DownloadSourceManager` 会形成「测速 → 下载 → 解析源 → 测速」递归 |
 | 13 | `Features/Download/ModpackDownloader.swift:106`、`Features/ModBrowser/ModDownloader.swift:159` | 绕过引擎直接用 `URLSession.download` + `FileChecker` 校验 | 未纳入本轮适配面；若统一，需补 `expectedSize` + `sha1` 请求，并保留「校验失败删除已落盘文件」的行为 |
 
 间接编排（无直接下载调用，仅需跟随上游改动）：
@@ -224,7 +224,7 @@ NetManager.shared.downloadAll(_ files: [PCLNetFile], overallProgress: ((Double, 
 
 **改动文件**
 
-- `qwq/PCLCore/Minecraft/Mod/Loader/Forge/ForgeInstaller.swift`（唯一调用方改动，+45/-2）
+- `qwq/SLCore/Minecraft/Mod/Loader/Forge/ForgeInstaller.swift`（唯一调用方改动，+45/-2）
 - 适配器未改动：`legacyFailureReason(taskID:)`（第 1 步补齐）已足够覆盖本调用方的错误文案回放。
 
 **本次排除的调用方**
@@ -263,7 +263,7 @@ NetManager.shared.downloadAll(_ files: [PCLNetFile], overallProgress: ((Double, 
   新链路 `DefaultDownloadVerifier.checker(for:)` 返回 `FileChecker(actualSize: -1, hash: nil)`，
   `canUseExistsFile == true` 且 `check` 返回 `nil`，同样跳过并回调 `1.0`。
 - **候选源——本次唯一显式指定项**：旧调用 `SingleFileDownloader.download(url:)` 只传一个 URL，
-  `PCLNetFile.urls` 恒为单元素。新链路显式注入 `SequentialDownloadSourceResolver()`（备用源为空），
+  `SLNetFile.urls` 恒为单元素。新链路显式注入 `SequentialDownloadSourceResolver()`（备用源为空），
   候选列表同样恒为 `[request.url]`。若沿用引擎缺省的 `DefaultDownloadSourceResolver`，mappings 的 URL
   一旦落在 `launcher.mojang.com` 等官方域名族，就会在 `fileDownloadSource == .both` 时追加 BMCLAPI 备用源，
   构成旧链路不存在的兜底路径，故不采用。`installer` 的 URL 为 `bmclapi2.bangbang93.com`，不在官方域名族内，
@@ -303,10 +303,10 @@ NetManager.shared.downloadAll(_ files: [PCLNetFile], overallProgress: ((Double, 
 
 **改动文件**（4 个调用方，共 +180/-7；适配器与 `NetDownloader.swift` 均未改动）
 
-- `qwq/PCLCore/Minecraft/Mod/Loader/Fabric/FabricInstaller.swift`（#9）
-- `qwq/PCLCore/Minecraft/Download/MinecraftInstaller.swift`（#2 客户端清单 / #3 客户端 jar / #4 资源索引）
-- `qwq/PCLCore/Minecraft/Download/InstallTask.swift`（#11 `CustomFileDownloadTask.start()`）
-- `qwq/PCLCore/Minecraft/Launch/MinecraftLauncher.swift`（#10 `downloadAuthlibInjector`）
+- `qwq/SLCore/Minecraft/Mod/Loader/Fabric/FabricInstaller.swift`（#9）
+- `qwq/SLCore/Minecraft/Download/MinecraftInstaller.swift`（#2 客户端清单 / #3 客户端 jar / #4 资源索引）
+- `qwq/SLCore/Minecraft/Download/InstallTask.swift`（#11 `CustomFileDownloadTask.start()`）
+- `qwq/SLCore/Minecraft/Launch/MinecraftLauncher.swift`（#10 `downloadAuthlibInjector`）
 
 第 1 步补齐的 `legacyFailureReason(taskID:)` 已足以覆盖本批全部调用方的错误文案回放，适配器无需再补能力。
 
@@ -351,7 +351,7 @@ NetManager.shared.downloadAll(_ files: [PCLNetFile], overallProgress: ((Double, 
   - 多 URL 调用（#2 / #3 / #4）：调用方已用 `DownloadSourceManager.downloadURLs` 解析出
     「主源 + 互补源」有序数组，helper 以 `SequentialDownloadSourceResolver(fallbacks: urls.dropFirst())`
     逐字保留列表内容与顺序。**尤其不能用缺省解析器**：当主源是镜像时 `officialHosts` 不匹配，
-    缺省解析器会丢掉官方备用源（把 2 个候选降为 1 个），而旧链路 `PCLNetFile.urls` 是完整的 2 个。
+    缺省解析器会丢掉官方备用源（把 2 个候选降为 1 个），而旧链路 `SLNetFile.urls` 是完整的 2 个。
 - **覆盖策略**与旧调用点逐一对应：#2 `.replace`；#3 / #4 旧调用未显式传 `replaceMethod`（缺省 `.skip`）,
   现显式写出 `.skip`；#9 `.replace`；#10 / #11 `.skip`。
 - **校验参数**：`expectedSHA1` → `DownloadRequest.sha1`；`DefaultDownloadVerifier.checker(for:)`

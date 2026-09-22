@@ -2,7 +2,7 @@
 //  DebugAutoLaunch.swift
 //  仅 DEBUG 构建存在的「无人值守启动」开关。
 //
-//  为什么需要它：启动链路（`LaunchCoordinator` → `MinecraftInstanceLaunchService` → `pclLaunch`
+//  为什么需要它：启动链路（`LaunchCoordinator` → `MinecraftInstanceLaunchService` → `slLaunch`
 //  → `LaunchFix` → Java 解析 → 进程拉起）的风险点全部只在**真实执行**时才暴露，而真实执行
 //  目前有两条环境门槛：驱动 UI 需要辅助功能权限（`AXIsProcessTrusted` 为 false 时点不到按钮），
 //  跑 XCTest 需要 testmanagerd（受限沙箱里 XPC 握手不通）。本开关给出第三条路：

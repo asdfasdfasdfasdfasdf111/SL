@@ -1,6 +1,6 @@
 //
 //  DownloadSliceStore.swift
-//  PCL.Mac
+//  SL启动器
 //
 //  分片（Range 片段）的记录与清理。旧实现中分片是 `NetManager.Slice` 私有类，
 //  状态只存在于 actor 内存中，既不可观测也无法单测；这里把分片本身与

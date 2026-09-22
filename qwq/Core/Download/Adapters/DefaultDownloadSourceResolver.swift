@@ -1,6 +1,6 @@
 //
 //  DefaultDownloadSourceResolver.swift
-//  PCL.Mac
+//  SL启动器
 //
 //  适配器：把现有 `DownloadSourceManager` 的源选择结果接到 `DownloadSourceResolver` 协议上。
 //  约束：不重写源选择算法——「当前主源是谁」「互补源是谁」「是否处于自动切换模式」全部委托

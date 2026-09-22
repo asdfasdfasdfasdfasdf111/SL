@@ -325,8 +325,8 @@ final class JavaResolverTests: XCTestCase {
 
     // MARK: JavaArchitecture 映射
 
-    /// 由 PCLCore 的 Architecture 转换；fatFile 归并为 universal
-    func testJavaArchitectureMappingFromPCLCoreArchitecture() async {
+    /// 由 SLCore 的 Architecture 转换；fatFile 归并为 universal
+    func testJavaArchitectureMappingFromSLCoreArchitecture() async {
         XCTAssertEqual(JavaArchitecture(.arm64), .arm64)
         XCTAssertEqual(JavaArchitecture(.x64), .x64)
         XCTAssertEqual(JavaArchitecture(.fatFile), .universal)

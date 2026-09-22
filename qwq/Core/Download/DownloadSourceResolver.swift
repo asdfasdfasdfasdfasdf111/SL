@@ -1,9 +1,9 @@
 //
 //  DownloadSourceResolver.swift
-//  PCL.Mac
+//  SL启动器
 //
 //  候选下载源的解析。旧实现在 `NetManager.pickSource` 里按下标遍历
-//  `PCLNetFile.urls` 并维护源黑名单，源选择与调度耦合在一起；
+//  `SLNetFile.urls` 并维护源黑名单，源选择与调度耦合在一起；
 //  这里把「给出有序候选列表」独立成协议，黑名单/测速留给具体实现。
 //
 

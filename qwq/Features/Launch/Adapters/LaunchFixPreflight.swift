@@ -30,7 +30,7 @@
 //
 //  MARK: - 触发语义（与桥接层现状的差异）
 //
-//  桥接层 `pclLaunchInternal` 每次启动都**无条件**调用一次 `LaunchFix.perform`。
+//  桥接层 `slLaunchInternal` 每次启动都**无条件**调用一次 `LaunchFix.perform`。
 //  本适配器改为「只读扫描发现缺失才触发」，等价性论证：
 //  `LaunchFix.perform` 在「无缺失」时的唯一副作用是末尾的 `ensureNatives`，
 //  而该步骤已由 `LaunchFixNativeInstaller` 单独覆盖（同一调用），
@@ -119,8 +119,8 @@ enum LaunchFixPreflightContextBuilder {
 /// 客户端 JAR 校验。**LaunchFix 没有对应步骤**（既不校验也不下载 client JAR），
 /// 故这里没有可委托的实现，只做只读校验并显式抛出。
 ///
-/// 状态与差异：桥接层 `pclLaunchInternal` 已单独补上「存在且非空」判定
-/// （`PCLLaunchBridge.swift`，DUAL_FLOW 缺陷 D1 的修复点），但**未**采用本类型的 sha1 口径。
+/// 状态与差异：桥接层 `slLaunchInternal` 已单独补上「存在且非空」判定
+/// （`SLLaunchBridge.swift`，DUAL_FLOW 缺陷 D1 的修复点），但**未**采用本类型的 sha1 口径。
 /// 原因：带 inheritsFrom 的加载器实例，其清单经 `ClientManifest.merge` 后沿用父级
 /// `clientDownload.sha1`，而版本目录内的 JAR 会被加载器安装器就地改写，哈希必然不同；
 /// 此处按 sha1 判定会把这些实例误判为损坏。故本校验器仅在「确认实例的版本目录 JAR
@@ -237,9 +237,9 @@ public struct LaunchFixNativeInstaller: NativeInstaller, @unchecked Sendable {
 /// 本适配器只负责文件校验与补齐，避免与桥接层重复实现「建目录 + 建实例」。
 ///
 /// 全库无引用，待清理（含 `qwqTests`）：全库没有任何 `LaunchFixPreflight(...)` 构造点，
-/// 启动路径仍直接调 `LaunchFix.perform`（`PCLLaunchBridge.swift`）。连带失效的还有本类型内的
+/// 启动路径仍直接调 `LaunchFix.perform`（`SLLaunchBridge.swift`）。连带失效的还有本类型内的
 /// `LaunchFixClientVerifier`（sha1 口径的客户端 JAR 校验）——桥接层用的是「存在且非空」判定
-/// （见 `PCLLaunchBridge.swift` 的「客户端 JAR 校验」段），故 sha1 口径从未生效。
+/// （见 `SLLaunchBridge.swift` 的「客户端 JAR 校验」段），故 sha1 口径从未生效。
 /// 保留原因：四条子校验的拆分粒度与「client 段 LaunchFix 未覆盖」的结论是合并阶段的依据。
 @available(*, deprecated, message: "全库无引用，待清理")
 public struct LaunchFixPreflight: LaunchPreflight, @unchecked Sendable {

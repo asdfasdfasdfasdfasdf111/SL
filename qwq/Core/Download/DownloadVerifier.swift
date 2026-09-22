@@ -1,6 +1,6 @@
 //
 //  DownloadVerifier.swift
-//  PCL.Mac
+//  SL启动器
 //
 //  下载结果校验。旧实现是 `FileChecker.check` 返回可选错误字符串，
 //  成功/失败靠「返回 nil」表达；这里改为 throws，调用方无法忽略校验结果。

@@ -4,8 +4,8 @@ import Foundation
 
 /// Java 安装的执行架构。
 ///
-/// 与 PCLCore 的 `Architecture` 一一对应（`JavaVirtualMachine.arch` 的类型），
-/// 单独建模是为了让 Java 模块不反向依赖 PCLCore 的具体枚举，便于后续替换为自有实现。
+/// 与 SLCore 的 `Architecture` 一一对应（`JavaVirtualMachine.arch` 的类型），
+/// 单独建模是为了让 Java 模块不反向依赖 SLCore 的具体枚举，便于后续替换为自有实现。
 enum JavaArchitecture: String, Sendable, Hashable {
     /// Apple Silicon
     case arm64
@@ -21,7 +21,7 @@ enum JavaArchitecture: String, Sendable, Hashable {
         JavaArchitecture(Architecture.system)
     }
 
-    /// 由 PCLCore 的 `Architecture` 转换。
+    /// 由 SLCore 的 `Architecture` 转换。
     init(_ arch: Architecture) {
         switch arch {
         case .arm64: self = .arm64

@@ -72,7 +72,7 @@
 | `ModVersionDetector.swift` | 本地文件检测 | 保留。同上 |
 | `Category.swift` | 侧边栏 UI | 保留，与模块无关 |
 
-`qwq/PCLCore/Minecraft/Mod/Loader/`（Forge / Fabric / NeoForge 安装器）属**加载器安装**，
+`qwq/SLCore/Minecraft/Mod/Loader/`（Forge / Fabric / NeoForge 安装器）属**加载器安装**，
 与项目浏览无关，不纳入本模块。
 
 ## 五、迁移步骤（后续执行，当前未做任何改动）

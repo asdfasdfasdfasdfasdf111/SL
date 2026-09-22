@@ -1,6 +1,6 @@
 //
 //  DownloadRequest.swift
-//  PCL.Mac
+//  SL启动器
 //
 //  下载领域模型：一次「单文件下载」的完整输入描述。
 //  只包含数据，不含任何网络/磁盘行为，便于单元测试直接构造。
@@ -21,7 +21,7 @@ public enum DownloadPriority: Int, Sendable, Comparable, CaseIterable {
 
 /// 一次下载请求的不可变输入。
 ///
-/// 与旧 `PCLNetFile` 的区别：请求不再持有 `FileChecker` 与 `ReplaceMethod`
+/// 与旧 `SLNetFile` 的区别：请求不再持有 `FileChecker` 与 `ReplaceMethod`
 /// （覆盖策略属于调用方策略，校验属于 `DownloadVerifier` 职责），
 /// 请求本身因此可跨 actor 自由传递。
 public struct DownloadRequest: Sendable, Equatable {

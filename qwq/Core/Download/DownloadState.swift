@@ -1,6 +1,6 @@
 //
 //  DownloadState.swift
-//  PCL.Mac
+//  SL启动器
 //
 //  单个下载任务的状态机。经 `DownloadScheduler.observe` 以 AsyncStream 形式对外发布，
 //  取代旧实现中「进度闭包 + 轮询等待完成」的组合。

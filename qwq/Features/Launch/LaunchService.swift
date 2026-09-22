@@ -2,8 +2,8 @@
 //  LaunchService.swift
 //  启动用例层：对外唯一入口
 //
-//  目标状态：UI（`LaunchCoordinator`）与兼容桥接（`PCLLaunchBridge`）都只调用本协议的同一个实现，
-//  从而消除 `pclLaunchInternal` 与 `MinecraftInstance.launch()` 两套并存的启动流程。
+//  目标状态：UI（`LaunchCoordinator`）与兼容桥接（`SLLaunchBridge`）都只调用本协议的同一个实现，
+//  从而消除 `slLaunchInternal` 与 `MinecraftInstance.launch()` 两套并存的启动流程。
 //  迁移步骤见同目录 README.md。
 //
 
