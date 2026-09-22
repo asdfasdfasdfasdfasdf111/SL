@@ -67,8 +67,16 @@ fi
 
 echo ""
 echo "--- 运行测试（会启动 qwq.app 作为宿主）---"
+echo "注意：必须在用户自己的 Terminal 里跑。AI 会话的沙箱会继承给 xcodebuild → 测试宿主 App，"
+echo "      宿主连 testmanagerd 的 XPC 会被拒，表现为 4 分钟无任何用例输出后报"
+echo "      「The test runner hung before establishing connection」。"
 rm -rf "$RESULT"
-"${XCB[@]}" test-without-building -resultBundlePath "$RESULT" >> "$LOG" 2>&1
+# 显式指定 destination：本机 arm64 / x86_64 两个 destination 同名同 id，
+# 不指定时 xcodebuild 会打印「Using the first of multiple matching destinations」后取第一个，
+# 属于隐式选择；锁定 arch 后行为确定，也免得将来 Rosetta 环境被误选。
+"${XCB[@]}" test-without-building \
+  -destination 'platform=macOS,arch=arm64' \
+  -resultBundlePath "$RESULT" >> "$LOG" 2>&1
 TEST_EXIT=$?
 
 grep -E "Test Suite .* (passed|failed)|Executed [0-9]+ test|Testing failed|\*\* TEST" "$LOG" | tail -20

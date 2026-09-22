@@ -287,3 +287,34 @@ func preScan() {
   `xcodebuild -scheme qwq -destination 'platform=macOS' test` 的流水线，
   并逐步给出覆盖率门禁。
 - 在此之前，`§2` 的 `swiftc -typecheck` 命令可作为低成本的前置门禁（实测退出码 0）。
+
+### 4.14 真实启动（已落地，默认跳过）
+
+`RealLaunchIntegrationTests.swift` 是唯一一条**会真的拉起 Minecraft 进程**的用例。它存在的理由是
+其余用例都停在「纯值类型 / 纯协议 / 可注入桩」层，而启动链路风险最高的几处（natives 架构、
+Java 解析与版本门槛、classpath 去重、进程生命周期）只有在真机上跑一次才能证伪。
+
+之所以默认跳过（靠 `/tmp/sl-real-launch.enabled` 标记文件开关，而不是环境变量 ——
+`xcodebuild test` 不会把调用方 shell 的环境带进宿主进程）：跑一次要占几 GB 内存、弹一个游戏窗口、
+最长数分钟，塞进日常 `verify-test.sh` 会把每次单测都变成一次游戏启动。
+
+```bash
+touch /tmp/sl-real-launch.enabled
+SL_DERIVED=/tmp/SL-DD-real ./scripts/verify-test.sh run   # 必须在用户自己的 Terminal 里跑
+rm /tmp/sl-real-launch.enabled
+```
+
+断言口径（也是「启动链路健康」的可证据清单）：
+
+1. 收到 `.launcherReady` → 实例可创建、客户端 JAR 非空、Java 已解析；
+2. 收到 `.running` → 游戏窗口被 `CGWindowList` 观测到；
+3. 日志里不出现 `UnsatisfiedLinkError` / `NoClassDefFoundError` /
+   `Could not find or load main class` → natives 架构与 classpath 正确；
+4. 测试末尾自行 `terminate()` 收尾，**因此不要求退出码为 0**（被杀进程本就非 0）。
+
+用例里硬编码了 `~/Library/Application Support/minecraft` + `26.2-Fabric`。
+刻意不读 `LauncherSettings`：真实启动用例要能脱离 App 状态独立复现，取值被 UI 改动后
+应当**失败并提示**，而不是悄悄换个版本再跑。
+
+若在无法驱动 UI 的环境里（无辅助功能权限）需要跑一次启动，还有第三条路，见
+`REFACTOR_PLAN.md` §七：`SL_DEBUG_AUTO_LAUNCH=1`。
