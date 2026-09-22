@@ -9,7 +9,11 @@ class JavaManager {
     private let cache = AppContext.shared.cacheManager
     private var cachedJavaList: [JavaInfo]?
     private var isScanning = false
-    private let scanLock = NSLock()
+    /// 扫描状态锁。同时充当「已有扫描在途」的等待条件：`scanInstalledJava` 在扫描进行中
+    /// 不在主线程忙等，而是**等待在途扫描结束**后取它的结果（见 `waitForScanCompletionLocked`）。
+    private let scanLock = NSCondition()
+    /// 等待在途扫描结束的上限（秒）。超时即放弃等待、返回已有缓存，避免调用方被无限阻塞。
+    private static let scanWaitTimeout: TimeInterval = 10
 
     private init() {
         let paths = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
@@ -58,6 +62,13 @@ class JavaManager {
 
     // MARK: - Java 扫描（参考 PCL.Mac：读 release 文件，不跑 java -version）
 
+    /// 扫描本机 Java（缓存命中优先，否则真扫）。
+    ///
+    /// **「扫描中」不得表现为「没有 Java」**：`isScanning` 期间旧实现返回 `cachedJavaList ?? []`，
+    /// 这个空数组会被 `refreshAvailableJavaList` / `resolveJavaExecutable` 当成「本机无 Java」——
+    /// UI 因此显示「未找到 Java 环境」，启动链路也可能选不到 Java。
+    /// 现在改为**等待在途扫描结束后返回它的结果**：`NSCondition` 条件等待（配对 `broadcast`），
+    /// 不轮询、不忙等。调用方因此不必区分「扫描中」与「确实没有」——扫描中的等待会拿到真实结果。
     func scanInstalledJava(useCache: Bool = true) -> [JavaInfo] {
         scanLock.lock()
         if useCache, let cached = cachedJavaList {
@@ -65,9 +76,9 @@ class JavaManager {
             return cached
         }
         if isScanning {
-            let fallback = cachedJavaList ?? []
+            let result = waitForScanCompletionLocked()
             scanLock.unlock()
-            return fallback
+            return result
         }
         isScanning = true
         scanLock.unlock()
@@ -75,6 +86,8 @@ class JavaManager {
         defer {
             scanLock.lock()
             isScanning = false
+            // 条件等待必须配对唤醒：否则所有等待者只能挂到超时（无谓的最长 10s 延迟）
+            scanLock.broadcast()
             scanLock.unlock()
         }
 
@@ -118,6 +131,24 @@ class JavaManager {
         }
 
         return results
+    }
+
+    /// 在**已持有 `scanLock`** 的前提下等待在途扫描结束，返回其最终结果。
+    ///
+    /// - 非主线程（本方法的既有调用点全部如此：预扫描与 `refreshAvailableJavaList` 走全局队列、
+    ///   仓储走 detached task、启动桥接走 GCD 工作线程）：用 `NSCondition` 让出 CPU 等到
+    ///   `broadcast`，不引入新的忙等——这与启动链路既有的「订阅发布流 + 有界等待」是同一口径。
+    /// - 主线程：不阻塞（阻塞主线程就是冻结 UI），返回已有缓存；扫描状态由
+    ///   `LauncherSettings.isJavaScanning` 对 UI 表达，仍不会被当成「没有 Java」。
+    private func waitForScanCompletionLocked() -> [JavaInfo] {
+        guard !Thread.isMainThread else { return cachedJavaList ?? [] }
+        let deadline = Date().addingTimeInterval(Self.scanWaitTimeout)
+        while isScanning {
+            if !scanLock.wait(until: deadline) { break }
+        }
+        // 在途扫描的 `defer` 在置 `isScanning = false` 之前就已写回缓存，
+        // 因此这里读到的必然是本次扫描的结果（或超时兜底时上一轮的结果）。
+        return cachedJavaList ?? []
     }
 
     private func syncJavaVirtualMachines(from infos: [JavaInfo]) {

@@ -16,7 +16,16 @@ enum OfflineSkinService {
     private static var avatarDir: URL { appSupportDir.appendingPathComponent("SL启动器/Avatars") }
 
     /// 皮肤原图落盘（创建目录 + 写 default 文件名），返回目标 URL
+    ///
+    /// 空数据一律拒绝写入：`Data()` 经 `.atomic` 覆写会把**已保存的皮肤文件截断为 0 字节**，
+    /// 而 0 字节文件在磁盘上依然「存在」，后续 `settings.skinImageURL` 会继续引用它。
+    /// 调用方既有语义已兼容返回 `nil`（例如 `loadDefaultIfNeeded` 的
+    /// `skinDestURL?.path ?? ""` 分支），因此这里返回 `nil` 不引入新分支。
     static func saveSkinImage(_ data: Data, fileName: String = "selected_skin.png") -> URL? {
+        guard !data.isEmpty else {
+            err("皮肤数据为空，跳过写入以免截断已保存的皮肤")
+            return nil
+        }
         try? FileManager.default.createDirectory(at: skinDir, withIntermediateDirectories: true)
         let dest = skinDir.appendingPathComponent(fileName)
         do { try data.write(to: dest, options: .atomic) }
@@ -148,8 +157,11 @@ enum OfflineSkinService {
            !existingURL.lastPathComponent.hasPrefix("stf") {
             return
         }
-        let skinDestURL = saveSkinImage(Data())
-
+        // 此处原先无条件 `saveSkinImage(Data())`：返回值从未被使用（死赋值），
+        // 唯一副作用是把已保存的 `selected_skin.png` 截断为 0 字节，
+        // 再经 `handleViewAppear` 的「先本方法、后 loadDefaultIfNeeded」顺序，
+        // 撞上 loadDefaultIfNeeded 的「头像存在即提前返回」分支 → 皮肤文件被永久置空。
+        // 去掉该写入；皮肤落盘统一由下面确有数据的 `saveSkinImage(skinData)` 负责。
         guard !settings.selectedMinecraftVersion.isEmpty else {
             if let builtinURL = Bundle.main.url(forResource: "stf", withExtension: "png") {
                 if let avatarURL = saveAvatar(from: builtinURL, fileName: "default_avatar.png") {

@@ -145,6 +145,12 @@ public final class NoticeCenter: ObservableObject {
         if history.count > Self.historyLimit {
             history.removeFirst(history.count - Self.historyLimit)
         }
+        // `current` 是单槽：新提示会顶替旧的，被顶替那条在 UI 上已不复存在，
+        // 若它仍在等待点选，用户永远点不到它 —— 必须**立刻**按默认按钮应答，
+        // 否则调用方只能等满 `responseTimeoutNanos` 兜底（崩溃弹窗的「导出报告」因此挂 5 分钟）。
+        if let displaced = current, displaced.id != notice.id {
+            answer(displaced.id, index: 0)
+        }
         current = notice
     }
 
@@ -152,7 +158,7 @@ public final class NoticeCenter: ObservableObject {
 
     /// 展示提示并等待用户点选，返回被点按钮在 `notice.buttons` 中的下标。
     ///
-    /// - 有 UI 承载者时：真正挂起，直到用户点击 / 关闭 / 兜底超时。
+    /// - 有 UI 承载者时：真正挂起，直到用户点击 / 关闭 / 被新提示顶替 / 兜底超时。
     /// - 无 UI 承载者（overlay 未挂载）时：不挂起，直接返回 `0`（默认按钮），
     ///   语义与旧桩实现一致，保证不会把调用方卡死。
     @MainActor
@@ -164,12 +170,17 @@ public final class NoticeCenter: ObservableObject {
         }
 
         // 兜底：极端情况下（窗口关闭、用户始终不点）不能让调用方永久挂起。
+        // 该任务不随用户点选而取消，但「迟到触发」是安全的：`answer` 摘不到条目即无操作，
+        // 见其「恰好一次」说明。
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: Self.responseTimeoutNanos)
             self?.choose(notice, index: 0)
         }
 
         return await withCheckedContinuation { (continuation: CheckedContinuation<Int, Never>) in
+            // 同一 `notice.id` 若已有未应答的等待（同一个 `Notice` 值被等待两次），
+            // 先按默认按钮应答旧的：否则下面的字典赋值会覆盖旧 continuation，使它永不 resume。
+            answer(notice.id, index: 0)
             pending[notice.id] = continuation
             deliver(notice)
         }
@@ -181,9 +192,22 @@ public final class NoticeCenter: ObservableObject {
     @MainActor
     public func choose(_ notice: Notice, index: Int) {
         if current?.id == notice.id { current = nil }
-        if let continuation = pending.removeValue(forKey: notice.id) {
-            continuation.resume(returning: index)
-        }
+        answer(notice.id, index: index)
+    }
+
+    /// 应答一个等待点选的调用方：摘除并 resume 它的 continuation。
+    ///
+    /// **「恰好一次」保证**（唯一入口 + 原子摘除）：
+    ///  - 全部应答来源——用户点选 `choose`、关闭 `dismiss`、兜底超时任务、被新提示顶替
+    ///    （`deliver`）、同一 id 重复等待（`presentAndWait`）——都只走这一个入口；
+    ///  - `pending` 只在 MainActor 上读写，`removeValue` 是同步的原子摘除，
+    ///    摘到即立刻 resume、摘不到即返回，**不存在「摘到一次以上」或「无摘除却 resume」的路径**；
+    ///  - 因此每个 continuation 至多 resume 一次，且迟到的应答（用户已点选后兜底超时才到期、
+    ///    被顶替后原超时才到期）一律摘不到条目，直接无操作，不会重复 resume、也不会误伤后来者。
+    @MainActor
+    private func answer(_ noticeID: UUID, index: Int) {
+        guard let continuation = pending.removeValue(forKey: noticeID) else { return }
+        continuation.resume(returning: index)
     }
 
     /// 用户关闭当前提示（点右上角 ×）。若该提示正在等待选择，则按默认按钮（下标 0）应答。

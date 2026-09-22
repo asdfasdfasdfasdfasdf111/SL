@@ -29,12 +29,19 @@ enum JavaInstallerError: Error, LocalizedError {
 
 class JavaInstaller {
 
+    /// 仅下载 JDK 归档，不安装。
+    ///
+    /// **临时目录生命周期契约**：`pkgPath` 的父目录（`tempDir`）由**调用方**负责在消费完归档后
+    /// 用 `FileManager.removeItem` 删除；本函数只在失败路径自行清理。
+    ///
+    /// 为什么不能在此函数返回处 `defer` 清理：`downloadTask` 的完成回调发生在**本函数返回之后**，
+    /// 返回即删会让回调里的 `moveItem` 写进一个已不存在的目录（失败），即使侥幸成功，
+    /// 调用方拿到的 `pkgPath` 也已是悬空路径——接线即坏。故成功路径必须把归档连同目录一起留下。
     static func downloadOnly(version: String, arch: String, progressHandler: @escaping (Double) -> Void, completion: @escaping (Result<URL, Error>) -> Void) throws {
         let downloadURL = try makeDownloadURL(version: version, arch: arch)
 
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
         let pkgPath = tempDir.appendingPathComponent("openjdk-\(version)-\(arch).tar.gz")
 
         let task = AppContext.shared.downloadSession.downloadTask(with: downloadURL) { tempURL, response, error in
@@ -53,8 +60,11 @@ class JavaInstaller {
                     try FileManager.default.removeItem(at: pkgPath)
                 }
                 try FileManager.default.moveItem(at: tempURL, to: pkgPath)
+                // 成功：目录留给调用方消费，此处不清理
                 completion(.success(pkgPath))
             } catch {
+                // 移入失败：不留半成品目录
+                try? FileManager.default.removeItem(at: tempDir)
                 completion(.failure(error))
             }
         }
