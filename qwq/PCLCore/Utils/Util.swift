@@ -79,21 +79,30 @@ public class Util {
         }
     }
     
-    public static func unzip(archiveURL: URL, destination: URL, replace: Bool = true) {
+    /// 解压 ZIP 到目标目录。
+    ///
+    /// 返回值：`true` = 归档可读且所有条目均解压成功；`false` = 归档打不开，或至少有一个条目解压失败
+    /// （失败原因已由 `err` 记录）。原实现返回 `Void`，失败只记日志，调用方无法区分成败，
+    /// 于是「解压失败」被当成成功继续往下走（如 natives 缺失却在安装/启动时无人察觉）。
+    /// 加 `@discardableResult` 保持对「忽略返回值」的既有调用方的源兼容。
+    @discardableResult
+    public static func unzip(archiveURL: URL, destination: URL, replace: Bool = true) -> Bool {
         let archive: Archive
         do {
             archive = try Archive(url: archiveURL, accessMode: .read)
         } catch {
             err("无法读取文件: \(error.localizedDescription)")
-            return
+            return false
         }
         
+        var succeeded = true
         for entry in archive {
             do {
                 // ZIP Slip 防御：拒绝绝对路径与包含 .. 的条目，防止写入目标目录之外
                 let entryPath = entry.path.replacingOccurrences(of: "\\", with: "/")
                 let normalizedPath = (entryPath as NSString).standardizingPath
                 if normalizedPath.hasPrefix("/") || normalizedPath.components(separatedBy: "/").contains("..") {
+                    // 主动跳过危险条目属安全决策，不计为解压失败（与调用方的「可见失败」语义无关）
                     err("已跳过存在路径遍历风险的条目: \(entry.path)")
                     continue
                 }
@@ -105,8 +114,10 @@ public class Util {
                 _ = try archive.extract(entry, to: destinationFileURL)
             } catch {
                 err("无法解压文件: \(error.localizedDescription)")
+                succeeded = false
             }
         }
+        return succeeded
     }
     
     public static func sha1OfFile(url: URL) throws -> String {

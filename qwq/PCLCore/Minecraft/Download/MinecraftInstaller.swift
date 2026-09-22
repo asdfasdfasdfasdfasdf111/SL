@@ -111,11 +111,24 @@ public class MinecraftInstaller {
                 try unzipNatives(task)
                 finalWork(task)
             } catch {
+                // 失败必须让任务以失败收尾：原实现只 err() 记录后照常 task.complete()，
+                // 任务对外表现为「安装成功」（详情页消失、无失败提示），实例缺少资源仍继续启动。
+                // 抛出即走既有错误通道——MinecraftInstallTask.start() 的 catch：弹窗 +
+                // currentState = .failed + failureReason（调用方如 GameVersionDownloadStarter.swift:81
+                // 正是靠 failureReason 区分成功/失败），不需要新增错误类型。
+                // 抛出前补发一次 callback：启动路径（MinecraftInstance.swift:161 的
+                // withCheckedContinuation）用它恢复 continuation，而上述失败分支只回调
+                // task.callback（本任务从未注册 onComplete）——不补发则「资源完整性检查」永久挂起。
                 err("资源补全失败: \(error.localizedDescription)")
+                callback?()
+                throw error
             }
             task.complete()
             callback?()
         }
+        // 资源补全作用于**已存在**的实例：失败时不得删除版本目录。
+        // （全新安装路径 removesVersionOnFailure 保持 true，失败即清理半成品目录。）
+        task.removesVersionOnFailure = false
         return task
     }
     

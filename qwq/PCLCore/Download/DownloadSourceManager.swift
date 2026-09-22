@@ -46,7 +46,12 @@ public class DownloadSourceManager: DownloadSource {
             }
             return fileDownloadSource
         } else {
-            return AppSettings.shared.fileDownloadSource == .mirror ? bmclapi : fileDownloadSource
+            // 用户手动限定单源时必须返回该源的**常量对象**，而不是可被 testSpeed 改写的
+            // fileDownloadSource（它初值为 official，只在「自动切换」模式下的测速里被改成 bmclapi）。
+            // 原实现「仅官方」也返回 fileDownloadSource：若此前处于 .both 并测速切到了镜像，
+            // 用户再切到「仅官方」仍会请求镜像域名——与本文件 downloadURLs 声明的
+            // 「手动限定单源不做悄悄跨源兜底」矛盾，也违背用户显式选择。
+            return AppSettings.shared.fileDownloadSource == .mirror ? bmclapi : official
         }
     }
 

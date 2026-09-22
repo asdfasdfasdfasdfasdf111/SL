@@ -105,9 +105,15 @@ public class InstallTask: ObservableObject, Identifiable, Hashable, Equatable {
         parallelStageProgress[stage] ?? (self.stage == stage ? currentStagePercentage : 0)
     }
 
+    /// 进度口径：`remainingFiles` 一律由 `completeOneFile()` **逐文件**递减——凡在 `totalFiles` 里
+    /// 计过数的文件，其「已满足」或「已完成」都要调用一次（实际下载完成、预检命中已存在而跳过、
+    /// 缓存命中 / 校验通过而不进下载列表的库与 natives 都算）。
+    /// 进度 = (totalFiles − remainingFiles) / totalFiles，与「剩余待完成文件数」保持同一口径，
+    /// 成功安装结束时 remainingFiles 自然归零（`completeOneFile` 的下限钳制保证不会为负）。
+    /// 注意：`complete()` **不**清零 remainingFiles——旧注释称其清零，与实际实现不符，此处按实现修正。
     public func getProgress() -> Double {
         guard totalFiles > 0 else { return 0 }
-        // complete() 时 remainingFiles 会被完整置为 0；正常下载中保证 0 ≤ r ≤ total
+        // 正常下载中保证 0 ≤ r ≤ total
         let remaining = min(totalFiles, max(0, remainingFiles))
         let p = Double(totalFiles - remaining) / Double(totalFiles)
         return min(1, max(0, p))
@@ -134,6 +140,8 @@ public class InstallTask: ObservableObject, Identifiable, Hashable, Equatable {
         }
     }
     
+    /// 计入 `totalFiles` 的每个文件完成时都应调用一次（实际下载完成、预检跳过、缓存命中 /
+    /// 校验通过而不进下载列表的库与 natives 同样计数），与 `getProgress()` 的口径配套。
     public func completeOneFile() {
         DispatchQueue.main.async {
             // 下限保护：依赖数组枚举数可能与实际完成数略有出入，避免进度越界

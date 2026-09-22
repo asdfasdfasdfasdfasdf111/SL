@@ -27,6 +27,10 @@ public class MinecraftInstallTask: InstallTask {
     /// —— 旧实现失败不 complete()：下载详情页任务永远挂着不 dismiss、不弹失败提示（用户反馈的
     /// 「下载失败不会自动终止任务并报错」根因）。
     public private(set) var failureReason: String?
+    /// 失败时是否删除版本目录（`versionURL`）。默认 true = 全新安装：失败即清理半成品目录。
+    /// 资源补全 / 启动前修复路径（`MinecraftInstaller.createCompleteTask`）作用在**已存在**的实例上，
+    /// 必须置为 false——否则一次网络失败就会把用户的实例目录（版本 jar 与 json）直接删掉。
+    var removesVersionOnFailure: Bool = true
     
     public init(minecraftVersion: MinecraftVersion, minecraftDirectory: MinecraftDirectory, name: String, architecture: Architecture = .system, startTask: @escaping @MainActor (MinecraftInstallTask) async throws -> Void) {
         self.minecraftVersion = minecraftVersion
@@ -47,7 +51,9 @@ public class MinecraftInstallTask: InstallTask {
                 await MainActor.run {
                     currentState = .failed
                     failureReason = error.localizedDescription
-                    try? FileManager.default.removeItem(at: versionURL)
+                    if removesVersionOnFailure {
+                        try? FileManager.default.removeItem(at: versionURL)
+                    }
                     // 失败也必须 complete()：触发 onComplete 回调 → 关闭下载详情页 + 弹失败提示。
                     // complete() 幂等（didComplete）+ 归属校验：失败回调迟到（晚于下一个下载的
                     // start()）时识别出全局任务组已被替换 → 拒绝清理，避免旧任务清掉新任务引用

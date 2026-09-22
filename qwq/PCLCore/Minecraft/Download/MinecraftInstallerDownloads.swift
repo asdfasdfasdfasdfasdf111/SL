@@ -182,7 +182,13 @@ extension MinecraftInstaller {
             let data = try Data(contentsOf: destination)
             task.assetIndex = try .parse(data)
         } catch {
+            // 解析失败必须让安装以失败收尾：原实现只记日志，task.assetIndex 保持 nil →
+            // downloadHashResourcesFiles 的 `guard let assetIndex` 直接跳过整个散列资源阶段
+            // （本文件 :195-199），实例缺少 assets 却仍报「安装成功」。
+            // 抛出即走既有错误通道（MinecraftInstallTask.start 的 catch：失败弹窗 + failureReason），
+            // 无需新增错误类型。
             err("在解析 JSON 时发生错误: \(error.localizedDescription)")
+            throw MyLocalizedError(reason: "无法解析资源索引（\(assetIndex.id).json）：\(error.localizedDescription)")
         }
         if parallel { await task.finishParallelStage(.clientIndex) }
     }
@@ -234,12 +240,21 @@ extension MinecraftInstaller {
         for library in manifest.getNeededLibraries() {
             if let artifact = library.artifact {
                 let dest = task.minecraftDirectory.librariesURL.appendingPathComponent(artifact.path)
-                if CacheStorage.default.copy(name: library.name, to: dest) {
-                    continue
-                }
+                // 缓存恢复：目标不存在时尝试从 SHA-1 缓存拷贝。
+                // 不拿返回值当「文件可用」判据——`CacheStorage.copy` 的返回 true 只表示
+                // 「目标已存在，或已从缓存拷贝成功」（`CacheStorage.swift:66-68` 对已存在的目标直接
+                // 返回 true，并不校验内容）。原实现 `if copy(...) { continue }` 于是会在
+                // 目标存在但残缺/损坏时直接跳过下载，使下面的 FileChecker 分支成为死代码
+                // （能走到它时目标必然不存在，`check` 也必然返回错误）→ 损坏的依赖永不重下。
+                // 该返回值语义还被 `ForgeInstaller.swift:122` 等调用方依赖，故不改 `copy` 本身，
+                // 改由调用点判定：拷贝一律尝试，是否重下一律以文件校验结果为准（PCL2 McLibFix 口径）。
+                _ = CacheStorage.default.copy(name: library.name, to: dest)
                 
-                // 缺失预分析（PCL2 McLibFix）：本地已存在且 sha1 匹配 → 不进下载列表，进度按缺失数计算
+                // 缺失预分析（PCL2 McLibFix）：本地已存在且 sha1 匹配 → 不进下载列表，进度按缺失数计算。
+                // 但「已完成」的文件同样要计入进度（与批量下载每个 item 回调一次 completeOneFile 对齐），
+                // 否则重装同一版本时缓存命中的库不会扣减 remainingFiles，总进度停在中途。
                 if FileChecker(hash: artifact.sha1).check(dest) == nil {
+                    task.completeOneFile()
                     continue
                 }
                 
@@ -272,12 +287,14 @@ extension MinecraftInstaller {
 
         for (library, artifact) in manifest.getNeededNatives() {
             let dest = task.minecraftDirectory.librariesURL.appendingPathComponent(artifact.path)
-            if CacheStorage.default.copy(name: library.name, to: dest) {
-                continue
-            }
+            // 同 downloadLibraries：`copy` 返回 true 只代表「目标已存在」（不校验内容），
+            // 不能作为跳过下载的判据，否则损坏的 native jar 永不重下。改为一律尝试缓存恢复，
+            // 是否重下由下面的 FileChecker 判定。
+            _ = CacheStorage.default.copy(name: library.name, to: dest)
             
-            // 缺失预分析：已存在且 sha1 匹配 → 跳过
+            // 缺失预分析：已存在且 sha1 匹配 → 跳过下载；已满足的文件同样计入完成（同上）
             if FileChecker(hash: artifact.sha1).check(dest) == nil {
+                task.completeOneFile()
                 continue
             }
             

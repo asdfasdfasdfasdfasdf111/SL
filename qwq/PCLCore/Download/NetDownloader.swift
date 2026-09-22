@@ -88,6 +88,12 @@ public actor NetManager {
             throw error
         }
         records.removeAll { $0.id == record.id }
+        // 已确认的**不可达**分支，保留作防御（不改行为）。
+        // 依据：waitForCompletion 在 allTerminal 成立时，只要任一记录 state == .failed 就必抛
+        // NetDownloadError.fileFailed（本文件 :154-160）；而 FileRecord.isTerminal 只包含 .done / .failed
+        // （NetDownloadState.swift:75），所以它正常返回 ⇒ 本记录 state == .done。
+        // 另一条逃生路径「找不到记录 → continue」也不成立：记录 id 为 UUID 且各批次互斥，
+        // 本记录的移除点只有本方法自己的 removeAll（downloadAll 的收尾只移除自己 pending 里的 id）。
         if record.state == .failed {
             throw NetDownloadError.fileFailed(record.failReason)
         }

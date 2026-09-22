@@ -171,8 +171,15 @@ extension NetManager {
     // MARK: 分片状态回调
 
     func sliceSucceeded(fileID: UUID, sliceID: UUID) async {
-        guard let record = find(fileID), let slice = record.slice(sliceID) else { return }
+        // 递减必须在可早退的 guard **之前**：文件记录可能已被 download / downloadAll 的收尾流程移除
+        // （NetDownloader.swift:87,90,135），此回调找不到记录会直接 return。若把递减放在 guard 之后，
+        // activeSlices 就永久虚高，累计到 config.maxSlices 后 tryBeginSlice 的
+        // `activeSlices < config.maxSlices`（NetSliceAllocation.swift:17）恒为 false，
+        // 之后所有下载都不再启动任何分片。
+        // 不会重复扣减：startSliceTask 为每个分片建立的 detached 任务只产生一次终态回调
+        // （runSlice 正常返回 → sliceSucceeded，抛错 → sliceFailed），二者互斥且各调用一次。
         activeSlices = max(0, activeSlices - 1)
+        guard let record = find(fileID), let slice = record.slice(sliceID) else { return }
         record.sliceTasks[sliceID] = nil
         // 服务器提前断流仍有剩余 → 视为失败，走断点续传（PCL2 1173 行）
         if record.fileSize != -1 && slice.undone(of: record) > 0 {
@@ -196,8 +203,9 @@ extension NetManager {
     }
 
     func sliceFailed(fileID: UUID, sliceID: UUID, error: Error) async {
-        guard let record = find(fileID), let slice = record.slice(sliceID) else { return }
+        // 同 sliceSucceeded：递减先于 guard，保证记录已被移除时也归还分片额度（理由同上）。
         activeSlices = max(0, activeSlices - 1)
+        guard let record = find(fileID), let slice = record.slice(sliceID) else { return }
         record.sliceTasks[sliceID] = nil
         slice.state = .failed
         record.failCount += 1

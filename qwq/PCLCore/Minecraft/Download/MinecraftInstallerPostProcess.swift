@@ -22,7 +22,13 @@ extension MinecraftInstaller {
         }
         for (_, native) in manifest.getNeededNatives() {
             let jarURL: URL = task.minecraftDirectory.librariesURL.appendingPathComponent(native.path)
-            Util.unzip(archiveURL: jarURL, destination: nativesURL, replace: true)
+            // 解压失败必须可见：`Util.unzip` 原先无返回值、失败仅记日志，调用方无从判断成败，
+            // 安装（createTask / createCompleteTask）与启动前修复（ensureNatives）都会在
+            // natives 缺失的情况下继续当作成功。现读取其成功标志并走既有错误通道——本方法本就是
+            // `throws`，三处调用方均已用 `try`。
+            guard Util.unzip(archiveURL: jarURL, destination: nativesURL, replace: true) else {
+                throw MyLocalizedError(reason: "解压 natives 失败：\(native.path)")
+            }
             do {
                 try processLibs(task, nativesURL)
             } catch {
