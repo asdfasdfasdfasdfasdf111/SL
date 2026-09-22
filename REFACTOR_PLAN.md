@@ -51,12 +51,12 @@
 
 | # | 事项 | 风险 | 状态 / 需要什么才能收尾 |
 |---|---|---|---|
-| A | 剩余下载调用方切换 | 低-中 | **进行中**：逐个切换 + `verify-build.sh`；遇到"切换会改变行为"的必须记录不切 |
+| A | 剩余下载调用方切换 | 低-中 | ✅ **已收口**（`037b007`）：可等价切换的调用点已全部切完。剩余 4 处（`MultiFileDownloader` 批量、`MinecraftInstallerDownloads` 三处批量、`DownloadSourceManager` 测速、`SingleFileDownloader` 自身）经判定**不可等价切换**——批量路径的字节加权进度分母依赖 `NetDownloader` 内部中间态，测速返回值是墙钟差、引擎跳步会落在计时窗口内。切换需扩展 `DownloadEngine` 的进度语义，超出「不新增功能」范围，按 `MIGRATION.md` 判据记录为不切 |
 | B | `qwqTests` 加入工程 target | 中 | ✅ **已完成**（`8172dbf`）：可编译；**运行**需在 Terminal（脱离 AI 沙箱）执行 `./scripts/verify-test.sh run`，AI 沙箱内 testmanagerd 的 XPC 连接会被阻断 |
-| C | UI 剩余职责 | 中 | **进行中**：窗口壳/标题栏、`searchText`、`isDropTargeted`、画布手势与 spring 参数、按钮与详情页渲染 |
-| D | 启动缺陷 D1–D6 | 中 | D7–D9 已修；D1（客户端 JAR 校验）是**行为变更**，需你拍板；其余逐条复核后修 |
+| C | UI 剩余职责 | 中 | ✅ **已收口**（`6801bb6`）：抽出 `GameCategoryViewModel` / `DownloadCategoryViewModel+Orchestration` / `LaunchEntryViewModel`，`ModDetailViewModel` 补 `performDownload`。**窗口壳 / `searchText` / `isDropTargeted` / 画布手势与 spring 参数位于冻结的 `qwq/App`**，本轮不可动；`ModDetailView.settings` 订阅与 `CategoryContentView.searchText` 因无法静态证否而保留并记录 |
+| D | 启动缺陷 D1–D6 | 中 | D7–D9 已修；D1–D6 已由 `cb93219` / `03820d9` 处理大部分；**D1（客户端 JAR 校验）为行为变更，需你拍板** |
 | E | 旧兼容层清理（`PCLStubs` / `PCLLaunchBridge`） | 中-高 | **被 F 阻塞**：需先完成双流程合并，否则会断掉回退路径。`PCLStubs` 487 行，普查出 9 项无引用 |
-| F | 双启动流程合并 | **高** | **必须真机启动游戏验证**：Java 扫描等待、日志 flush、进程退出与回调时序。AI 无法代跑 |
+| F | 双启动流程合并 | **高** | **必须真机启动游戏验证**：Java 扫描等待、日志 flush、进程退出与回调时序。AI 无法代跑 —— **需要你在本机跑一次游戏** |
 
 
 ---
