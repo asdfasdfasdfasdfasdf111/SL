@@ -40,11 +40,12 @@ enum ModDragInstaller {
     }
 
     /// 把模组文件拷贝到所有匹配实例的 versions/<version>/mods 目录（同名覆盖）
-    /// - Returns: 成功安装的实例数
+    /// - Returns: 成功安装的实例数，以及（若有）每个失败实例的原因，供调用方区分「部分失败 / 全部失败」
     @discardableResult
-    static func install(modURL: URL, to instances: [GameInstance]) -> Int {
+    static func install(modURL: URL, to instances: [GameInstance]) -> (successCount: Int, failures: [String]) {
         let modFileName = modURL.lastPathComponent
         var successCount = 0
+        var failures: [String] = []
         for instance in instances {
             // 游戏启动时 gameDir = <rootPath>/versions/<version>，mods 在版本文件夹内
             let modsDir = URL(fileURLWithPath: instance.rootPath).appendingPathComponent("versions/\(instance.version)/mods")
@@ -57,9 +58,13 @@ enum ModDragInstaller {
                 try FileManager.default.copyItem(at: modURL, to: destURL)
                 successCount += 1
             } catch {
-                print("安装模组到 \(instance.rootPath) 失败: \(error.localizedDescription)")
+                // 此前只 print 且调用方只看成功计数：全部失败时仍显示“已安装到 0 个实例”，
+                // 用户既不知失败也不知原因。现记统一日志并回传失败原因。
+                let reason = "\(instance.rootPath)（版本 \(instance.version)）：\(error.localizedDescription)"
+                LogManager.err("安装模组失败: \(reason)")
+                failures.append(reason)
             }
         }
-        return successCount
+        return (successCount, failures)
     }
 }

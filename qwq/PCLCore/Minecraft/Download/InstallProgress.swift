@@ -25,14 +25,6 @@ public enum InstallStage: Int {
     case customFile = 2000
     case modDownload = 2001
     
-    @available(*, deprecated, message: "全库无引用，待清理")
-    case resources = 3000
-    
-    @available(*, deprecated, message: "全库无引用，待清理")
-    case javaDownload = 4000
-    @available(*, deprecated, message: "全库无引用，待清理")
-    case javaInstall = 4001
-    
     public func getDisplayName() -> String {
         switch self {
         case .before: "未启动"
@@ -47,10 +39,7 @@ public enum InstallStage: Int {
         case .natives: "下载本地库文件"
         case .customFile: "下载自定义文件"
         case .modDownload: "下载文件"
-        case .resources: "下载资源"
         case .end: "结束"
-        case .javaDownload: "下载 Java"
-        case .javaInstall: "安装 Java"
         }
     }
 }

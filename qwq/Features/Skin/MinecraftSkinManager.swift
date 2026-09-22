@@ -14,7 +14,7 @@ class MinecraftSkinManager {
 
     // 皮肤持久化目录
     var skinsDirectory: URL {
-        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appSupport = URL.applicationSupportDirectory
         return appSupport.appendingPathComponent("SL启动器/Skins")
     }
 

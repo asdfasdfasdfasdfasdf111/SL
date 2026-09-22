@@ -87,7 +87,14 @@ enum OfflineSkinService {
                                 let versionDir = SkinResourcePackApplier.versionDirectory(gameRoot: gameRootPath, version: version)
                                 try SkinResourcePackApplier.apply(skinURL: url, toVersion: version, gameDir: versionDir, settings: settings)
                             } catch {
-                                print("⚠️ 皮肤资源包生成失败: \(error.localizedDescription)")
+                                // 皮肤图片与头像已落盘并更新，但游戏内资源包未生成：
+                                // 此前只 print，用户进游戏看不到新皮肤且毫无感知。现接入统一日志与提示通道。
+                                LogManager.err("皮肤资源包生成失败: \(error.localizedDescription)")
+                                NoticeCenter.shared.post(
+                                    Notice(level: .warning,
+                                           title: "皮肤已保存，资源包注入失败",
+                                           message: "皮肤图片与头像已更新，但游戏内资源包生成失败，进入游戏可能看不到新皮肤（\(error.localizedDescription)）。")
+                                )
                             }
                         }
                     } else {

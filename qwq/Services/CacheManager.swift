@@ -10,8 +10,15 @@ import Foundation
 /// 推断为主 actor 隔离。本类的【只读路径】显式标注 `nonisolated`，使调用方（如
 /// `TranslationService.cachedTranslation(for:)`）能在 `Task.detached` 的后台上下文里真正执行
 /// 磁盘读，而不是 `await` 切回主 actor 后在主线程上读盘。
-/// 【写入路径】（`diskSet` / `setObject` / `setText` / `removeObject` / `cleanDiskCache`
-/// / `userDefaultsGet`）保持原样仍为主 actor 隔离，避免扩大改动面。
+/// 【写入路径】的隔离标注按「是否触碰 actor 隔离状态」分两类，非一刀切：
+/// - `diskSet` / `setText` 标 `nonisolated`：二者只访问 `diskRoot`（`let URL`，URL 为 Sendable，
+///   按规则隐式非隔离）、`fileManager`（已显式非隔离的计算属性）与 `memorySet`（已非隔离），
+///   不触碰任何主 actor 状态，故可安全脱离主 actor。
+/// - `setObject` / `memoryRemove` / `trimMemory` / `clearMemory` / `removeObject` /
+///   `cleanDiskCache` / `userDefaultsGet` 保持主 actor 隔离，避免扩大改动面。
+/// 注：把 `setText` / `diskSet` 放宽为非隔离**不改变任何既有调用方的行为**——非隔离的同步函数
+/// 从主 actor 调用时仍在当前线程同步执行，不产生 actor 跳转；放宽只是让非隔离上下文（如
+/// `TranslationService.translateText`）也能直接调用，免去一次无谓的主线程往返。
 ///
 /// `nonisolated` 的语义约束：非隔离方法可以从任意并发域调用，但实现中不得访问 actor 隔离状态
 /// （否则编译器直接报错）。本类中以 `lock` 串行化的 `memCache` 因此改用 `nonisolated(unsafe)`
@@ -92,7 +99,9 @@ final class CacheManager {
         return try? Data(contentsOf: diskURL(for: key))
     }
 
-    func diskSet(_ key: String, data: Data) {
+    /// 写盘。**无锁、无 actor 状态**（见类型注释的写入路径说明），故标 `nonisolated`：
+    /// 既让非隔离上下文可直接调用，也让磁盘 IO 真正落在调用方所在线程。
+    nonisolated func diskSet(_ key: String, data: Data) {
         let url = diskURL(for: key)
         let dir = url.deletingLastPathComponent()
         try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -162,7 +171,9 @@ final class CacheManager {
     }
 
     /// 写文本缓存：内存（锁内）+ 磁盘明文（锁外）
-    func setText(_ text: String, forKey key: String) {
+    /// `nonisolated`：`memorySet` / `diskSet` 均已非隔离，本方法自身不触碰 actor 状态；
+    /// 由 `TranslationService.translateText`（非隔离，运行在协作线程池）直接调用，写入不占主线程。
+    nonisolated func setText(_ text: String, forKey key: String) {
         let data = Data(text.utf8)
         memorySet(key, data: data)
         diskSet(key, data: data)

@@ -94,8 +94,27 @@ final class DropInstallCoordinator: ObservableObject {
     /// 用户在模组安装弹窗确认目标实例后执行安装。
     func confirmModInstall(instances: [GameInstance]) {
         if let modURL = pendingModURL {
-            let count = ModDragInstaller.install(modURL: modURL, to: instances)
-            launchPanel.presentMessage("模组已安装到 \(count) 个实例")
+            let result = ModDragInstaller.install(modURL: modURL, to: instances)
+            let successCount = result.successCount
+            if result.failures.isEmpty {
+                launchPanel.presentMessage("模组已安装到 \(successCount) 个实例")
+            } else if successCount == 0 {
+                // 全部失败：此前只回传成功计数（0），用户既看不到失败也看不到原因
+                let detail = result.failures.joined(separator: "\n")
+                NoticeCenter.shared.post(
+                    Notice(level: .error,
+                           title: "模组安装失败",
+                           message: "未能安装到任何实例（共 \(result.failures.count) 个）：\n\(detail)")
+                )
+            } else {
+                // 部分失败：告知成功数与失败原因，避免把失败伪装成“已安装 N 个”
+                let detail = result.failures.joined(separator: "\n")
+                NoticeCenter.shared.post(
+                    Notice(level: .warning,
+                           title: "部分实例安装失败",
+                           message: "已安装到 \(successCount) 个实例；\(result.failures.count) 个失败：\n\(detail)")
+                )
+            }
         }
         showModInstallSheet = false
     }

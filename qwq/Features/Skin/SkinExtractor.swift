@@ -65,7 +65,7 @@ enum SkinExtractor {
             try fileManager.copyItem(at: tempURL, to: destURL)
             return destURL
         } catch {
-            print("⚠️ 无法持久化提取的皮肤: \(error.localizedDescription)")
+            LogManager.err("无法持久化提取的皮肤: \(error.localizedDescription)")
             return nil
         }
     }

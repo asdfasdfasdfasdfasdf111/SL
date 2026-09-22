@@ -16,8 +16,7 @@ class JavaManager {
     private static let scanWaitTimeout: TimeInterval = 10
 
     private init() {
-        let paths = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-        appSupportPath = paths[0].appendingPathComponent("SL启动器")
+        appSupportPath = URL.applicationSupportDirectory.appendingPathComponent("SL启动器")
         javaBasePath = appSupportPath.appendingPathComponent("java")
         try? FileManager.default.createDirectory(at: javaBasePath, withIntermediateDirectories: true)
     }

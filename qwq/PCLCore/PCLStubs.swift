@@ -22,18 +22,6 @@ extension URL {
     }
 }
 
-public extension Optional {
-    /// 解包失败时抛出带调用位置信息的 `MyLocalizedError`。
-    /// 使用方：`PCLCore/Minecraft/Download/InstallTask.swift:349`、`PCLCore/Download/DownloadSource.swift:49`、
-    /// `PCLCore/Download/DownloadSourceManager.swift:109`、`Features/ModBrowser/ModDownloader.swift:156`。
-    func unwrap(_ errorMessage: String? = nil, file: String = #file, line: Int = #line) throws -> Wrapped {
-        guard let value = self else {
-            throw MyLocalizedError(reason: errorMessage ?? "\(file.split(separator: "/").last!):\(line) 解包失败")
-        }
-        return value
-    }
-}
-
 // MARK: - Hint function
 /// 轻量提示。**已接入真实提示通道**（`NoticeCenter` → 根视图上的 `NoticeOverlay`）。
 ///
@@ -114,10 +102,6 @@ public class AppRouter: ObservableObject {
 /// 取值在 `PCLCore/Download/DownloadSourceManager.swift:40,49,69,132`、
 /// `Core/Download/Adapters/DefaultDownloadSourceResolver.swift:41`、`PCLCore/Download/MultiFileDownloader.swift:27` 使用。
 public enum DownloadSourceOption: Codable { case official, mirror, both }
-/// 全库（含 `qwqTests`）无任何引用，待清理。配色方案由
-/// `Features/Settings/AppSettingsStore.swift` 的 `accentColor` 承担。
-@available(*, deprecated, message: "全库无引用，待清理")
-public enum ColorSchemeOption: Codable { case light, dark, system }
 
 /// 应用级设置（兼容层）。
 ///

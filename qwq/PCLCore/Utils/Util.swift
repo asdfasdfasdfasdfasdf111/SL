@@ -10,6 +10,11 @@ import ZIPFoundation
 import CryptoKit
 
 public class Util {
+    // 正则编译开销远高于匹配；以下字面量一次编译、全程复用（原写在方法体内每次调用重编译）。
+    private static let mainClassRegex = try? NSRegularExpression(pattern: "(?m)^Main-Class:\\s*([^\\r\\n]+)")
+    private static let mavenCoordinatePattern = #"^([^:]+):([^:]+):([^:@]+)(?::([^@]+))?(?:@(.+))?$"#
+    private static let mavenCoordinateRegex = try? NSRegularExpression(pattern: mavenCoordinatePattern)
+
     public static func getMainClass(_ jarURL: URL) -> String? {
         do {
             let archive = try Archive(url: jarURL, accessMode: .read)

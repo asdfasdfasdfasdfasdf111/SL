@@ -5,7 +5,7 @@
 //  实例配置的读写与类型定义（从 MinecraftInstance.swift 逐字搬移，逻辑与文案未变）：
 //  - MinecraftInstance.loadConfig / saveConfig：.PCL_Mac.json 的读写
 //  - MinecraftConfig：配置模型与 CodingKeys（javaURLString 沿用旧字段名 javaURL）
-//  - ClientBrand：加载器品牌枚举、显示名与排序序号
+//  - ClientBrand：加载器品牌枚举与显示名
 //  - QualityOfService 的 Codable 追溯一致性（供 MinecraftConfig 编解码）
 //
 
@@ -103,17 +103,6 @@ public enum ClientBrand: String, Codable, Hashable {
             return "NeoForge"
         } else {
             return self.rawValue.capitalized
-        }
-    }
-    
-    @available(*, deprecated, message: "全库无引用，待清理")
-    public var index: Int {
-        switch self {
-        case .vanilla: 0
-        case .fabric: 1
-        case .quilt: 2
-        case .forge: 3
-        case .neoforge: 4
         }
     }
 }

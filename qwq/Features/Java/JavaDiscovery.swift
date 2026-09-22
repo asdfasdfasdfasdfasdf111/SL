@@ -5,6 +5,9 @@ import Foundation
 // 不做版本解析（解析在 JavaManager.parseJavaVersion / JavaVersionParser）。
 
 enum JavaDiscovery {
+    /// 正则编译开销远高于匹配；字面量一次编译、全程复用（原写在循环内每次调用重编译）。
+    private static let javaHomeVersionRegex = try? NSRegularExpression(pattern: #"\s+(\d+(?:\.\d+)*)\s+\([^)]+\)\s+"[^"]*"\s+-\s+"[^"]*"\s+(.+)$"#)
+
     /// 扫描全部来源，返回去重后的 java 可执行文件路径（未验证存在性之外的解析）。
     static func discoverExecutables(basePath: URL) -> [String] {
         var visitedPaths = Set<String>()
@@ -23,8 +26,7 @@ enum JavaDiscovery {
             let lines = output.split(separator: "\n")
             for line in lines {
                 let lineStr = String(line)
-                let pattern = #"\s+(\d+(?:\.\d+)*)\s+\([^)]+\)\s+"[^"]*"\s+-\s+"[^"]*"\s+(.+)$"#
-                if let regex = try? NSRegularExpression(pattern: pattern),
+                if let regex = Self.javaHomeVersionRegex,
                    let match = regex.firstMatch(in: lineStr, range: NSRange(location: 0, length: lineStr.utf16.count)),
                    match.numberOfRanges > 2,
                    let pathRange = Range(match.range(at: 2), in: lineStr) {

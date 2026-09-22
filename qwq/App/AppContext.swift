@@ -58,7 +58,7 @@ final class AppContext {
     private var memoryPressureSource: DispatchSourceMemoryPressure?
 
     private init() {
-        let supportURL = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let supportURL = URL.applicationSupportDirectory
             .appendingPathComponent("SL启动器")
         appSupportURL = supportURL
         try? fileManager.createDirectory(at: supportURL, withIntermediateDirectories: true)

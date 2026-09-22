@@ -23,7 +23,7 @@ public class TemperatureDirectory {
     @discardableResult
     public func createFile(path: String, data: Data? = nil) -> URL? {
         let path = root.appendingPathComponent(path)
-        try? FileManager.default.createDirectory(at: path.parent(), withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
         if FileManager.default.createFile(atPath: path.path, contents: data) {
             return path
         } else {

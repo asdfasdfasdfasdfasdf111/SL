@@ -185,7 +185,7 @@ final class LaunchAvatarSkinViewModel: ObservableObject {
         offlineUUID: String
     ) async -> URL? {
         guard !isLaunching else { return nil }
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appSupport = URL.applicationSupportDirectory
         let skinDir = appSupport.appendingPathComponent("SL启动器/Skins")
         try? FileManager.default.createDirectory(at: skinDir, withIntermediateDirectories: true)
         let skinDestURL = skinDir.appendingPathComponent("selected_skin.png")

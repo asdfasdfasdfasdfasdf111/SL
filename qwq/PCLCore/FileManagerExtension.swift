@@ -14,7 +14,7 @@ extension FileManager {
         let fileManager = FileManager.default
         if !fileManager.fileExists(atPath: logURL.path) {
             try fileManager.createDirectory(
-                at: logURL.parent(),
+                at: logURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true,
                 attributes: nil
             )

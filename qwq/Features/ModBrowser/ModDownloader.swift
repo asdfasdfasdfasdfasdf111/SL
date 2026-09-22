@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 // 数据模型族 → ModrinthModels.swift（ModrinthMod/ModrinthProject/ModrinthVersion）
 // ModLoader → ModLoader.swift（加载器枚举 + displayName/assetName）
@@ -6,19 +7,38 @@ import Foundation
 // MARK: - Modrinth 搜索缓存（ModDownloader / ModpackDownloader 共用，替代两份逐字重复的 cache+TTL+lock）
 
 /// TTL 结果缓存 + 同 key 并发请求合并
+///
+/// 锁的选型：原实现是 `private var lock = os_unfair_lock()` + `withUnfairLock(&lock)`。
+/// Apple《OSAllocatedUnfairLock》文档明确警告「it's unsafe to use `os_unfair_lock` from Swift
+/// because it's a value type… Instead, use `OSAllocatedUnfairLock`, which avoids that pitfall」——
+/// `&lock` 取到的是值的地址，一旦本类型改成非 `final` 或将来被搬进值类型，就会锁在临时副本上、
+/// 互斥静默失效。现改用 `OSAllocatedUnfairLock`（macOS 13.0+，正好等于本项目部署目标）。
+///
+/// 同时把 `cached` / `inFlight` 从裸实例属性**并入锁所保护的状态**：此后没有任何路径能在
+/// 不持锁的情况下碰到这两个字典，「忘记加锁」在结构上不可能发生（原实现靠人自觉）。
+///
+/// 为什么用 `withLockUnchecked` 而非 `withLock`：`withLock` 的签名是
+/// `func withLock<R>(_ body: @Sendable (inout State) throws -> R) rethrows -> R where R: Sendable`，
+/// 要求返回值 Sendable 且闭包 `@Sendable`。本类型是泛型 `ModrinthSearchCache<Value>`，
+/// `Value` 无约束，`State` 里又有 `Task<Value, Error>`，用 `withLock` 直接编译不过。
+/// `withLockUnchecked` 是官方为此提供的变体：加锁语义与 `withLock` **完全一致**
+/// （同一份 `os_unfair_lock_lock/unlock` 实现），差别只是不做 Sendable 检查。
 final class ModrinthSearchCache<Value> {
-    private var cached: [String: (Date, Value)] = [:]
-    private var inFlight: [String: Task<Value, Error>] = [:]
+    private struct State {
+        var cached: [String: (Date, Value)] = [:]
+        var inFlight: [String: Task<Value, Error>] = [:]
+    }
+
     private let ttl: TimeInterval
-    private var lock = os_unfair_lock()
+    private let lock = OSAllocatedUnfairLock<State>(initialState: State())
 
     init(ttl: TimeInterval = 120) { self.ttl = ttl }
 
     func hit(_ key: String) -> Value? {
-        withUnfairLock(&lock) {
-            guard let (ts, value) = cached[key] else { return nil }
+        lock.withLockUnchecked { state in
+            guard let (ts, value) = state.cached[key] else { return nil }
             if Date().timeIntervalSince(ts) > ttl {
-                cached.removeValue(forKey: key)
+                state.cached.removeValue(forKey: key)
                 return nil
             }
             return value
@@ -26,30 +46,33 @@ final class ModrinthSearchCache<Value> {
     }
 
     func store(_ key: String, _ value: Value) {
-        withUnfairLock(&lock) {
-            cached[key] = (Date(), value)
-            if cached.count > 50, let oldest = cached.min(by: { $0.value.0 < $1.value.0 })?.key {
-                cached.removeValue(forKey: oldest)
+        lock.withLockUnchecked { state in
+            state.cached[key] = (Date(), value)
+            if state.cached.count > 50, let oldest = state.cached.min(by: { $0.value.0 < $1.value.0 })?.key {
+                state.cached.removeValue(forKey: oldest)
             }
         }
     }
 
     func existingTask(_ key: String) -> Task<Value, Error>? {
-        withUnfairLock(&lock) { inFlight[key] }
+        lock.withLockUnchecked { $0.inFlight[key] }
     }
 
     func track(_ key: String, _ task: Task<Value, Error>) {
-        withUnfairLock(&lock) { inFlight[key] = task }
+        lock.withLockUnchecked { $0.inFlight[key] = task }
     }
 
     func untrack(_ key: String) {
-        withUnfairLock(&lock) { inFlight.removeValue(forKey: key) }
+        // 闭包单表达式 `removeValue` 会返回被移除的 Task 作为 withLockUnchecked 的结果；
+        // 原 `withUnfairLock` 带 @discardableResult（静默丢弃），系统原生 API 没有，
+        // 故显式 `_ =` 表达同一语义，避免 #no-usage 告警
+        _ = lock.withLockUnchecked { $0.inFlight.removeValue(forKey: key) }
     }
 
     func clear() {
-        withUnfairLock(&lock) {
-            cached.removeAll()
-            inFlight.removeAll()
+        lock.withLockUnchecked { state in
+            state.cached.removeAll()
+            state.inFlight.removeAll()
         }
     }
 }

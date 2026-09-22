@@ -10,7 +10,7 @@ import SwiftyJSON
 
 /// 用于缓存下载项
 public class CacheStorage {
-    public static let `default`: CacheStorage = .init(rootURL: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("minecraft").appendingPathComponent("cache"))
+    public static let `default`: CacheStorage = .init(rootURL: URL.applicationSupportDirectory.appendingPathComponent("minecraft").appendingPathComponent("cache"))
     
     private let rootURL: URL
     private var libraries: [Library]

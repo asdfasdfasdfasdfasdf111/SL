@@ -267,7 +267,7 @@ public final class MinecraftInstanceLaunchService: LaunchService, @unchecked Sen
                     )
                     return
                 }
-                try? await Task.sleep(nanoseconds: 50 * 1_000_000)
+                try? await Task.sleep(for: .milliseconds(50))
             }
             log("[LaunchService] 5s 内未取得进程引用，会话 \(sessionID) 未登记（启动与终止不受影响）")
         }

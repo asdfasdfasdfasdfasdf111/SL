@@ -10,6 +10,11 @@
 # 基线（拆分重构完成时）：口径一 44 告警 / 口径二 58 告警，0 错误。
 # 告警数超出基线即为本次改动引入，需逐条核对。
 #
+# 2026-09-22 实测复核：HEAD（cc260b3）实际为口径一 44 / 口径二 56，比上面记的少 2。
+# 复核方式是 `git archive HEAD` 导出到 /tmp 单独跑一遍，再与当前结果**逐条 diff**
+# （不只看数量）——故此后以 44 / 56 为准，且判定标准是「告警集合与基线一致」而非仅数量相等。
+# 提示：git archive 是只读操作；不要用 git stash 复核，沙箱内 stash 会留下 .git/index.lock。
+#
 # ⚠️ 关键：本脚本额外开启 MemberImportVisibility。
 # 工程（Xcode 26 默认）启用了 SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY，
 # 而**裸 swiftc -typecheck 默认不开该特性**，于是会漏掉「成员来自未 import 的模块」这类错误

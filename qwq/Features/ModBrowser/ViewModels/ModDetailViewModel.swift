@@ -381,7 +381,17 @@ final class ModDetailViewModel: ObservableObject {
                 }
             } catch {
                 await MainActor.run {
+                    // 必须先复位加载态（无论页面是否仍活跃），否则版本列表会永远停在加载中
                     isLoadingModpackVersions = false
+                    guard isViewActive else { return }
+                    // 整合包版本列表取数失败：此前完全静默，用户以为“这个包没有版本”，
+                    // 且与「取数失败」无法区分。现接入统一日志与提示通道，页面仍可用本地版本。
+                    LogManager.err("整合包版本列表获取失败: \(error.localizedDescription)")
+                    NoticeCenter.shared.post(
+                        Notice(level: .warning,
+                               title: "版本列表获取失败",
+                               message: "暂时无法获取该整合包的版本列表（\(error.localizedDescription)）。页面仍可使用本地版本继续操作。")
+                    )
                 }
             }
         }

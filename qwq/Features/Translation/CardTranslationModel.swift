@@ -109,22 +109,19 @@ final class CardTranslationModel: ObservableObject {
             return
         }
         Task.detached(priority: .utility) { [weak self] in
-            // 隔离事实（原注释「必须脱离主线程执行」不成立）：`Task.detached` 确实不继承 actor
-            // 隔离，但 `translateText` 自身是主 actor 隔离方法（工程默认隔离为 MainActor，该类未显式
-            // 标注 `nonisolated`），对它的 async 调用会 `await` 切回主 actor，方法体仍在主线程执行。
-            // 影响：`translateText` 在主线程内调用 semaphoreWait(Self.translationSemaphore)
-            //（LockCompat.swift 明确该函数「阻塞当前线程直到拿到配额」），当并发翻译数超过上限 24 时
-            // 主线程会一直阻塞到有配额释放，而配额要持有到该项目的网络竞速结束（URLSession 请求超时
-            // 8~12s），期间界面无法响应；并发数未达上限时等待立即返回，无实际影响。
+            // 隔离事实：`Task.detached` 不继承 actor 隔离；而 `translateText` 自身也已显式标
+            // `nonisolated`，故对它的 async 调用**不会** `await` 切回主 actor —— 方法体在协作
+            // 线程池上执行，其中唯一的同步阻塞点（等待全局并发配额的信号量）随之离开主线程。
+            // 这正是必须让 `translateText` 自己标 nonisolated 的原因：只把它的依赖标非隔离是无效的，
+            // 方法本身受主 actor 隔离时，调用点会先 `await` 切回主 actor 再执行整个函数体，
+            // 于是并发翻译数超过上限 24 时主线程会被信号量阻塞住（配额要持有到该项目网络竞速结束），
+            // 期间界面无法响应。改造后该阻塞落在协作线程池线程上，界面不再受影响。
+            // 注：方法体内仍属主 actor 隔离的调用（如 `TranslationSourceFetcher.raceSources`）
+            // 由编译器自动插入 `await` 跳转，语义不变。
             // 依据：《Concurrency》Unstructured Concurrency —— `Task.detached` 不继承任何 actor
-            // 隔离、优先级与任务局部状态；The Main Actor —— `@MainActor` 函数只在主 actor 上运行，
-            // 从非主 actor 代码调用必须 `await` 切换到主 actor。
+            // 隔离、优先级与任务局部状态；SE-0338 规定 nonisolated async 函数在协作线程池上运行；
+            // The Main Actor —— `@MainActor` 函数只在主 actor 上运行，从非主 actor 代码调用必须 `await`。
             // https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/
-            // 未做异步化改造的理由：`translateText` 的实现主体是「持有全局并发配额 → 网络竞速 →
-            // 写缓存」，其中 `semaphoreWait(Self.translationSemaphore)` 是同步阻塞调用，而
-            // `TranslationSourceFetcher.raceSources` 依赖主 actor 隔离的 `AppContext` 会话；
-            // 本次只把【只读缓存查询】去隔离（即本方法上方那条更高频的路径），
-            // 网络分支仍留在主 actor，避免改动面扩散到抓取层。
             let result = try? await service.translateText(text: subtitle, projectId: id)
             let final = result ?? ""
             // Sendable 闭包不可引用 weak var 捕获：先拷成强引用常量再进 MainActor.run

@@ -122,7 +122,7 @@ extension MinecraftInstaller {
         )
         
         // 初始化实例
-        let instance = MinecraftInstance.create(.init(rootURL: task.versionURL.parent().parent(), name: ""), task.versionURL, config: MinecraftConfig(version: task.minecraftVersion))
+        let instance = MinecraftInstance.create(.init(rootURL: task.versionURL.deletingLastPathComponent().deletingLastPathComponent(), name: ""), task.versionURL, config: MinecraftConfig(version: task.minecraftVersion))
         
         instance?.saveConfig()
         

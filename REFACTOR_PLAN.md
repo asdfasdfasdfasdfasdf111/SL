@@ -57,9 +57,11 @@
 | A | 剩余下载调用方切换 | 低-中 | ✅ **已收口**（`037b007`）：可等价切换的调用点已全部切完。剩余 4 处（`MultiFileDownloader` 批量、`MinecraftInstallerDownloads` 三处批量、`DownloadSourceManager` 测速、`SingleFileDownloader` 自身）经判定**不可等价切换**——批量路径的字节加权进度分母依赖 `NetDownloader` 内部中间态，测速返回值是墙钟差、引擎跳步会落在计时窗口内。切换需扩展 `DownloadEngine` 的进度语义，超出「不新增功能」范围，按 `MIGRATION.md` 判据记录为不切 |
 | B | `qwqTests` 加入工程 target | 中 | ✅ **已完成**（`8172dbf`）：可编译；**运行**需在 Terminal（脱离 AI 沙箱）执行 `./scripts/verify-test.sh run`，AI 沙箱内 testmanagerd 的 XPC 连接会被阻断 |
 | C | UI 剩余职责 | 中 | ✅ **已收口**（`6801bb6`）：抽出 `GameCategoryViewModel` / `DownloadCategoryViewModel+Orchestration` / `LaunchEntryViewModel`，`ModDetailViewModel` 补 `performDownload`。**窗口壳 / `searchText` / `isDropTargeted` / 画布手势与 spring 参数位于冻结的 `qwq/App`**，本轮不可动；`ModDetailView.settings` 订阅与 `CategoryContentView.searchText` 因无法静态证否而保留并记录 |
-| D | 启动缺陷 D1–D6 | 中 | ✅ **D1 已按你的决定落地**：缺客户端文件 → 拦住不启动 + 弹窗（弹窗样式对齐「下载中」气泡）。D1–D6 其余各条已由 `cb93219` / `03820d9` 处理 |
+| D | 启动缺陷 D1–D6 | 中 | ✅ **已全部收口**：D1 按你的决定落地——缺客户端文件 → 拦住不启动 + 弹窗（样式对齐「下载中」气泡），见 `708b3f9`；D2–D6 由 `cb93219` 修复（启动链路 5 处）。另 D7/D8 由 `03820d9` 修复。**§三 九条缺陷已全部关闭** |
 | E | 旧兼容层清理（`PCLStubs` / `PCLLaunchBridge`） | 中-高 | **被 F 阻塞**：需先完成双流程合并，否则会断掉回退路径。`PCLStubs` 487 行，普查出 9 项无引用 |
 | F | 双启动流程合并 | **高** | 🟡 **验证门槛已过，合并本体未开始**：真机启动已由 AI 跑通（见 §七 证据），且走的是 `LaunchCoordinator` → 用例层 → 桥接的**生产同一条路径**。合并本体的四个验证点（Java 扫描等待、日志 flush、进程退出回调时序、`skipResourceCheck` 语义）现在是可跑可测的，不再是「AI 无法代跑」 |
+| G | 配置回退遗留残留清理（`LockCompat` / `CompatModifiers`） | 低 | ✅ **已完成**（未提交）：根因是 `17cca21` 把部署目标由 12.0 回退到 13.0 时**只改 `project.pbxproj` 4 行、未清理为 12 写的兼容层**，两者从此成为孤儿。已删除 `PCLCore/Utils/LockCompat.swift`、`UI/CompatModifiers.swift`（等 2 个文件），`withUnfairLock` → `OSAllocatedUnfairLock`、`withLockCompat` → 原生 `withLock`、`contentTransitionOpacityCompat` → 原生 `.contentTransition(.opacity)`，`semaphoreWait` 迁至 `PCLCore/Utils/NoasyncBridge.swift`。判定依据是用户既定决定「macOS 12 支持单独隔离处理、主目标锁定 13.0」。**验证**：两口径 0 错误且告警集合与基线逐条一致（44/56），真实 `xcodebuild` 编译通过 |
+| H | 默认窗口尺寸 900×660 现无生效声明 | 低 | ⏸ **待你拍板，未动**：`e62d7f3`（降 12.0）删掉了 `qwqApp.swift` 的 `.defaultSize(width: 900, height: 660)`，改用 `AppDelegate` 里 `if #unavailable(macOS 13.0)` 的兜底；`17cca21` 回退到 13.0 后该分支**永不执行**（四处目标均为 13.0），而更晚的 `e624d33` 窗口尺寸审计只处理了 **minSize**、未发现 defaultSize 已丢。现状：全库无任何地方声明默认窗口尺寸（`ContentView.swift` 的 900×650 在 `PreviewProvider` 里，仅预览）。修法一行：在 `.windowStyle` 后恢复 `.defaultSize(width: 900, height: 660)`。属用户可见的行为改动，按规矩先问。**注**：曾尝试用 `CGWindowListCopyWindowInfo` 实测窗口尺寸，量得 81×102 且与 `.frame(minWidth: 800, minHeight: 590)` 下限矛盾，说明该环境下窗口未正常布局，**故不以实测为据**，仅采信代码事实 |
 
 
 ---
@@ -69,14 +71,17 @@
 | 编号 | 缺陷 | 状态 |
 |---|---|---|
 | D1 | 桥接启动路径**无客户端 JAR 校验**，缺文件照样启动，进游戏才崩 | **已修**（`edaedd0` 加校验，本次前移到补全之前 + 弹窗改版） |
-| D2 | `MinecraftLauncher` 的 catch 走 `reportCompletion(1)`，"启动失败"与"崩溃退出"不可区分 | 待修 |
-| D3 | `exitCode == 0` 时删除日志文件，但会话面板 / `LaunchResult.logURL` 仍指向它 | 待修 |
-| D4 | 退管时先置 `readabilityHandler = nil` 再关句柄，管道残留数据丢失（日志尾部） | 待修 |
-| D5 | Java 扫描等待是无人 signal 的信号量忙等 | 待修 |
-| D6 | 桥接路径漏掉"未实现账号"告警 | 待修 |
+| D2 | `MinecraftLauncher` 的 catch 走 `reportCompletion(1)`，"启动失败"与"崩溃退出"不可区分 | **已修**（`cb93219`）：启动失败改报「启动失败：<原因>」，与异常退出分开 |
+| D3 | `exitCode == 0` 时删除日志文件，但会话面板 / `LaunchResult.logURL` 仍指向它 | **已修**（`cb93219`）：不再删除，改为按 20 份上限修剪（实测 25→20、可重复执行） |
+| D4 | 退管时先置 `readabilityHandler = nil` 再关句柄，管道残留数据丢失（日志尾部） | **已修**（`cb93219`）：先非阻塞排空管道再解绑回调（对照实验 0/3000 → 3000/3000） |
+| D5 | Java 扫描等待是无人 signal 的信号量忙等 | **已修**（`cb93219`）：改为订阅唤醒，保留 3 秒上限（实测 0.4s 命中 / 3.0s 超时） |
+| D6 | 桥接路径漏掉"未实现账号"告警 | **已修**（`cb93219`）：接入既有 `AccountError` |
 | D7 | `PopupManager.show` 空实现导致 3 处安装失败提示不可见 | **已修** |
 | D8 | `showAsync` 恒返回 0 导致「导出错误报告」分支永不执行 | **已修** |
 | D9 | `hint()` 只写日志，下载完成/失败提示不可见 | **已修** |
+
+> **D1–D9 九条已确认缺陷全部修复完毕**，无遗留：D1 → `708b3f9`（缺客户端文件秒级拦截 + 弹窗）；D2–D6 → `cb93219`（启动链路 5 处）；D7/D8 → `03820d9`（进程终止失效、启动失败被吞）；D9 见上。
+> 校验：`cb93219` 全量类型检查 0 error；两口径告警数与基线一致（口径一 44 / 口径二 ≤58）。
 
 ---
 

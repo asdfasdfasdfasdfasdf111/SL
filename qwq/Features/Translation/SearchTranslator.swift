@@ -9,7 +9,7 @@ enum SearchTranslator {
 
     /// 中文 → 英文候选词列表（缓存命中直接返回）
     static func translate(_ text: String) async -> [String] {
-        if let cached = cacheLock.withLockCompat({ cache[text] }) {
+        if let cached = cacheLock.withLock({ cache[text] }) {
             return cached
         }
 
@@ -36,7 +36,7 @@ enum SearchTranslator {
         }
         guard !results.isEmpty else { return [] }
 
-        cacheLock.withLockCompat {
+        cacheLock.withLock {
             if cache.count >= 100 {
                 let sortedKeys = cache.keys.sorted()
                 for k in sortedKeys.prefix(50) { cache.removeValue(forKey: k) }
@@ -48,6 +48,6 @@ enum SearchTranslator {
 
     /// 清空缓存（内存警告时调用）
     static func clearCache() {
-        cacheLock.withLockCompat { cache.removeAll() }
+        cacheLock.withLock { cache.removeAll() }
     }
 }

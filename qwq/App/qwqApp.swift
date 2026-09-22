@@ -25,8 +25,15 @@ struct SLApp: App {
                 .frame(minWidth: 800, minHeight: 590)
         }
         .windowStyle(.hiddenTitleBar)
-        // 默认窗口尺寸 900×660：macOS 13+ 的 Scene.defaultSize 与 SceneBuilder 条件语句
-        // 在 12 上不可用，改由 AppDelegate.applicationDidFinishLaunching 统一设置。
+        // 默认窗口尺寸 900×660（居中由系统处理）。
+        //
+        // 这一行曾经丢过，经过如下：e62d7f3（降到 macOS 12.0）把原来的 `.defaultSize(...)` 删掉，
+        // 改用 AppDelegate 里 `if #unavailable(macOS 13.0)` 的兜底；17cca21 把部署目标回退到 13.0
+        // 后该分支永不执行，兜底从未生效；更晚的 e624d33 那次窗口尺寸审计只覆盖 minSize，
+        // 没发现 defaultSize 已丢 —— 期间全库没有任何地方声明默认尺寸。
+        // 2026-09-23 恢复：`.defaultSize` 是 Scene 级 API，自 macOS 13.0 起可用，
+        // 正好等于本项目部署目标，无需任何可用性守卫。
+        .defaultSize(width: 900, height: 660)
     }
 }
 

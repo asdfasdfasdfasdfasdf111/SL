@@ -2,6 +2,18 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 配置回退遗留残留清理（2026-09-22）
+
+**背景**：`17cca21`「部署目标回退至 macOS 13.0」只改了 `project.pbxproj` 的 4 行（2 增 2 删），**没有清理**此前为 macOS 12.0 目标（`e62d7f3`）增补的兼容代码——这些代码从此成为死状态。按既定决定（macOS 12 支持单独隔离处理、主目标锁定 13.0）予以清理。
+
+- **并发**：删除 `PCLCore/Utils/LockCompat.swift`
+  - `withUnfairLock`（`os_unfair_lock` 作值类型属性 + `&lock` 取地址）→ `ModrinthSearchCache` 改用 `OSAllocatedUnfairLock`（macOS 13.0+）。Apple 文档明确警告前者的不安全之处：「it's unsafe to use `os_unfair_lock` from Swift because it's a value type… Instead, use `OSAllocatedUnfairLock`, which avoids that pitfall」。同时把 `cached` / `inFlight` **并入锁所保护的状态**，此后无任何路径能在不持锁时访问这两个字典。因泛型 `Value` 无约束、而 `withLock` 要求 `R: Sendable` 且闭包 `@Sendable`，故使用官方等价变体 `withLockUnchecked`（加锁语义完全相同，仅不做 Sendable 检查）
+  - `NSLock.withLockCompat`（冗余：`NSLock.withLock` 在 SDK 中声明为 `macOS 10.10+` 并经 `@_alwaysEmitIntoClient` 回部署，本项目 13.0 目标本就直接可用）→ Translation 模块 5 处改用原生 `withLock`；两处闭包单表达式的返回值非 Void，补 `_ =` 承接原 `@discardableResult` 的「显式丢弃」语义
+  - `semaphoreWait` **保留**（它是 Swift 书认可的 `noasync` 正规规避方式），迁至 `PCLCore/Utils/NoasyncBridge.swift` 并订正注释
+- **SwiftUI**：删除 `UI/CompatModifiers.swift`——其立论前提「项目最低部署目标为 macOS 12」与工程实际（四处均为 `MACOSX_DEPLOYMENT_TARGET = 13.0`，无 xcconfig 覆盖）不符，且 `defaultFocusCompat` 全库零调用方 → `ContentCard.swift` 改用原生 `.contentTransition(.opacity)`
+- **验证**：`./scripts/typecheck.sh` 两口径 **0 错误**，告警**集合逐条等于基线**（口径一 44 / 口径二 56，用 `git archive HEAD` 导出基线单独实测后 diff 得出）；`./scripts/verify-build.sh` 真实 `xcodebuild` **编译通过，0 错误**
+- **顺带发现（未改，待确认）**：**默认窗口尺寸 900×660 现已无任何生效声明**。`e62d7f3` 删掉了 `qwqApp.swift` 的 `.defaultSize(width: 900, height: 660)`，改用 `AppDelegate` 中 `if #unavailable(macOS 13.0)` 的兜底；`17cca21` 把部署目标回退到 13.0 后该分支永不执行，兜底实际从未生效；而 `e624d33` 那次窗口尺寸审计只覆盖了 **minSize**，未发现 defaultSize 已丢失。修法一行：在 `.windowStyle` 后恢复 `.defaultSize(width: 900, height: 660)`——属用户可见的行为改动，本次仅订正注释并记录，未实施
+
 ## 皮肤资源包兼容 26.2 + 启动体验（2026-08-20）
 
 - **皮肤资源包修复（26.2+ 兼容）**：新版（25w31a+）资源包格式改用必填 `min_format`/`max_format`（resource pack ≥ 65 时旧字段 `pack_format`/`supported_formats` 会被判定 "no longer compatible" 并剔除）——现在从版本 jar 内 `version.json` 动态读取 `pack_version.resource_major/minor`，≥ 65 写新格式、老版本回落 `pack_format`；同时修复资源包临时目录未创建导致打包失败的问题。真机验证 26.2-Fabric 正常加载（`Reloading ResourceManager: vanilla, file/SL 皮肤.zip`）

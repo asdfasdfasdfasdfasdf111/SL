@@ -72,7 +72,7 @@ protocol ModBrowserService: Sendable {
 /// - `ModDownloader.getProject` / `getVersions`：项目详情与版本列表
 ///
 /// `ModDownloader` 是带搜索结果缓存的引用类型且未声明 `Sendable`，
-/// 因此不放入实例属性；以静态 let 复用同一实例（其缓存内部由 `os_unfair_lock` 保护）。
+/// 因此不放入实例属性；以静态 let 复用同一实例（其缓存内部由 `OSAllocatedUnfairLock` 保护）。
 /// 本类型自身无可变状态。
 struct DefaultModBrowserService: ModBrowserService {
 

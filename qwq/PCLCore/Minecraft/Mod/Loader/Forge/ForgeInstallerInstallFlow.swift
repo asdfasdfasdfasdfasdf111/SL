@@ -153,7 +153,7 @@ extension ForgeInstaller {
             
             let forgePath = minecraftDirectory.librariesURL.appendingPathComponent(Util.toPath(mavenCoordinate: json["install"]["path"].stringValue))
             
-            try? FileManager.default.createDirectory(at: forgePath.parent(), withIntermediateDirectories: true)
+            try? FileManager.default.createDirectory(at: forgePath.deletingLastPathComponent(), withIntermediateDirectories: true)
             try ArchiveUtil.getEntryOrThrow(archive: archive, name: json["install"]["filePath"].stringValue).write(to: forgePath, options: .atomic)
         } else {
             installProfile = ForgeInstallProfile(json: json)

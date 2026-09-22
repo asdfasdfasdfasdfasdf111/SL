@@ -108,7 +108,7 @@ public class JavaVirtualMachine: Identifiable, Equatable {
         // 检查是否为 JDK
         var isJdk: Bool? = nil
         if executableURL.path != "/usr/bin/java" {
-            if FileManager.default.fileExists(atPath: executableURL.parent().appendingPathComponent("javac").path) {
+            if FileManager.default.fileExists(atPath: executableURL.deletingLastPathComponent().appendingPathComponent("javac").path) {
                 isJdk = true
             } else {
                 isJdk = false

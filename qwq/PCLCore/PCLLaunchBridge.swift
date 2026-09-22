@@ -413,20 +413,6 @@ private func pclLaunchInternal(
     }
 }
 
-/// 扩展 MinecraftInstance 以支持从路径创建
-extension MinecraftInstance {
-    public static func createFromPaths(
-        minecraftDirPath: String,
-        versionId: String
-    ) -> MinecraftInstance? {
-        let minecraftDir = MinecraftDirectory(
-            rootURL: URL(fileURLWithPath: minecraftDirPath),
-            name: "默认文件夹"
-        )
-        return MinecraftInstance.create(minecraftDir, versionId)
-    }
-}
-
 /// 跨线程传递启动前补全的错误结果（后台线程用信号量同步等待 Task 完成）
 private final class FixResultBox {
     var error: Error?

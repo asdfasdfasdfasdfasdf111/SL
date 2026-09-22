@@ -40,14 +40,6 @@ extension LoaderSupportChecker {
         return dir.appendingPathComponent("LoaderSupportCache.json")
     }()
 
-    /// 磁盘缓存保存时间戳（供 TTL 判断）
-    /// 注意：当前无调用方（缓存时间戳已随每条记录写入，TTL 判断只用记录级 `t`）。
-    public static var diskSavedAt: Double? {
-        guard let data = try? Data(contentsOf: cacheFile),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return json["savedAt"] as? Double
-    }
-
     // MARK: - 磁盘读写（全部在 diskLock 内，避免与 cacheLock 嵌套死锁）
 
     private static func loadDiskCache() -> [String: [String: LoaderCacheEntry]]? {
@@ -110,8 +102,46 @@ extension LoaderSupportChecker {
         return loaded
     }
 
-    /// 单加载器定论写入：内存（cacheLock 内）+ 磁盘（diskLock 内，串行化读-改-写，防并发丢更新）
-    /// 访问级别为 internal：探测层（LoaderSupportProbe.swift）定论后调用。
+    // MARK: - 延迟批量刷盘（消除写放大）
+    //
+    // 原 `writeEntry` 每次都「整文件读 + 整文件写」：一次 18 个版本的批量探测会产生
+    // 十几次全量磁盘 IO。现改为：内存立即更新 + 结论并入 `pendingDisk` 累积缓冲，
+    // 由 debounce（scheduleFlush）在空闲后合并为「1 次读 + 1 次写」。
+    // 语义保证：内存结论在 writeEntry 内同步生效，pendingDisk 在刷盘前已含全部已得结论，
+    // 进程内查询与改前一致；刷盘后磁盘内容与改前一致（缓存丢了只是重新探测，不会误判）。
+
+    /// 待刷盘累积缓冲。本类型整体主 actor 隔离，flush 任务也排到主队列执行，
+    /// 所有访问都发生在主 actor 上，故无需 `nonisolated`。
+    private static var pendingDisk: [String: [String: LoaderCacheEntry]]? = nil
+    /// debounce 的刷盘任务（取消旧任务以合并多次写入）
+    private static var flushTask: DispatchWorkItem? = nil
+    /// 末次写入后多久刷盘（秒）。批量探测期间多次 writeEntry 会不断重置该窗口，
+    /// 探测结束空闲后即合并为一次写盘。
+    private static let flushDebounceInterval: TimeInterval = 0.5
+
+    /// 安排一次延迟合并刷盘：取消上一次未触发的任务并重新计时。
+    private static func scheduleFlush() {
+        flushTask?.cancel()
+        let snapshot = pendingDisk ?? [:]
+        let task = DispatchWorkItem { [snapshot] in
+            saveDiskCache(snapshot)
+        }
+        flushTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + flushDebounceInterval, execute: task)
+    }
+
+    /// 显式立即刷盘（供探测层在批量结束后调用，保证「正常退出/显式 flush 后磁盘内容一致」）。
+    /// 仅当确有累积结论时才写盘，避免用空缓冲覆盖已存在的磁盘缓存。
+    static func flushLoaderSupportCache() {
+        flushTask?.cancel()
+        flushTask = nil
+        guard let snapshot = pendingDisk else { return }
+        saveDiskCache(snapshot)
+    }
+
+    /// 单加载器定论写入：内存（cacheLock 内）立即生效 + 磁盘结论并入 pendingDisk（diskLock 内），
+    /// 由 debounce 合并刷盘（防并发丢更新、消除写放大）。访问级别为 internal：探测层
+    /// （LoaderSupportProbe.swift）定论后调用。
     static func writeEntry(version: String, loader: String, state: LoaderState) {
         let entry = LoaderCacheEntry(state: state == .supported ? "supported" : "notSupported", t: Date().timeIntervalSince1970)
         cacheLock.lock()
@@ -119,12 +149,18 @@ extension LoaderSupportChecker {
         memoryCache[version]?[loader] = entry
         cacheLock.unlock()
 
+        // 磁盘写入延迟合并：只把本结论并入 pendingDisk 累积缓冲，由 scheduleFlush 在空闲后
+        // 统一刷盘。内存结论立即生效，pendingDisk 在刷盘前已含全部已得结论，故进程内查询与改前
+        // 语义一致；磁盘最终内容也与改前一致。
         diskLock.lock()
         defer { diskLock.unlock() }
-        var disk = loadDiskCache() ?? [:]
+        if pendingDisk == nil { pendingDisk = loadDiskCache() ?? [:] }
+        // pendingDisk 此刻必非 nil（上方已兜底），但它是可选类型，需解包后按字典操作
+        var disk = pendingDisk!
         if disk[version] == nil { disk[version] = [:] }
         disk[version]?[loader] = entry
-        saveDiskCache(disk)
+        pendingDisk = disk
+        scheduleFlush()
     }
 
     /// 取某版本全部缓存条目（内存 → 磁盘，按 TTL 过滤过期项；过期项不再返回，等下次定论时覆盖）
@@ -162,6 +198,10 @@ extension LoaderSupportChecker {
         memoryCache = [:]
         diskCache = nil
         cacheLock.unlock()
+        // 清掉待刷盘缓冲并取消未触发的刷盘，避免随后一次 flush 把刚清掉的旧结论写回磁盘
+        flushTask?.cancel()
+        flushTask = nil
+        pendingDisk = nil
     }
 
     // MARK: - 对外查询（同步，主线程可直接调）
@@ -181,8 +221,10 @@ extension LoaderSupportChecker {
     /// 同步查询缓存命中（supported 名称列表）：nil = 未缓存；[] = 已缓存但明确不支持。
     /// 供 UI 层先查一次：命中时直接展示、不闪烁 loading；未命中再走流式检测。
     ///
-    /// 全库无引用，待清理：唯一调用点在同文件的 `supportedLoaders(for:)` 内，而该方法本身
-    /// 已无任何调用方（已标注待清理）。此处用注释而非 `@available` 标注 ——
+    /// 调用点在另一个文件的 `LoaderSupportState.swift` 的 `supportedLoaders(for:)` 内
+    /// （约 `qwq/PCLCore/Minecraft/Mod/Loader/LoaderSupportState.swift:57` 与 `:66`）；
+    /// 后者（`LoaderSupportState.supportedLoaders(for:)`）自身已无调用方、标注待清理，
+    /// 故本方法实际也已无有效调用方。此处用注释而非 `@available` 标注 ——
     /// 加 `@available` 会让上述调用点新增编译告警，故保持文案一致的注释。
     public static func cachedLoaders(for version: String) -> [String]? {
         guard let states = cachedLoaderStates(for: version) else { return nil }
