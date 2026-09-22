@@ -111,6 +111,16 @@ struct RootOverlays: View {
                     navigation.toggleDownloadDetail()
                 }
             }
+            // 启动 / 下载失败弹窗：zIndex(300) 高于既有全部叠加层（安装弹窗 200），
+            // 因为是**必须被确认的失败**——不能被任何其它浮层盖住，也不能同时出现两个弹窗。
+            // 正文非空是硬条件：`showLaunchAlert` 与 `launchErrorMessage` 由两个入口分别写，
+            // 只开开关而没正文时画出来会是一张空卡片。
+            if launchPanel.showLaunchAlert, let launchErrorMessage = launchPanel.launchErrorMessage {
+                LaunchErrorPopup(message: launchErrorMessage) {
+                    launchPanel.dismissError()
+                }
+                .zIndex(300)
+            }
         }
     }
 }

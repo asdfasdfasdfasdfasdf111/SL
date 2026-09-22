@@ -136,6 +136,41 @@ private func pclLaunchInternal(
         hint(unimplemented.errorDescription ?? "该账号类型尚未实现，本次启动按离线账号处理。", .critical)
     }
 
+    // MARK: 客户端 JAR 校验（DUAL_FLOW 缺陷 D1）
+    // 桥接路径把 skipResourceCheck 恒置为 true，不执行 MinecraftInstance.launch 内的
+    // createCompleteTask 全量安装；而 LaunchFix.perform 只覆盖 libraries / assets / natives，
+    // 不含客户端本体。缺 JAR 时 classpath 末项仍是该路径，JVM 对不存在的 classpath 条目静默忽略，
+    // 直到进入游戏才以 ClassNotFoundException 崩溃，UI 只能显示「异常退出」。
+    // 故必须在拉起进程前显式判定并失败。
+    //
+    // **为什么放在补全之前**：本判定与 LaunchFix 无依赖（LaunchFix 从不写客户端 JAR，
+    // 见 `LaunchFix.perform` 四段：libraries / assets 索引 / assets 对象 / natives），
+    // 而补全最长可跑 600s（超时上限）。原顺序把「必然失败」的启动拖到补全结束（甚至拖满
+    // 十分钟超时）之后才报错，用户先看到进度条走完、再看到一句「启动前补全失败」，
+    // 真正原因（客户端本体缺失）反而被网络错误掩盖。前移后缺 JAR 立即拦住，
+    // 零下载、零等待，报错文案也直接指向该问题的解法。
+    //
+    // 路径推导（沿用既有构造式，未新拼路径）：
+    //   MinecraftLauncher.buildClasspath() 末项即
+    //   `instance.runningDirectory.appendingPathComponent("\(instance.name).jar")`，
+    //   且 `instance.name == runningDirectory.lastPathComponent`；
+    //   该路径同时是 MinecraftInstaller.downloadClientJar 的落盘目标
+    //   `task.versionURL/<task.name>.jar`（MinecraftInstallTask.versionURL 即
+    //   minecraftDirectory.versionsURL/<name>）。
+    //
+    // 判定口径：只校验「存在且非空」，不与 manifest.clientDownload?.sha1 比对。
+    // 带 inheritsFrom 的加载器实例其清单合并后沿用父级 clientDownload.sha1
+    // （ClientManifest.merge 保留父级字段），而版本目录内的 JAR 会被加载器安装器就地改写，
+    // 哈希必然不同；按 sha1 判定会把本可正常启动的加载器实例判为损坏（DUAL_FLOW 风险点 R6）。
+    let clientJAR = instance.runningDirectory.appendingPathComponent("\(instance.name).jar")
+    if let reason = FileChecker(minSize: 1).check(clientJAR) {
+        log("客户端 JAR 校验失败：\(clientJAR.path)（\(reason)）")
+        completion(nil, .failure(LaunchError.fileVerificationFailed(
+            reason: "客户端 JAR 缺失或损坏：\(clientJAR.path)（\(reason)）。请在「下载」页重新安装该版本。"
+        )))
+        return
+    }
+
     // MARK: 启动前补全（PCL2 DlClientFix 移植）：分析缺失/损坏的库与资源 → 仅下载缺失项
     // 补全期间 UI 显示 downloading 进度条；完成后才进入 launching（避免相位回退）
     // 补全失败则终止启动（与 PCL2 一致），避免缺文件启动后崩溃
@@ -183,33 +218,8 @@ private func pclLaunchInternal(
         return
     }
 
-    // MARK: 客户端 JAR 校验（DUAL_FLOW 缺陷 D1）
-    // 桥接路径把 skipResourceCheck 恒置为 true，不执行 MinecraftInstance.launch 内的
-    // createCompleteTask 全量安装；而 LaunchFix.perform 只覆盖 libraries / assets / natives，
-    // 不含客户端本体。缺 JAR 时 classpath 末项仍是该路径，JVM 对不存在的 classpath 条目静默忽略，
-    // 直到进入游戏才以 ClassNotFoundException 崩溃，UI 只能显示「异常退出」。
-    // 故必须在拉起进程前显式判定并失败。
-    //
-    // 路径推导（沿用既有构造式，未新拼路径）：
-    //   MinecraftLauncher.buildClasspath() 末项即
-    //   `instance.runningDirectory.appendingPathComponent("\(instance.name).jar")`，
-    //   且 `instance.name == runningDirectory.lastPathComponent`；
-    //   该路径同时是 MinecraftInstaller.downloadClientJar 的落盘目标
-    //   `task.versionURL/<task.name>.jar`（MinecraftInstallTask.versionURL 即
-    //   minecraftDirectory.versionsURL/<name>）。
-    //
-    // 判定口径：只校验「存在且非空」，不与 manifest.clientDownload?.sha1 比对。
-    // 带 inheritsFrom 的加载器实例其清单合并后沿用父级 clientDownload.sha1
-    // （ClientManifest.merge 保留父级字段），而版本目录内的 JAR 会被加载器安装器就地改写，
-    // 哈希必然不同；按 sha1 判定会把本可正常启动的加载器实例判为损坏（DUAL_FLOW 风险点 R6）。
-    let clientJAR = instance.runningDirectory.appendingPathComponent("\(instance.name).jar")
-    if let reason = FileChecker(minSize: 1).check(clientJAR) {
-        log("客户端 JAR 校验失败：\(clientJAR.path)（\(reason)）")
-        completion(nil, .failure(LaunchError.fileVerificationFailed(
-            reason: "客户端 JAR 缺失或损坏：\(clientJAR.path)（\(reason)）。请在「下载」页重新安装该版本。"
-        )))
-        return
-    }
+    // MARK: 客户端 JAR 校验已前移到本函数开头（补全之前）——见该处注释。
+    // 补全后不再重复判定：同一路径同一次启动内不可能由补全产生（LaunchFix 不写客户端本体）。
 
     phaseHandler("launching")
 

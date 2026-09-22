@@ -41,14 +41,14 @@ struct ContentView: View {
         .onChange(of: navigation.selectedCategory) { _ in
             navigation.handleSelectedCategoryChange()
         }
-        .alert("启动失败", isPresented: $launchPanel.showLaunchAlert, presenting: launchPanel.launchErrorMessage) { _ in
-            Button("确定") { launchPanel.clearLaunchError() }
-        } message: { error in
-            Text(error)
-        }
+        // 启动 / 下载失败提示已由 RootOverlays 里的自绘弹窗（LaunchErrorPopup）承担，
+        // 不再使用系统 alert：同一份状态（showLaunchAlert / launchErrorMessage）换一种呈现，
+        // 状态源与写入方一个都没动。
         // Java 预扫描经 Java 模块入口触发，根视图不再直接持有 JavaManager
         .onAppear {
             DefaultJavaRepository.shared.preScan()
+            // 仅 DEBUG：无人值守启动开关（默认空实现，见 DebugAutoLaunch.swift）
+            DebugAutoLaunch.maybeStart()
         }
         // 窗口外观（透明标题栏 / 全尺寸内容区）由独立修饰器负责；
         // 窗口最小尺寸（800×590）的唯一声明处是 qwqApp.swift 的根视图 frame，
