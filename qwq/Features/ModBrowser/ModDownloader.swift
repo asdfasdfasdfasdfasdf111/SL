@@ -173,8 +173,18 @@ public class ModDownloader {
         return try JSONDecoder().decode([ModrinthVersion].self, from: data)
     }
     
+    /// 下载一个 Modrinth 版本的主文件到 `destination`。
+    ///
+    /// **移除了从未被调用的 `progressHandler` 参数**（第五轮深读）：
+    /// 该参数自加入起就只在签名里存在——函数体走 `session.download(from:)`，
+    /// 这条 API 不提供分片回调，全库（含 `qwqTests`）也没有任何调用点传过它。
+    /// 结果是「调用方以为能拿到进度、实际一个回调都不会收到」的静默失效：
+    /// 若某天有人传了闭包，UI 会永远停在 0% 且没有任何报错。
+    /// 需要真实进度时须改用带 delegate 的下载（工程内已有先例：
+    /// `qwq/Features/Java/JavaDownloader.swift:68/111` 用
+    /// `URLSessionDownloadTask.progress.fractionCompleted` 汇报），届时再加回参数。
     @discardableResult
-    public func downloadMod(version: ModrinthVersion, destination: URL, progressHandler: ((Double) -> Void)? = nil) async throws -> URL {
+    public func downloadMod(version: ModrinthVersion, destination: URL) async throws -> URL {
         guard let primaryFile = version.files.first(where: { $0.primary }) ?? version.files.first else {
             throw ModError.noDownloadableFile
         }
