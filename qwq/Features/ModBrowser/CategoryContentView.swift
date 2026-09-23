@@ -38,6 +38,12 @@ struct CategoryContentView: View {
     /// ViewModels/LaunchEntryViewModel.swift，本视图只清焦点并转发点击
     @StateObject private var launchEntry = LaunchEntryViewModel()
 
+    /// 高清皮肤补丁询问卡片的状态机与副作用编排归 Features/Skin/SkinPatchCoordinator.swift：
+    /// 「选到原版不支持的皮肤尺寸」时由皮肤服务层发通知（服务层不认识本页的协调器），
+    /// 本视图订阅后转交它查询/安装，再把它的 `state` 渲染成居中覆盖层。
+    /// `@StateObject` 的理由同上：生命周期绑在本视图上，自己创建、自己持有。
+    @StateObject private var skinPatch = SkinPatchCoordinator()
+
     /// 用户名输入框聚焦时的放大反馈（1.0 ↔ 1.1），配合 `.punchySpring`。
     @State private var usernameFieldScale: CGFloat = 1.0
     @FocusState private var isUsernameFocused: Bool
@@ -96,6 +102,18 @@ struct CategoryContentView: View {
                 hasRunningSessions: sessionManager.hasRunningSessions,
                 onTap: { LaunchCoordinator.handlePowerTap(sessionManager: sessionManager) }
             )
+            // 高清皮肤补丁询问卡片：**居中覆盖层**。
+            // 放在 ZStack 最后 = 最上层；用条件插入而不是 offset/opacity 隐藏 ——
+            // 与日志面板相反，这张卡片不该在隐藏时占位（它是一张要盖住内容的弹层，
+            // 常驻空位纯属浪费，且会让 `.transition` 失去插入/移除的语义）。
+            if skinPatch.state.isVisible {
+                SkinPatchCardView(coordinator: skinPatch, theme: theme)
+                    .zIndex(10)
+                    // 插入/移除只做淡入淡出：缩放式入场由卡片自己负责
+                    //（`SkinPatchCardView` 内的 showContent），两处都缩放会叠成双重动画。
+                    .transition(.opacity)
+                    .animation(.punchySpring, value: skinPatch.state.presentationKey)
+            }
         }
     }
     /// 左侧主卡片：自上而下＝版本文案 → 头像 → 用户名输入 → 皮肤按钮 →（弹簧）→ 启动按钮。
@@ -316,6 +334,17 @@ struct CategoryContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("GameVersionSelected"))) { _ in
             skinViewModel.handleGameVersionSelected(isLaunching: sessionManager.isLaunching)
+        }
+        // 「皮肤选完了，尺寸已分类」→ 决定是弹补丁询问卡片、还是收起它。
+        // 尺寸文案由服务层经 userInfo 带过来：`OfflineSkinService` 是无视图依赖的静态服务，
+        // 不认识本页的协调器，故用通知解耦（与上面 GameVersionSelected 同一套路）。
+        .onReceive(NotificationCenter.default.publisher(for: .skinSizeClassified)) { note in
+            if let pixelSize = note.userInfo?["pixelSize"] as? String {
+                skinPatch.beginCheck(pixelSize: pixelSize)
+            } else {
+                // 换成了原版尺寸（或尺寸不合法被拒）：之前那张卡片描述的是旧尺寸，直接收起
+                skinPatch.dismiss()
+            }
         }
         .onAppear {
             // 准备变体（头像 + 默认皮肤）的渲染事务外延迟在 ViewModel 内，与收口前一致
