@@ -13,13 +13,20 @@
 import Foundation
 import SwiftyJSON
 
+/// 各加载器「最新可用版本号」的解析器。全部是静态方法、无自身状态；
+/// 唯一的跨调用共享状态是 `LoaderSupportChecker` 的响应缓存（这里只读复用，不写入）。
 enum LoaderVersionResolver {
     /// 获取某 Minecraft 版本所支持加载器的最新版本号（自动选最新；fabric/quilt 优先最新稳定版）
     /// - Parameters:
     ///   - loader: 加载器名（不区分大小写：fabric / forge / neoforge / neoforged / quilt）
     ///   - mcVersion: Minecraft 版本号（如 1.20.1）
+    ///
+    /// ⚠️ `loader` 虽不区分大小写，但**只认这几种拼写**（fabric / forge / neoforge /
+    /// neoforged / quilt），其余一律抛「不支持的加载器」，不做别名猜测。
     static func latestVersion(loader: String, mcVersion: String) async throws -> String {
         let lower = loader.lowercased()
+        // 版本号是拼进 URL **路径段**的（不是查询串），所以按路径规则编码；
+        // 编码失败就原样使用（版本号里的字符本来就都是合法路径字符）。
         let encoded = mcVersion.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? mcVersion
 
         switch lower {
@@ -103,6 +110,9 @@ enum LoaderVersionResolver {
                 return first["version"].stringValue
             }
         }
+        // 主源 BMCLAPI（国内快）。分支判据是 `primary.error == nil`：
+        // 请求**成功但数组为空**属于「这个 MC 版本确实不支持 Forge」，直接抛错、
+        // 不去官方源重试（两源结论一致，重试只是白等）；只有网络层失败才走下面的兜底。
         let primary = await Requests.get("https://bmclapi2.bangbang93.com/forge/minecraft/\(encoded)")
         if primary.error == nil, let data = primary.data, !data.isEmpty, let json = try? JSON(data: data) {
             let array = json.arrayValue
@@ -112,6 +122,8 @@ enum LoaderVersionResolver {
             throw MyLocalizedError(reason: "未获取到 Forge 加载器版本（\(mcVersion) 可能不支持 Forge）")
         }
         // 主源网络失败 → 官方 files.minecraftforge.net 索引兜底（重试 1 次）
+        // 官方兜底：index_<mc>.json 里的 promos 表。优先 recommended（更少踩坑），
+        // 没有再退而取 latest。
         let fallback = await Requests.get(
             "https://files.minecraftforge.net/net/minecraftforge/forge/index_\(encoded).json"
         )
@@ -137,6 +149,7 @@ enum LoaderVersionResolver {
                 return first["version"].stringValue
             }
         }
+        // 与 Forge 同构：成功但为空 = 明确不支持，直接抛错；只有网络失败才切官方兜底。
         let primary = await Requests.get("https://bmclapi2.bangbang93.com/neoforge/list/\(encoded)")
         if primary.error == nil, let data = primary.data, !data.isEmpty, let json = try? JSON(data: data) {
             let array = json.arrayValue
@@ -146,10 +159,14 @@ enum LoaderVersionResolver {
             throw MyLocalizedError(reason: "未获取到 NeoForge 加载器版本（\(mcVersion) 可能不支持 NeoForge）")
         }
         // 官方 Maven metadata XML 兜底：<version>20.1.0-beta</version> 按前缀过滤，取最后一个（最新）
+        // 官方兜底：Maven 的 metadata.xml。按「MC → 版本前缀」过滤后取**最后一个**当最新 ——
+        // 依据是 Maven 的 <versions> 按发布先后排列，不是语义化版本序。
         let fallback = await Requests.get("https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml")
         if let data = fallback.data, let xml = String(data: data, encoding: .utf8) {
             let prefix = neoforgePrefix(for: mcVersion)
             let pattern = "<version>\(NSRegularExpression.escapedPattern(for: prefix))[^<]*</version>"
+            // ⚠️ 这里的正则是**每次调用现编译**的（不像 Util 那样静态预编译）——
+            // 因为 pattern 依赖运行时的 mcVersion。本方法调用频率低，暂不构成问题。
             if let regex = try? NSRegularExpression(pattern: pattern) {
                 let range = NSRange(xml.startIndex..<xml.endIndex, in: xml)
                 let versions = regex.matches(in: xml, range: range).compactMap { m -> String? in
@@ -169,9 +186,13 @@ enum LoaderVersionResolver {
     /// MC 版本 → NeoForge 版本前缀（官方 Maven 布局：1.20.1→20.1，1.21→21.0，1.21.4→21.4）。
     /// NeoForge 未覆盖的版本（如 1.20.3）无匹配项，自然返回「未获取到」，行为正确。
     private static func neoforgePrefix(for mc: String) -> String {
+        // ⚠️ 解析失败（段数不足、或首段不是 1）时**一律回落 "20."**，不是报错 ——
+        // 于是会去 Maven 列表里找 20.x，可能给一个完全不相干的 MC 版本配上 NeoForge。
+        // 该回落只对「1.20.x」这一族恰好正确。
         let parts = mc.split(separator: ".").compactMap { Int($0) }
         guard parts.count >= 2, parts[0] == 1 else { return "20." }
         let year = parts[1]  // 1.20.x → 20，1.21.x → 21
+        // 三段版本（1.21.4 → 21.4）用前两段拼前缀；两段（1.21 → 21.0）补一个 .0。
         if parts.count >= 3 { return "\(year).\(parts[2])" }
         return "\(year).0"
     }
