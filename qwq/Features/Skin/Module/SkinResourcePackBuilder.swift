@@ -20,7 +20,7 @@ protocol SkinResourcePackBuilder: Sendable {
 
     /// 生成离线皮肤资源包。
     /// - Parameters:
-    ///   - skinImageURL: 皮肤原图（64×64 / 64×32 / 128×128）
+    ///   - skinImageURL: 皮肤原图（64×64 / 64×32；Java 版不接受 128×128）
     ///   - minecraftVersion: 目标版本号，用于定位版本 JAR 以决定资源包 pack_format
     ///   - gameDirectory: 版本运行目录（`<gameRoot>/versions/<版本>`，即游戏的 game_directory）。
     /// - Returns: 生成的资源包 zip 路径

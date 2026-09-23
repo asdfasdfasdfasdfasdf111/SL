@@ -59,12 +59,16 @@ enum OfflineSkinService {
                 do {
                     try SkinAvatarCropper.validateSkin(at: url)
 
-                    let skinData = try Data(contentsOf: url)
-                    let skinDestURL = saveSkinImage(skinData)
-
+                    // 顺序：**先裁头像、后写皮肤原图**。
+                    // 反过来的话（原实现），一旦头像裁剪失败，磁盘上的 selected_skin.png
+                    // 已被新皮肤覆盖、而 settings 仍是旧值 —— 留下「文件是新皮肤、
+                    // 界面还是旧头像」的半完成状态；用户下次看到的是旧头像配新皮肤文件。
+                    // 校验口径统一（去掉 128×128）之后此路径已很难走到，但仍按正确顺序写。
                     let avatarDestURL = saveAvatar(from: url, fileName: "selected_avatar.png")
 
                     if let avatarDestURL {
+                        let skinData = try Data(contentsOf: url)
+                        let skinDestURL = saveSkinImage(skinData)
                         // 必须先落盘再指向：否则 avatarImageURL 指向从未写入的文件（悬空指针）
                         DispatchQueue.main.async {
                             settings.avatarImageURL = avatarDestURL

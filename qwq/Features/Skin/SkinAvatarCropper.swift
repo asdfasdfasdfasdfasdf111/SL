@@ -27,11 +27,18 @@ enum SkinAvatarCropper {
         }
     }
 
-    /// 校验皮肤图片合法性：必须是标准尺寸（64×64 / 64×32 / 128×128）
     /// 校验皮肤图是否可接受：**只校验尺寸**，不检查内容（全黑图也会通过）。
-    /// 允许三种尺寸：64×64（新版带帽层）、64×32（1.8 之前的旧版）、128×128（高清重制版）。
-    /// ⚠️ 与 `cropAvatar` 的校验**口径不一致**：后者不接受 128×128。
-    /// 于是 128×128 能通过本方法、却会在裁剪时抛错。
+    /// 只接受两种尺寸：64×64（1.8+ 新版，含帽子图层）、64×32（1.8 之前的旧版，只有一层）。
+    ///
+    /// ⚠️ **128×128 不接受**（2026-09-24 修正）。Java 版皮肤的最大尺寸就是 64×64；
+    /// 128×128 是**基岩版**的格式。依据：中文 Minecraft Wiki「皮肤」条目原文 ——
+    /// 「在Java版中，皮肤的尺寸最大可达64×64；……在基岩版中，皮肤的尺寸最大可达128×128，
+    /// 64×64的尺寸仍然适用」。故 128×128 不是「还没支持的高清格式」，而是本就不适用于 Java 版。
+    ///
+    /// 修前本方法**错误地放行 128×128**，而 `cropAvatar` 只认 64×64 / 64×32 ——
+    /// 于是高清皮肤能过校验、却在裁剪时抛错，用户看到的是「不合法的图片 / 保存头像失败」
+    /// 这句与真实原因无关的提示（且此时皮肤原图已被写入磁盘，见 OfflineSkinService 的顺序修正）。
+    /// 现在两处口径一致，白名单与 `Module/SkinDecoder.swift` 的 `supportedPixelSizes` 同一语义。
     static func validateSkin(at url: URL) throws {
         guard let image = NSImage(contentsOf: url) else {
             throw LauncherError.skinValidationFailed("无法读取图片")
@@ -40,8 +47,10 @@ enum SkinAvatarCropper {
             throw LauncherError.skinValidationFailed("无法获取图像数据")
         }
         let w = cgImage.width, h = cgImage.height
-        guard (w == 64 && h == 64) || (w == 64 && h == 32) || (w == 128 && h == 128) else {
-            throw LauncherError.skinValidationFailed("不支持的尺寸: \(w)×\(h)")
+        guard (w == 64 && h == 64) || (w == 64 && h == 32) else {
+            // 128×128 单独给一句解释：它是最容易被误当成「应该支持」的尺寸（基岩版格式）。
+            let hint = (w == 128 && h == 128) ? "；128×128 是基岩版皮肤格式，Java 版不支持" : ""
+            throw LauncherError.skinValidationFailed("Java 版皮肤必须是 64×64 或 64×32，当前为 \(w)×\(h)\(hint)")
         }
     }
 
@@ -49,7 +58,7 @@ enum SkinAvatarCropper {
     /// 32 像素高度（旧格式）直接用头图层；结果缩放至 targetSize。
     /// 裁剪正面头像：头层（layer1）与帽层（layer2）在 8×8 画布上叠加合成，再放大到目标尺寸。
     /// 32×32 旧格式没有帽层，直接用头层。
-    /// ⚠️ 只接受 64×64 / 64×32 —— 128×128 会被这里拒掉（与 `validateSkin` 口径不同）。
+    /// 尺寸口径与 `validateSkin(at:)` 一致：只接受 64×64 / 64×32（128×128 属基岩版格式，两处都拒绝）。
     /// 任何一步失败都**抛错**（本文件不返回可选值），错误文案会直接展示给用户。
     static func cropAvatar(from url: URL, targetSize: NSSize = NSSize(width: 128, height: 128)) throws -> NSImage {
         guard let image = NSImage(contentsOf: url),

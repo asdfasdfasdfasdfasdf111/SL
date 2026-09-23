@@ -3,7 +3,7 @@
 //  模块化拆分：Skin 模块的图像解码协议与最小实现
 //
 //  既有实现散在 `qwq/Features/Skin/`：
-//  - `SkinAvatarCropper`：校验尺寸（64×64 / 64×32 / 128×128）并裁剪头像
+//  - `SkinAvatarCropper`：校验尺寸（64×64 / 64×32）并裁剪头像
 //  - `SkinExtractor`：从游戏 JAR 提取默认皮肤
 //  - `MinecraftSkinManager`：皮肤文件持久化
 //  - `SkinResourcePackApplier`：生成离线皮肤资源包
@@ -76,15 +76,17 @@ protocol SkinDecoder: Sendable {
 
 /// 基于 ImageIO 的最小实现。
 ///
-/// 尺寸白名单与 `SkinAvatarCropper.validateSkin(at:)` 完全一致（64×64 / 64×32 / 128×128），
+/// 尺寸白名单与 `SkinAvatarCropper.validateSkin(at:)` 完全一致（64×64 / 64×32），
 /// 但改用 `CGImageSource` 直读像素尺寸：不经过 `NSImage`，因此可在任意线程调用。
+///
+/// ⚠️ 白名单**不含 128×128**（2026-09-24 修正）：Java 版皮肤上限为 64×64，
+/// 128×128 是基岩版格式（依据见 `SkinAvatarCropper.validateSkin(at:)` 的注释）。
 struct DefaultSkinDecoder: SkinDecoder {
 
     /// 支持的像素尺寸白名单。与 `SkinAvatarCropper.validateSkin(at:)` 的判定保持同步。
     static let supportedPixelSizes: [(width: Int, height: Int)] = [
         (64, 64),
-        (64, 32),
-        (128, 128)
+        (64, 32)
     ]
 
     func inspect(_ data: Data) throws -> SkinImageInfo {

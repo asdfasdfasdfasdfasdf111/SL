@@ -11,7 +11,7 @@
 | --- | --- |
 | `MinecraftSkinManager.swift` | 皮肤文件持久化（`~/Library/Application Support/SL启动器/Skins/<uuid>.png`） |
 | `SkinResourcePackApplier.swift` | 离线皮肤主路径：生成 `resourcepacks/SL 皮肤.zip` + 注入 options.txt |
-| `SkinAvatarCropper.swift` | 尺寸校验与头像裁剪（64×64 / 64×32 / 128×128） |
+| `SkinAvatarCropper.swift` | 尺寸校验与头像裁剪（64×64 / 64×32。**不含 128×128**：那是基岩版格式，Java 版上限 64×64） |
 | `SkinExtractor.swift` | 从游戏版本 JAR 提取默认皮肤 |
 | `OfflineSkinService.swift` | 交互入口：选择面板、默认皮肤恢复（依赖 `LauncherSettings` 单例） |
 | `OfflineUsernameValidator.swift` | 离线用户名提示文案 |
@@ -101,7 +101,7 @@
 
 ## 七、测试挂载点
 
-- `DefaultSkinDecoder.inspect`：64×64 / 64×32 / 128×128 通过，其余尺寸抛
+- `DefaultSkinDecoder.inspect`：64×64 / 64×32 通过，其余尺寸（含 128×128）抛
   `SkinError.unsupportedDimensions`，非图像数据抛 `SkinError.unreadableImage`；
 - `SkinImageInfo.isLegacyFormat`：仅 64×32 为 true；
 - `DefaultSkinService(decoder:packBuilder:)`：注入桩实现，验证门面只做转发、不吞错误；
