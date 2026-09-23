@@ -45,7 +45,12 @@ struct ContentCard: View {
     @State private var appearOpacity: Double = 0
 
     private var translatedTags: [String] {
-        tags.compactMap { ModrinthTagMap[$0] }
+        // 已知的 Modrinth slug 译成中文；未知的**按原文显示**。
+        //
+        // 原先用 `compactMap { ModrinthTagMap[$0] }`，未知项会被静默丢弃。下载页的版本卡片
+        // 借这个位置显示「需 Java 17」「已安装」这类并非 slug 的标记（评审第 4 条），
+        // 丢弃它们等于标签没加。改为「不认识就照原样显示」，同时也让未被收录的 slug 不再隐身。
+        tags.map { ModrinthTagMap[$0] ?? $0 }
     }
 
     var body: some View {

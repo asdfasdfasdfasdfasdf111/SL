@@ -192,7 +192,12 @@ struct DownloadCategoryView: View {
     ) -> some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
-                CategorySearchBar(title: viewModel.displayTitle, searchText: $viewModel.searchText, cardPadding: cardPadding)
+                // 游戏子分类的标题是「正式版」这类名词短语，默认占位会得到「搜索正式版...」，
+                // 与左侧大标题重复；版本列表改用一个更准确的提示（其余分类仍用默认值）。
+                CategorySearchBar(title: viewModel.displayTitle,
+                                  searchText: $viewModel.searchText,
+                                  cardPadding: cardPadding,
+                                  placeholder: viewModel.selectedSection == .game ? "搜索版本号..." : nil)
                 contentBody(cardPadding: cardPadding, columns: columns, cardWidth: cardWidth)
             }
             .frame(width: contentWidth)

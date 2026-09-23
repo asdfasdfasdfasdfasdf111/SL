@@ -101,10 +101,13 @@ final class DropInstallCoordinator: ObservableObject {
             } else if successCount == 0 {
                 // 全部失败：此前只回传成功计数（0），用户既看不到失败也看不到原因
                 let detail = result.failures.joined(separator: "\n")
+                // 第一段（结论 + 补救路径）会被常显，其余（失败原因清单）折叠在「查看详情」里，
+                // 见 NoticeOverlay.NoticeCard.splitMessage。补救路径只写真实可走的一步：
+                // 工程里没有「下载源切换」界面，不写指向不存在功能的文案。
                 NoticeCenter.shared.post(
                     Notice(level: .error,
                            title: "模组安装失败",
-                           message: "未能安装到任何实例（共 \(result.failures.count) 个）：\n\(detail)")
+                           message: "未能安装到任何实例（共 \(result.failures.count) 个）。重试方法：关闭正在运行的游戏后，把同一个文件重新拖入窗口即可。\n失败原因：\n\(detail)")
                 )
             } else {
                 // 部分失败：告知成功数与失败原因，避免把失败伪装成“已安装 N 个”
@@ -112,7 +115,7 @@ final class DropInstallCoordinator: ObservableObject {
                 NoticeCenter.shared.post(
                     Notice(level: .warning,
                            title: "部分实例安装失败",
-                           message: "已安装到 \(successCount) 个实例；\(result.failures.count) 个失败：\n\(detail)")
+                           message: "已安装到 \(successCount) 个实例，\(result.failures.count) 个失败。可在关闭对应实例的游戏后，把同一个文件重新拖入窗口重试。\n失败原因：\n\(detail)")
                 )
             }
         }

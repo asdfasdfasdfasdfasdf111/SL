@@ -10,11 +10,19 @@ struct ColorPickerView: View {
         VStack(spacing: 32) {
             Text("选择强调色").font(.largeTitle.bold()).padding(.top, 40)
             Text("将用于分类高亮和按钮").font(.title3).foregroundColor(.secondary)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 100))], spacing: 32) {
+            // 固定 4 列 → 8 个色块排成 4×2。
+            // 原为 `GridItem(.adaptive(minimum: 100))`，列数随可用宽度浮动：在 900pt 宽的窗口里
+            // 正好塞下 7 列，第 8 个「灰色」被挤到第二行单独成块（评审第 5 条：分组应当完整、
+            // 可预期，避免「差一个换行」的排布）。固定列数后任意窗口宽度下都不会出现孤块。
+            // 另加 maxWidth 上限：窗口很宽时不让 4 个格子被拉得过开。
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 32), count: 4), spacing: 32) {
                 ForEach(colorOptions, id: \.name) { option in
                     ColorOptionButton(color: option.color, name: option.name)
                 }
-            }.padding(.horizontal, 60).padding(.vertical, 40)
+            }
+            .frame(maxWidth: 560)
+            .padding(.horizontal, 60)
+            .padding(.vertical, 40)
             Spacer()
         }.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.clear)
     }

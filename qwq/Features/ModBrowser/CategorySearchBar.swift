@@ -12,6 +12,14 @@ struct CategorySearchBar: View {
     let title: String
     @Binding var searchText: String
     let cardPadding: CGFloat
+    /// 搜索框占位文字。默认按标题生成「搜索<标题>...」。
+    ///
+    /// 当标题本身已是名词短语时会得到重复标题的占位文字（版本列表的标题是「正式版」，
+    /// 默认占位就成了「搜索正式版...」，与左侧大标题重复），此时调用方可单独给出更准确的提示。
+    /// ⚠️ 必须保留为**最后一个**带默认值的参数：现有调用点按「三参数」顺序传参，插到中间会编译不过。
+    var placeholder: String? = nil
+
+    private var resolvedPlaceholder: String { placeholder ?? "搜索\(title)..." }
 
     var body: some View {
         HStack {
@@ -25,7 +33,7 @@ struct CategorySearchBar: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.secondary)
                     .font(.system(size: 12))
-                TextField("搜索\(title)...", text: $searchText)
+                TextField(resolvedPlaceholder, text: $searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .frame(width: 160)

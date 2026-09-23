@@ -504,12 +504,48 @@ final class DownloadCategoryViewModel: ObservableObject {
     /// 清单快照 → 列表项：按子分类过滤后取版本号，并回写游戏版本缓存。
     ///
     /// 缓存写回先于空列表判断（与收口前一致：`makeMinecraftVersionItems` 无论结果是否为空都写缓存）。
+    ///
+    /// 副标题与标签在此处填充。此前每项只填 `id`/`name`/`subtitle = displayTitle`、`tags = []`，
+    /// 于是整列表除版本号外完全一样（副标题恒为「正式版」），用户挑版本只能逐张读版本号 ——
+    /// 评审第 4 条。现在：
+    ///  - `subtitle`：`2026-08-12 · 正式版`（日期取清单 `releaseTime` 前 10 位即 yyyy-MM-dd）
+    ///  - `tags`：`需 Java N`（`JavaRequirement`）与 `已安装`（本地 versions 目录）
+    ///
+    /// ⚠️ 结果会被缓存在 `ModrinthCategoryCache.cachedGameVersions`（按子分类），
+    /// 因此「已安装」是**快照时刻**的状态：装完一个版本后需刷新（`forceRefresh`）才会更新。
     private func makeMinecraftVersionItems(_ versions: [MinecraftVersionInfo], subCategory: GameSubCategory?) -> [DownloadedItem] {
-        let result = versionFilter.ids(versions, subCategory: subCategory).map { id in
-            DownloadedItem(id: id, name: id, subtitle: displayTitle, iconURL: nil, tags: [])
+        let byID = Dictionary(versions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        // 已安装集合在循环外算一次：`installedVersionList` 会列举 versions 目录，不能逐项重来。
+        // 用只读版本（不带 normalize 的磁盘重命名副作用）—— 本函数跑在主线程的列表渲染路径上。
+        let installed = Set(GameDirectoryScanner.installedVersionList(gameRoot: LauncherSettings.shared.selectedGameRoot))
+        // 用 `map` 而不是 `compactMap`：`versionFilter.ids` 是「从同一个 versions 数组过滤」
+        // 得来的（`filter(...).map(\.id)`），所以 `byID` 必然命中；真要没命中，也该保留该项
+        // （副标题退化为类型名）而不是静默丢一条 —— 列表少一项用户只会以为版本不存在。
+        let result = versionFilter.ids(versions, subCategory: subCategory).map { id -> DownloadedItem in
+            let info = byID[id]
+            var tags: [String] = []
+            let javaMajor = JavaRequirement.minimumMajor(forMinecraftVersion: id)
+            if javaMajor > 0 { tags.append("需 Java \(javaMajor)") }
+            if installed.contains(id) { tags.append("已安装") }
+            return DownloadedItem(id: id,
+                                  name: id,
+                                  subtitle: info.map { Self.versionSubtitle(releaseTime: $0.releaseTime, type: displayTitle) } ?? displayTitle,
+                                  iconURL: nil,
+                                  tags: tags)
         }
         ModrinthCategoryCache.cachedGameVersions = result
         ModrinthCategoryCache.lastGameSubCategory = subCategory
         return result
+    }
+
+    /// 版本卡片副标题：`yyyy-MM-dd · 类型`。
+    /// 清单没给发布日期时（`releaseTime` 为空串）退化为原来的类型名，避免出现 ` · 正式版` 这种前导分隔符。
+    private static func versionSubtitle(releaseTime: String, type: String) -> String {
+        let date = String(releaseTime.prefix(10))
+        // 只接受形如 yyyy-MM-dd；异常形态一律不拼进副标题
+        let looksLikeDate = date.count == 10
+            && date.dropFirst(4).first == "-"
+            && date.dropFirst(7).first == "-"
+        return looksLikeDate ? "\(date) · \(type)" : type
     }
 }

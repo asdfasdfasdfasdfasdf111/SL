@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 import UniformTypeIdentifiers
 
 struct ContentView: View {
@@ -40,6 +41,14 @@ struct ContentView: View {
         // 切换分类时自动收起下载详情（下载与圆按钮保持，仅关闭覆盖层）
         .onChange(of: navigation.selectedCategory) { _ in
             navigation.handleSelectedCategoryChange()
+        }
+        // 菜单栏「分类」命令（⌘1…⌘6）：请求经 NavigationIntent 单槽送达，应用后立即消费，
+        // 避免同一请求在后续重绘中重复生效。写 selectedCategory 会照常触发上面的 onChange
+        // （切换分类时收起下载详情），不绕过既有行为。
+        .onReceive(NavigationIntent.shared.$pendingCategoryIndex) { index in
+            guard let index, navigation.categories.indices.contains(index) else { return }
+            navigation.selectedCategory = navigation.categories[index]
+            NavigationIntent.shared.consume()
         }
         // 启动 / 下载失败提示已由 RootOverlays 里的任务气泡（TaskPill）承担，
         // 不再使用系统 alert：同一份状态（showLaunchAlert / launchErrorMessage）换一种呈现，

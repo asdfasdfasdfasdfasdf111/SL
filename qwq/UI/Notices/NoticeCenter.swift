@@ -25,6 +25,16 @@ public struct NoticeButton: Identifiable, Equatable {
     }
 
     public static let ok = NoticeButton(label: "确定")
+
+    /// 该按钮是否只是「知道了」——即其唯一语义就是关闭本条提示。
+    ///
+    /// 用途：`NoticeOverlay` 据此**不渲染**与右上角 `×` 重复的那个控件。
+    /// 依据：`NoticeCenter.dismiss()` 内部就是 `choose(notice, index: 0)`，点 `×` 与点本按钮是
+    /// 同一个动作（`choose` 会把下标回传给 `presentAndWait` 的等待者），因此「不渲染它」
+    /// 不影响任何调用方拿到的下标值 —— 这是零行为变更的收敛。
+    public var isAcknowledge: Bool {
+        ["确定", "好的", "关闭", "知道了"].contains(label)
+    }
 }
 
 /// 一条 **用户可见** 的提示。`NoticeCenter` 负责把它送到 `NoticeOverlay` 上。

@@ -16,6 +16,20 @@ enum GameDirectoryScanner {
         guard !gameRoot.isEmpty else { return [] }
         // 与游戏分类列表一致：先规范化版本文件夹名（1.6.1 → 1.6.1-Forge），列表显示后缀
         MinecraftVersionManager.normalizeVersionFolderNames(gameRoot: gameRoot)
+        return installedVersionList(gameRoot: gameRoot)
+    }
+
+    /// 只读地列出本地已安装版本：与 `localOwnedVersions` 的「有效版本」判据完全一致
+    /// （目录中存在同名 .jar 或 .json），返回顺序也一致（`contentsOfDirectory` 顺序），
+    /// 但**不调用** `MinecraftVersionManager.normalizeVersionFolderNames`。
+    ///
+    /// 为什么需要它：`normalizeVersionFolderNames` 会在磁盘上**重命名版本文件夹**。
+    /// `localOwnedVersions` 的调用方（模组详情页）可以接受这个副作用，但下载页的版本卡片
+    /// 是在列表渲染路径上评估的（主线程、每次刷新都跑一遍），那里绝不能带磁盘写副作用。
+    ///
+    /// ⚠️ 两处判据必须保持一致：本函数是唯一实现，`localOwnedVersions` 在规范化之后委托给它。
+    static func installedVersionList(gameRoot: String) -> [String] {
+        guard !gameRoot.isEmpty else { return [] }
         let versionsPath = gameRoot + "/versions"
         guard let versionDirs = try? FileManager.default.contentsOfDirectory(atPath: versionsPath) else { return [] }
         return versionDirs.filter { dir in

@@ -71,17 +71,39 @@ struct RootOverlays: View {
                 .zIndex(200)
             }
 
-            // 文件拖入窗口时的整窗高亮边框；不参与命中测试，避免拦截拖拽落点
+            // 文件拖入窗口时的整窗高亮：描边 + 淡色蒙层 + 居中提示卡。
+            // 原先只有一圈 3pt 描边，没有任何文案，用户无法预知「松开会发生什么」
+            // （评审第 7 条：拖放目标必须在悬停时明确表示接受并可预览结果）。
+            // 不参与命中测试，避免拦截拖拽落点；zIndex 契约见文件头说明。
             if interaction.isDropTargeted {
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(ThemeManager.shared.accentColor, lineWidth: 3)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(ThemeManager.shared.accentColor.opacity(0.10))
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(ThemeManager.shared.accentColor, lineWidth: 3)
+
+                    VStack(spacing: 8) {
+                        Image(systemName: "arrow.down.doc.fill")
+                            .font(.system(size: 30, weight: .medium))
+                            .foregroundColor(ThemeManager.shared.accentColor)
+                        Text("松开以安装")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(.primary)
+                        Text("自动识别 .jar（模组）与 .zip / .mrpack（整合包）")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 16)
                     .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(ThemeManager.shared.accentColor.opacity(0.08))
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(.ultraThinMaterial)
+                            .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
                     )
-                    .padding(8)
-                    .allowsHitTesting(false)
-                    .zIndex(150)
+                }
+                .padding(8)
+                .allowsHitTesting(false)
+                .zIndex(150)
             }
 
             // 圆形毛玻璃下载按钮：全局顶层，

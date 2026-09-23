@@ -343,6 +343,7 @@
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "SL启动器";
 				"INFOPLIST_KEY_NSCameraUsageDescription[sdk=macosx*]" = "用于识别功能";
 				"INFOPLIST_KEY_NSMicrophoneUsageDescription[sdk=macosx*]" = "用于识别功能";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
@@ -372,6 +373,7 @@
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "SL启动器";
 				"INFOPLIST_KEY_NSCameraUsageDescription[sdk=macosx*]" = "用于识别功能";
 				"INFOPLIST_KEY_NSMicrophoneUsageDescription[sdk=macosx*]" = "用于识别功能";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";

@@ -28,7 +28,6 @@ struct DownloadDetailView: View {
                     title: "剩余文件",
                     value: manager.tasks.remainingFiles < 0 ? "-" : String(describing: manager.tasks.remainingFiles)
                 )
-                Spacer()
             }
             .padding(.vertical, 10)
             .frame(width: 176)
@@ -37,18 +36,34 @@ struct DownloadDetailView: View {
                     .fill(.regularMaterial)
                     .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
             )
+            // 卡片高度由三组数据决定并贴顶。
+            // 原先 VStack 末尾有一个 Spacer() 把卡片撑满整个 HStack 高度，而三组数据只占其中
+            // 一部分 —— 卡下部留出一大片空白（评审第 3 条；
+            // 截图 docs/ui-review-round5/02-window-download-detail.png）。
+            // 顺序关键：本修饰符必须在 .background(...) **之后**，撑满高度的只是外层容器；
+            // 若加在 .background 之前，毛玻璃卡本身仍会被撑满，问题不解决。
+            .frame(maxHeight: .infinity, alignment: .top)
 
             // 右侧任务卡片（对标 StaticMyCard 列表）
-            ScrollView(.vertical, showsIndicators: false) {
-                let taskList = manager.tasks.getTasks()
-                if taskList.isEmpty {
-                    // 空态兜底：手动关闭详情页期间任务完成被清空，再打开时避免空白
+            let taskList = manager.tasks.getTasks()
+            if taskList.isEmpty {
+                // 空态：在其所在区域内居中（原先 `padding(.top, 40)` 贴在内容区顶部），
+                // 并补一行「怎么让内容出现」的说明（评审第 3 条）。
+                // 文案只写事实：下载页确实列出可下载版本。
+                VStack(spacing: 10) {
+                    Image(systemName: "arrow.down.circle")
+                        .font(.system(size: 30, weight: .light))
+                        .foregroundColor(Color.secondary.opacity(0.7))
                     Text("没有进行中的下载")
-                        .font(.system(size: 13))
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.primary)
+                    Text("到「下载」页选择一个版本即可开始")
+                        .font(.system(size: 12))
                         .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 40)
-                } else {
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 8) {
                         ForEach(taskList) { task in
                             DownloadTaskCard(task: task) {
@@ -59,8 +74,8 @@ struct DownloadDetailView: View {
                     }
                     .padding(.vertical, 2)
                 }
+                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity)
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -148,6 +163,8 @@ private struct PanelView: View {
                 .frame(width: 140, height: 2)
             Text(value)
                 .font(.system(size: 20, weight: .bold, design: .rounded))
+                // 等宽数字：0.0% / 0 B/s / 0 在刷新时宽度不跳动
+                .monospacedDigit()
                 .foregroundColor(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.5)

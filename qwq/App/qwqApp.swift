@@ -34,6 +34,28 @@ struct SLApp: App {
         // 2026-09-23 恢复：`.defaultSize` 是 Scene 级 API，自 macOS 13.0 起可用，
         // 正好等于本项目部署目标，无需任何可用性守卫。
         .defaultSize(width: 900, height: 660)
+        // 菜单栏命令：「分类」菜单 + ⌘1…⌘6。
+        //
+        // 之前全库没有任何 `.commands { }` / `CommandGroup` / `keyboardShortcut`（评审第 10 条）：
+        // 没有偏好设置入口、没有菜单命令、没有快捷键，全部操作只能靠鼠标点导航。
+        // 这里补上最常用的一类（分类切换）。菜单在 Scene 级、导航状态在视图级，
+        // 两者不在同一视图树，故经 `NavigationIntent` 单槽中转，见该文件说明。
+        .commands {
+            CommandMenu("分类") {
+                ForEach(Array(Category.all.enumerated()), id: \.offset) { index, category in
+                    Button(category.name) {
+                        NavigationIntent.shared.requestCategory(at: index)
+                    }
+                    .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+                }
+            }
+        }
+
+        // 「设置…」（⌘,）：`Settings` 场景由系统自动在 App 菜单里生成入口，无需手工建菜单项。
+        // 内容直接镜像「个性化」页（见 SettingsScene 的说明）。
+        Settings {
+            SettingsScene()
+        }
     }
 }
 

@@ -50,6 +50,33 @@ private struct NoticeCard: View {
     /// 按钮强调色来源：本视图不读取，仅向下透传，故不订阅
     let theme: ThemeManager
     @State private var appeared = false
+    /// 错误原因做两级展示：第一段（一句话结论）常显，其余（失败原因清单）默认收起。
+    /// 展开状态只属于这一张卡片；卡片以 `notice.id` 作身份（见 NoticeOverlay 的 `.id(notice.id)`），
+    /// 换提示即换视图，状态不会串到下一张。
+    @State private var showDetail = false
+
+    /// 是否渲染按钮行。
+    ///
+    /// 唯一一个按钮若是「知道了」类（`isAcknowledge`），就不渲染它 —— 右上角的 `×` 与它是
+    /// 同一个动作（见 `NoticeCenter.dismiss()` 的实现：`choose(notice, index: 0)`）。
+    /// 同一结果给两个语义重复的控件会让用户以为它们不同（评审第 8 条）。
+    /// ⚠️ 只影响「渲染与否」，`notice.buttons` 的内容与顺序一字未动：
+    /// `choose(index:)` 与 `presentAndWait` 都依赖下标语义。
+    private var showsButtonRow: Bool {
+        guard !notice.buttons.isEmpty else { return false }
+        if notice.buttons.count == 1, notice.buttons[0].isAcknowledge { return false }
+        return true
+    }
+
+    /// 正文按第一个换行切分：前段作结论，余下作可展开的详情。
+    /// 只有「结论 + 换行 + 详情」这种两段式才拆；单行正文原样渲染。
+    private static func splitMessage(_ message: String) -> (summary: String, detail: String) {
+        guard let newline = message.firstIndex(of: "\n") else { return (message, "") }
+        let summary = String(message[message.startIndex..<newline])
+        let detail = String(message[message.index(after: newline)...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (summary, detail)
+    }
 
     private var accent: Color {
         switch notice.level {
@@ -81,15 +108,38 @@ private struct NoticeCard: View {
                     .foregroundColor(.primary)
 
                 if !notice.message.isEmpty {
-                    Text(notice.message)
+                    let parts = Self.splitMessage(notice.message)
+                    // 第一段：一句话结论，常显
+                    Text(parts.summary)
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: 420, alignment: .leading)
+
+                    if !parts.detail.isEmpty {
+                        // 详情：失败原因清单通常有若干行，直接铺开会把提示卡撑得很长，
+                        // 因此默认收起（评审第 8 条：错误原因做两级）
+                        if showDetail {
+                            Text(parts.detail)
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: 420, alignment: .leading)
+                        }
+                        Button {
+                            withAnimation(.punchySpring) { showDetail.toggle() }
+                        } label: {
+                            Text(showDetail ? "收起详情" : "查看详情")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(theme.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
 
-                if !notice.buttons.isEmpty {
+                if showsButtonRow {
                     HStack(spacing: 8) {
                         ForEach(Array(notice.buttons.enumerated()), id: \.element.id) { index, button in
                             NoticeButtonView(button: button, theme: theme) {
