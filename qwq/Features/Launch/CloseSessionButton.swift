@@ -12,14 +12,21 @@ import SwiftUI
 /// 右下角电源按钮：运行中有游戏时提示关闭，否则取消启动
 struct CloseSessionButton: View {
     @ObservedObject var theme = ThemeManager.shared
+    /// 是否正在启动（与 hasRunningSessions 一起决定按钮是否出现）。
     let isLaunching: Bool
+    /// 是否还有游戏进程在跑（决定出现时的提示文案是「关闭」还是「取消」）。
     let hasRunningSessions: Bool
+    /// 点击回调。⚠️ 本视图**不弹确认框、不杀进程** —— NSAlert 与终止逻辑都在外部
+    ///（LaunchCoordinator.handlePowerTap）。
     let onTap: () -> Void
 
+    /// 入场动画初值 0.01 而**不是 0**：`scaleEffect(0)` 会让命中测试完全失效，
+    /// 留一个极小值既视觉不可见，又能正常参与布局与点击。
     @State private var closeButtonScale: CGFloat = 0.01
     @State private var closeButtonGlow: CGFloat = 0
     @State private var popTask: Task<Void, Never>?
 
+    // 可见性只有一个条件：正在启动，或仍有游戏在跑。两者都不成立时整个按钮不渲染。
     var body: some View {
         Group {
             if isLaunching || hasRunningSessions {
@@ -27,6 +34,8 @@ struct CloseSessionButton: View {
                     Spacer()
                     HStack {
                         Spacer()
+                        // 圆环 + 图标两层：圆环随 closeButtonGlow 淡出成为辉光，
+                        // 图标固定在 44×44 的毛玻璃圆底上。
                         Button(action: onTap) {
                             ZStack {
                                 Circle()
@@ -50,6 +59,7 @@ struct CloseSessionButton: View {
                         }
                         .buttonStyle(.plain)
                         .padding(20)
+                        // tooltip 按状态给不同说法：有游戏在跑 = 关闭所有游戏；否则 = 取消启动。
                         .help(hasRunningSessions ? "关闭所有游戏" : "取消启动")
                     }
                 }
