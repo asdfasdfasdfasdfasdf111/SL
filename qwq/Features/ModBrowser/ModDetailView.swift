@@ -10,12 +10,27 @@
 import SwiftUI
 import AppKit
 
+/// 项目详情页。**一个 ViewModel 支撑整条滑动栈**（基础页 + 若干前置依赖页），
+/// 各页横向排布、靠 `navSlideOffset` 平移切换，栈内非首页一律按 `.mod` 渲染。
+///
+/// 业务决策（版本列表规则、默认选中、加载器检测状态机、取数、翻译调度）全部在
+/// ViewModels/ModDetailViewModel.swift；本视图只管三件事：
+/// 页面滑动栈、入出场动画、下载按钮的提示与弹跳。
+///
+/// ⚠️ 因为各页**共用一个 ViewModel**，来回滑动会覆盖彼此的展示状态 ——
+/// 所以 `goBack` 时必须按 `basePageType` 重新取一次基础页的数据（见该方法注释）。
 struct ModDetailView: View {
+    /// 当前展示的项目。前置依赖页的数据不在这个字段里，而由 ViewModel 按页面取。
     let item: DownloadedItem
+    /// 基础页（栈第 0 页）进入时的页面类型。
+    /// ⚠️ 这只是**初值**：进入前置加载器页时宿主会把分类切成「模组」，
+    /// 视图的 `pageType` 随之变成 `.mod`，此时要靠 `basePageType` 才能还原。
     let pageType: DetailPageType
     let onClose: () -> Void
+    /// 点前置依赖时通知宿主（宿主要据此切换左侧分类高亮）。
     var onNavigateToMod: ((DownloadedItem) -> Void)? = nil
     var onNavigateBackFromMod: (() -> Void)? = nil
+    /// 游戏分类下的子分类（release/snapshot/…），仅游戏页面用；其它页面为 nil。
     var gameSubCategory: GameSubCategory? = nil
 
     /// 主题与下载详情管理器属全局单例（外部持有），由调用方注入，本视图只订阅、不创建
@@ -29,10 +44,13 @@ struct ModDetailView: View {
     @StateObject private var viewModel = ModDetailViewModel()
 
     // 以下为纯视图状态：页面滑动栈、横向位移、入出场动画与可取消延迟任务
+    /// 前置依赖的页面栈（不含基础页本身）。数组内容 = 栈上第 1..n 页。
     @State private var prerequisiteStack: [DownloadedItem] = []
+    /// 整条滑动栈的横向位移。每次进/出前置页 ± `pageWidth`，动画由 withAnimation 驱动。
     @State private var navSlideOffset: CGFloat = 0
     @State private var pageWidth: CGFloat = 0
 
+    /// 整页入场动画的两个中间量（从 0.85 放大到 1、从全透明到不透明）。
     @State private var entryScale: CGFloat = 0.85
     @State private var entryOpacity: Double = 0
 
@@ -45,16 +63,21 @@ struct ModDetailView: View {
     /// 基础页（滑页栈第 0 页）进入时的页面类型。
     /// 进入前置加载器页时宿主会把分类切到「模组」，本视图的 `pageType` 随之变为 `.mod`，
     /// 返回时需按这里记住的原类型重建基础页数据（滑页各页共用同一个 ViewModel，细节见 goBack）。
+    /// 基础页进入时的页面类型。⚠️ 必须记住它：进前置页时宿主会把 `pageType` 改成 `.mod`，
+    /// 返回时只有靠这个原值才能把基础页的数据重新取回来（滑页共用一个 ViewModel）。
     @State private var basePageType: DetailPageType?
 
     // 页签副标题翻译状态与调度走共享 CardTranslationModel（与列表页同一套
     // 「内存→磁盘→网络」按需翻译流程；视图销毁后 model 不再写回，UAF 防护）
     @StateObject private var translationModel = CardTranslationModel()
 
+    // 外层：几何测量 + 整页缩放/透明度入场 + 指定边距（左边缘贴紧分类栏，仅内容层内缩）。
     var body: some View {
         GeometryReader { geometry in
             let width = geometry.size.width
             ZStack {
+                // 用**下标**做 identity 是有意的：页面栈只增删尾部，下标稳定，
+                // 且每页的 item 可能被重复（同一前置项被点多次），用 item.id 会撞键。
                 ForEach(Array(allPages.enumerated()), id: \.offset) { index, pageItem in
                     detailPageContent(
                         item: pageItem,
@@ -137,10 +160,13 @@ struct ModDetailView: View {
         // 下载中状态跟随详情页开关：详情页打开/关闭时驱动下载按钮布局变化（圆按钮出现时左移）
     }
 
+    /// 全部页面：基础页在最前，其后依次是前置依赖栈。
+    /// ⚠️ 顺序必须与 `navigateToPrerequisite` 的位移方向一致（越靠后 → 越向右偏移）。
     private var allPages: [DownloadedItem] {
         [item] + prerequisiteStack
     }
 
+    /// 进入一个前置依赖页：入栈 → 显式触发该前置项的取数 → 向左滑一屏。
     private func navigateToPrerequisite(_ prereq: DownloadedItem) {
         onNavigateToMod?(prereq)
         prerequisiteStack.append(prereq)
@@ -158,6 +184,11 @@ struct ModDetailView: View {
         }
     }
 
+    /// 返回上一页。栈空则关闭整个详情页。
+    ///
+    /// ⚠️ 栈非空时必须按 `basePageType` **重新取一次基础页数据** ——
+    /// 因为滑页共用一个 ViewModel，基础页的展示状态已被前置页的取数覆盖，
+    /// 不重取的话版本下拉与「支持版本 / 加载器」会停留在前置项的值上。
     private func goBack() {
         if !prerequisiteStack.isEmpty {
             // 从前置加载器页返回原分类（光影/资源包）：通知宿主恢复侧栏高亮
@@ -207,6 +238,8 @@ struct ModDetailView: View {
         }
     }
 
+    /// 点下载：先给「下载开始」提示与按钮弹跳，再转交 ViewModel 做路径决策与实际下载。
+    /// 顺序不能换 —— 提示要在耗时操作之前出现，否则用户点完会先愣一下。
     private func startDownload() {
         guard !viewModel.selectedVersion.isEmpty else { return }
 
@@ -231,6 +264,10 @@ struct ModDetailView: View {
         viewModel.performDownload(pageType: pageType, item: item, manager: downloadDetail)
     }
 
+    /// 单页内容（滑动栈里的一页）。
+    /// - Parameter pageTypeForIndex: 该页按什么类型渲染（栈内非首页恒为 `.mod`）。
+    /// - Parameter isBasePage: 是否为基础页 —— 只有基础页才展示「跨版本自动匹配」提示与
+    ///   光影前置依赖区块，避免在前置页里再套一层同样的提示。
     @ViewBuilder
     private func detailPageContent(item pageItem: DownloadedItem, pageTypeForIndex: DetailPageType, isBasePage: Bool) -> some View {
         ZStack(alignment: .bottomTrailing) {
@@ -294,6 +331,7 @@ struct ModDetailView: View {
             .padding(.leading, 56)
             .padding(.vertical, 8)
         }
+        // 底部留 90pt：给悬浮在右下角的下载按钮让位，避免滚动到底时内容被按钮压住。
         .padding(.bottom, 90)
         }
         }

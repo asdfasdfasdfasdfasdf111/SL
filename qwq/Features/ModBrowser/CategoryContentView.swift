@@ -3,8 +3,23 @@ import AppKit
 import UniformTypeIdentifiers
 import Combine
 
+/// 右侧主内容区：按左侧分类（`category.name`）分派到不同页面。
+///
+/// 本视图自身只实现「启动」页那一整套（头像 / 用户名 / 启动按钮 / 日志面板 / 电源按钮），
+/// 其余分类转交对应视图：个性化 → ColorPickerView、游戏 → GameCategoryView、
+/// 下载 → DownloadCategoryView、联机与赞助 → 就地内联的内容。
+///
+/// **架构约定**：启动页的业务决策都已下沉到 ViewModel ——
+/// LaunchAvatarSkinViewModel（头像皮肤管道）与 LaunchEntryViewModel（启动入口决策）。
+/// 本视图只订阅它们的 `@Published` 展示状态、转发意图，自身不做校验也不起网络。
+///
+/// ⚠️ 分派依据是 `category.name` 的**中文字符串**（"个性化" / "启动" / "游戏" …）——
+/// 分类名一旦改名或本地化，这里会静默落进最后的 else 分支（空网格），不会有编译错误。
 struct CategoryContentView: View {
+    /// 当前分类。本视图**只读它的 name** 做分派，不读其它字段。
     let category: Category
+    /// 搜索框内容。⚠️ 在本视图内**未被使用**（联机/占位分支都是空网格）——
+    /// 属预留参数，供后续在这些分类里接搜索用。
     let searchText: String
     @EnvironmentObject var settings: LauncherSettings
     /// 主题与启动会话均属全局单例（外部持有），由调用方注入；本视图只订阅，不持有
@@ -14,23 +29,32 @@ struct CategoryContentView: View {
 
     /// 头像皮肤数据管道与皮肤生命周期决策归 ViewModels/LaunchAvatarSkinViewModel.swift，
     /// 本视图只订阅其 @Published 展示状态并转发意图
+    /// ⚠️ 用 `@StateObject` 而非 `@ObservedObject`：这两个 ViewModel 的生命周期要
+    /// **绑定在本视图上**（自己创建、自己持有），而不是由调用方注入 ——
+    /// 与同文件里 theme / sessionManager 的注入式写法相反。
     @StateObject private var skinViewModel = LaunchAvatarSkinViewModel()
 
     /// 启动按钮的入口决策（版本前置校验 + 重复启动拦截 + 转交 LaunchCoordinator）归
     /// ViewModels/LaunchEntryViewModel.swift，本视图只清焦点并转发点击
     @StateObject private var launchEntry = LaunchEntryViewModel()
 
+    /// 用户名输入框聚焦时的放大反馈（1.0 ↔ 1.1），配合 `.punchySpring`。
     @State private var usernameFieldScale: CGFloat = 1.0
     @FocusState private var isUsernameFocused: Bool
     @State private var skinButtonScale: CGFloat = 1.0
 
+    /// 启动页外层：用 GeometryReader 按窗口尺寸算出卡片 / 按钮 / 头像的尺寸，再交给内容层。
+    /// 所有尺寸都从 `cardWidth` 一个基准按比例推出来，改一处即可整体缩放。
     private var launchView: some View {
         GeometryReader { geometry in
             let cardWidth: CGFloat = 280
             let buttonWidth = cardWidth * 0.7
             let avatarSize = buttonWidth * 0.7
             let logCardHeight = geometry.size.height * 0.32
-            // 固定卡片高度：防止 Spacer 吸收 HStack 额外高度导致拉伸
+            // 固定卡片高度：防止 Spacer 吸收 HStack 额外高度导致拉伸。
+            // ⚠️ 这个数字是各子元素高度的**手工累加**（上下留白 + 头像 + 间距 + 用户名框 +
+            // 启动按钮 + 预留日志位 + 皮肤按钮 + 间距 + 版本文案）——
+            // 增删卡片内元素时必须同步改它，否则卡片会被内容撑开或压扁。
             let cardHeight: CGFloat = 20 + avatarSize + 12 + 44 + 50 + 80 + 64 + 4 + 28
             launchContent(cardWidth: cardWidth, buttonWidth: buttonWidth, avatarSize: avatarSize, logCardHeight: logCardHeight, cardHeight: cardHeight)
         }
@@ -51,6 +75,7 @@ struct CategoryContentView: View {
         }
     }
 
+    /// 内容层：最底是透明点击层（点空白处让输入框失焦）+ 左卡片 + 右侧日志面板 + 右下电源按钮。
     private func launchContent(cardWidth: CGFloat, buttonWidth: CGFloat, avatarSize: CGFloat, logCardHeight: CGFloat, cardHeight: CGFloat) -> some View {
         ZStack {
             // 透明点击层（最底层）：点击任意空白处让用户名输入框失焦（macOS 点击非焦点区不自动失焦）
@@ -73,6 +98,8 @@ struct CategoryContentView: View {
             )
         }
     }
+    /// 左侧主卡片：自上而下＝版本文案 → 头像 → 用户名输入 → 皮肤按钮 →（弹簧）→ 启动按钮。
+    /// 中间的 `Spacer(minLength: 0)` 把启动按钮推到卡片底部。
     private func leftCard(cardWidth: CGFloat, avatarSize: CGFloat, buttonWidth: CGFloat, cardHeight: CGFloat) -> some View {
         VStack(spacing: 16) {
             if !settings.selectedMinecraftVersion.isEmpty {
@@ -104,6 +131,8 @@ struct CategoryContentView: View {
         .background(RoundedRectangle(cornerRadius: 24).fill(.regularMaterial).shadow(radius: 12))
     }
 
+    /// 头像：头 + 帽**两层**图片叠加渲染（帽子单独一层是为了正确处理半透明像素）。
+    /// 两张图都由 ViewModel 在后台裁剪好，本视图只按比例摆放 —— 布局重算不触发 CoreImage。
     private func avatarView(avatarSize: CGFloat) -> some View {
         ZStack {
             // 双层渲染（还原：头 + 帽层叠加消除半透明）。
@@ -131,6 +160,7 @@ struct CategoryContentView: View {
         }
     }
 
+    /// 离线用户名输入框：聚焦时背景浮现 + 描边高亮 + 放大反馈，并附一行非阻塞提示文案。
     private var usernameField: some View {
         VStack(spacing: 6) {
             TextField("离线模式用户名", text: $settings.offlineUsername)
@@ -174,11 +204,13 @@ struct CategoryContentView: View {
         .padding(.horizontal, 20)
     }
 
-    /// 离线用户名提示（PCL2 PageLoginLegacy 的 HintChinese 移植）
+    /// 离线用户名提示（PCL2 PageLoginLegacy 的 HintChinese 移植）。
+    /// 返回 nil 表示「没有要说的」，视图侧整块不渲染 —— 而不是留一个空文案占位。
     private var offlineUsernameHint: String? {
         OfflineUsernameValidator.hint(for: settings.offlineUsername)
     }
 
+    /// 「选择皮肤」按钮：点击先让输入框失焦、播一次弹跳，再交给 OfflineSkinService 开选图面板。
     private var skinButton: some View {
         Button(action: {
             isUsernameFocused = false
@@ -203,6 +235,9 @@ struct CategoryContentView: View {
         .scaleEffect(skinButtonScale)
     }
 
+    /// 日志面板：仅在 `showLogView` 且确有会话时渲染内容，否则整块从下方 300pt 处淡出。
+    /// ⚠️ 面板**不在布局里消失**（用 offset 而非条件插入），所以始终占着它的位置 ——
+    /// 这是为了让「显示/隐藏」走同一套动画，代价是隐藏时也占位。
     private func logPanel(logCardHeight: CGFloat) -> some View {
         Group {
             if sessionManager.showLogView && !sessionManager.sessions.isEmpty {
@@ -227,10 +262,12 @@ struct CategoryContentView: View {
         .animation(.exaggeratedSpring, value: sessionManager.sessions.count)
     }
 
+    /// 薄封装：把会话与高度转交给 `SessionLogCardView`，本视图不参与日志渲染。
     private func sessionLogCard(session: GameSession, logCardHeight: CGFloat) -> some View {
         SessionLogCardView(session: session, logCardHeight: logCardHeight)
     }
 
+    // 分派入口：按分类名切页面。分支顺序即优先级，最后的 else 是「还没做的分类」占位。
     var body: some View {
         Group {
             if category.name == "个性化" {
@@ -249,6 +286,7 @@ struct CategoryContentView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.clear)
+            // 赞助页：两张赞助方式卡 + 一张感谢卡，纯静态内容。
             } else if category.name == "赞助" {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 180))], spacing: 20) {
@@ -262,6 +300,8 @@ struct CategoryContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.clear)
             } else {
+                // ⚠️ 这是**占位分支**：网格内容为空数组，实际上什么都不显示。
+                // 它兜住的是所有未在上面列出的分类（也包含「联机」之后可能新增的分类）。
                 // 原先以 ScrollViewReader 包裹但从未调用 scrollTo（proxy 无读取点）：
                 // ScrollViewReader 的官方用途即经 proxy 做编程式滚动，无调用时仅为惰性包装，
                 // 不参与布局、不影响滚动，故移除包装保留 ScrollView 本体。
@@ -297,6 +337,9 @@ private struct FirstResponderReset: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
+/// 抢焦点的占位视图。0×0、不可见，只为在窗口成为 key 时抢在 TextField 之前
+/// 成为 firstResponder —— AppKit 的自动聚焦只发生在「窗口尚无 firstResponder」时，
+/// 先占住它就不会落到用户名输入框上。
 private final class FocusSinkView: NSView {
     /// NSView 默认不可聚焦，覆写为 true 才能作为 first responder 候选抢占
     override var acceptsFirstResponder: Bool { true }
@@ -330,6 +373,9 @@ private final class FocusSinkView: NSView {
         tryGrab(window)
     }
 
+    /// 抢占焦点。`async` 到下一个 runloop tick 是必要的 —— 调用点
+    ///（viewDidMoveToWindow / didBecomeKey）都还在 AppKit 的布局与焦点协商过程中，
+    /// 立刻改 firstResponder 会被随后的自动聚焦覆盖掉。
     private func tryGrab(_ window: NSWindow) {
         DispatchQueue.main.async {
             window.initialFirstResponder = self
