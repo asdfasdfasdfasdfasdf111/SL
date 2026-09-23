@@ -1,7 +1,24 @@
 import SwiftUI
 
 /// 全局提示展示层。挂在根视图上，订阅 `NoticeCenter.shared.current`，
-/// 以顶部横幅形式显示当前提示（不影响下层布局，仅顶部卡片区域接收点击）。
+/// 以顶部卡片形式显示当前提示（不影响下层布局，仅顶部卡片区域接收点击）。
+///
+/// ## 层级契约（此前是隐式的，这里写明）
+///
+/// 本视图由 `ContentView` 以 `.overlay { }` 挂在**根 ZStack 之外**，因此它恒在
+/// 窗口内所有图层之上 —— 包括 `RootOverlays` 里 zIndex(200) 的安装弹窗与
+/// zIndex(300) 的启动失败气泡。`RootOverlays.swift` 文件头声明的那套
+/// 「40 / 100 / 150 / 200 / 300」契约**不包含本层**，本层在它之上。
+///
+/// 这是有意为之，不是遗漏。依据（Apple HIG《Modality》）：
+/// `Although an alert can appear on top of all other content — including other modal views —
+/// you never want to display more than one alert at the same time.`
+/// <https://developer.apple.com/cn/design/human-interface-guidelines/modality>
+/// 提示必须能被看见，被安装弹窗盖住就等于没提示。同时该条也约束了「同时只能有一条提示」——
+/// 这正是 `NoticeCenter.current` 为单槽、`deliver()` 用新提示**顶替**旧提示的原因。
+///
+/// 若要改动本层的挂载方式（例如并入 `RootOverlays` 并显式给 zIndex），
+/// 必须同步更新 `RootOverlays.swift` 文件头的契约表，否则那份契约会变成过期文档。
 struct NoticeOverlay: View {
     @ObservedObject var center: NoticeCenter
     /// 按钮强调色来源：本视图不读取，仅向下透传，故不订阅
@@ -54,6 +71,9 @@ private struct NoticeCard: View {
     /// 展开状态只属于这一张卡片；卡片以 `notice.id` 作身份（见 NoticeOverlay 的 `.id(notice.id)`），
     /// 换提示即换视图，状态不会串到下一张。
     @State private var showDetail = false
+
+    /// 卡片宽度上限（含左右内边距）。取值的依据与被实测到的旧缺陷见 `.frame(maxWidth:)` 处。
+    private static let maxCardWidth: CGFloat = 460
 
     /// 是否渲染按钮行。
     ///
@@ -115,7 +135,9 @@ private struct NoticeCard: View {
                         .foregroundColor(.secondary)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: 420, alignment: .leading)
+                        // 不再在这里限宽：整张卡的宽度是唯一上限（见下方 maxCardWidth），
+                        // 两处各写一个数字会出现「改了卡片没改正文」的不一致。
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
                     if !parts.detail.isEmpty {
                         // 详情：失败原因清单通常有若干行，直接铺开会把提示卡撑得很长，
@@ -126,7 +148,7 @@ private struct NoticeCard: View {
                                 .foregroundColor(.secondary)
                                 .textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: 420, alignment: .leading)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         Button {
                             withAnimation(.punchySpring) { showDetail.toggle() }
@@ -173,6 +195,29 @@ private struct NoticeCard: View {
                 )
                 .shadow(color: .black.opacity(0.25), radius: 14, y: 6)
         )
+        // 整张卡宽度上限：这是**卡片尺寸的唯一上限**（正文不再各自限宽，见上）。
+        //
+        // 为什么必须加这一条（2026-09-23 按用户截图实测，不是审美偏好）：
+        // 此前只有正文限宽 420pt，卡片本身不限宽，于是它被 HStack 里的
+        // `Spacer(minLength: 0)` 撑到父容器宽度。在 800pt 宽的窗口上实测：
+        // 卡片 **752pt 宽 × 126pt 高**，而正文只有 420pt 宽 —— 右半张卡是空的，
+        // 右上角的 `×` 被推到距正文末字约 **270pt** 处，和它要关闭的内容完全脱节。
+        //
+        // 依据（Apple HIG《Sheets》）：
+        // `Present a sheet in a reasonable default size. People don't generally expect to resize
+        // sheets, so it's important to use a size that's appropriate for the content you display.`
+        // 该条的判定方法明确把「尺寸不合内容（过小挤压 / **过大空旷**）」列为违反。
+        // <https://developer.apple.com/cn/design/human-interface-guidelines/sheets>
+        // 另据《Feedback》的就近原则：
+        // `When status feedback is available near the items it describes, people get important
+        // information without having to take action or leave their current context.`
+        // <https://developer.apple.com/cn/design/human-interface-guidelines/feedback>
+        //
+        // 460pt 的取法：macOS 原生提醒面板的常见宽度在 420pt 上下，卡片另需容纳
+        // 图标(18) + 间距(12) + 左右内边距(28) 与右上角关闭按钮，故取 460
+        // （正文可用宽度约 380pt，约 30 个中文字符/行，仍属易读区间）。
+        // 窗口更窄时由父容器的 maxWidth 决定，本上限不会溢出。
+        .frame(maxWidth: Self.maxCardWidth)
         .opacity(appeared ? 1 : 0)
         .scaleEffect(appeared ? 1 : 0.97, anchor: .top)
         .onAppear {

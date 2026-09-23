@@ -177,7 +177,20 @@ final class ModDetailViewModel: ObservableObject {
         }
         if !item.id.isEmpty {
             translateDetailDescription(pages: pages, translation: translation)
-            fetchProjectDetails(itemId: item.id, pageType: pageType)
+            // 项目详情只对「item.id 是 Modrinth 项目 id」的页面拉取。
+            //
+            // 为什么必须加这道判断：游戏版本页（.loaderSelector）的 item.id 是 Minecraft 版本号
+            // （如 "1.21.8"），拿它请求 `/v2/project/1.21.8` 官方返回 **404 且响应体为空**，
+            // 空数据解码必然失败 → 每打开一个新版游戏版本页就弹一次
+            // 「项目信息获取失败（数据格式不正确）」。用户 2026-09-23 报告的就是这个现象。
+            // 判据与实测记录见 `DetailPageType.hasModrinthProject`。
+            //
+            // 跳过之后该页不丢任何数据：游戏版本页的加载器可用性由 LoaderSupportChecker 负责，
+            // 与本接口无关；`SupportedMetaSection`（唯一消费 projectGameVersions 的地方）
+            // 本就只在非 loaderSelector / 非 modpack 页渲染，见 ModDetailView.detailPageContent。
+            if pageType.hasModrinthProject {
+                fetchProjectDetails(itemId: item.id, pageType: pageType)
+            }
         }
     }
 

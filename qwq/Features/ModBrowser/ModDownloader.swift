@@ -104,6 +104,31 @@ public class ModDownloader {
         req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         return req
     }
+
+    /// 校验 HTTP 状态码，非 2xx 时抛出具**可读原因**的错误。
+    ///
+    /// 为什么必须有这一步（这是本文件里一个反复出现的真缺陷的收口）：
+    /// 本类型此前的每一个取数点都写成 `let (data, _) = try await session.data(for: req)`，
+    /// **`URLResponse` 被 `_` 丢弃**，于是：
+    /// - 404（项目/版本不存在）→ 上游给的**空响应体**被喂给 `JSONDecoder`
+    ///   → 抛出 `DecodingError`，用户看到「The data couldn't be read because it isn't in
+    ///   the correct format.」；
+    /// - 429（限流）、5xx（服务端故障）同理，全部被伪装成「数据格式不正确」。
+    /// 结果是**失败原因完全不可诊断**：既不知道是网络、是被限流、还是 id 根本不存在。
+    ///
+    /// 实测记录（2026-09-23）：
+    /// - `https://api.modrinth.com/v2/project/1.21.8` → **404 且 body 为空**
+    /// - 镜像 `https://mod.mcimirror.top/modrinth/v2/project/1.21.8`
+    ///   → 404 且 body 为 `{"error":"Not Found","code":404,"detail":"..."}`
+    ///
+    /// 本方法只改变**失败时的报错文案**，成功路径（2xx）行为逐字不变。
+    private func validate(_ data: Data, _ response: URLResponse) throws {
+        guard let http = response as? HTTPURLResponse,
+              !(200..<300).contains(http.statusCode) else { return }
+        // 尽力解析错误体：解不出来（空体 / 网关 HTML）就只报状态码
+        let apiError = try? JSONDecoder().decode(ModrinthAPIError.self, from: data)
+        throw ModError.httpStatus(code: http.statusCode, detail: apiError?.detail)
+    }
     
     public func searchMods(query: String, limit: Int = 20, loader: ModLoader? = nil, gameVersion: String? = nil) async throws -> [ModrinthMod] {
         let key = cacheKey(query: query, limit: limit, loader: loader, gameVersion: gameVersion)
@@ -132,7 +157,9 @@ public class ModDownloader {
             ]
             var req = URLRequest(url: components.url!)
             req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-            let (data, _) = try await session.data(for: req)
+            let (data, response) = try await session.data(for: req)
+            // 先验状态码再解码：429/5xx 的错误体不是 SearchResult，直接解码会报「数据格式不正确」
+            try validate(data, response)
             let result = try JSONDecoder().decode(SearchResult.self, from: data)
             searchCache.store(key, result.hits)
             return result.hits
@@ -149,7 +176,9 @@ public class ModDownloader {
     
     public func getProject(modId: String) async throws -> ModrinthProject {
         let req = request("/project/\(modId)")
-        let (data, _) = try await session.data(for: req)
+        let (data, response) = try await session.data(for: req)
+        // 先验状态码再解码：404 时官方返回空体，直接解码会报「数据格式不正确」
+        try validate(data, response)
         return try JSONDecoder().decode(ModrinthProject.self, from: data)
     }
 
@@ -169,7 +198,9 @@ public class ModDownloader {
         components.queryItems = queryItems.isEmpty ? nil : queryItems
         var req = URLRequest(url: components.url!)
         req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        let (data, _) = try await session.data(for: req)
+        let (data, response) = try await session.data(for: req)
+        // 先验状态码再解码（同 getProject：429/5xx 的错误体不是版本数组）
+        try validate(data, response)
         return try JSONDecoder().decode([ModrinthVersion].self, from: data)
     }
     
@@ -314,6 +345,14 @@ public class ModDownloader {
         case invalidURL
         case hashMismatch(String)
 
+        /// 上游返回非 2xx。此前状态码被 `_` 丢弃、错误体被当成功响应解码，
+        /// 于是 404/429/5xx 一律报成「数据格式不正确」——见 `validate(_:_:)` 的说明。
+        ///
+        /// - Parameters:
+        ///   - code: HTTP 状态码
+        ///   - detail: 上游给出的说明文字；官方 404 的响应体为空，故可能为 nil
+        case httpStatus(code: Int, detail: String?)
+
         public var errorDescription: String? {
             switch self {
             case .noDownloadableFile: return "模组版本没有可下载的文件"
@@ -322,6 +361,23 @@ public class ModDownloader {
             case .noGameRootSet: return "未设置游戏根目录"
             case .invalidURL: return "模组文件下载地址无效"
             case .hashMismatch(let reason): return "模组文件完整性校验失败：\(reason)"
+            case .httpStatus(let code, let detail):
+                // 按状态码给「用户能据此判断下一步」的结论，而不是只丢一个数字。
+                // 常见码的语义：404 = id 不存在（本工程最常见的来因是拿 Minecraft 版本号
+                // 当项目 id 请求，见 DetailPageType.hasModrinthProject）；429 = 限流；
+                // 5xx = 上游故障，稍后重试即可，用户无需改自己的操作。
+                let base: String
+                switch code {
+                case 400: base = "请求参数不被上游接受（400）"
+                case 403: base = "上游拒绝了本次请求（403）"
+                case 404: base = "该项目或版本不存在（404）"
+                case 429: base = "请求过于频繁，请稍后再试（429）"
+                case 500...599: base = "Modrinth 服务端暂时不可用（\(code)）"
+                default: base = "Modrinth 返回了意外的状态码（\(code)）"
+                }
+                // 上游给了原因就带上；没给（官方 404 是空体）就只说状态码
+                guard let detail, !detail.isEmpty else { return base }
+                return "\(base)：\(detail)"
             }
         }
     }
