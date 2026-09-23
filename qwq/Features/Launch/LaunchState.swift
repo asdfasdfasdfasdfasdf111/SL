@@ -39,7 +39,17 @@ public enum LaunchState: Sendable, Equatable {
     case failed(LaunchError)
 
     /// 是否已进入终态（不会再产生后续状态）
-    public var isTerminal: Bool {
+    ///
+    /// `nonisolated`：本属性只读枚举载荷、不触碰任何 actor 隔离状态。
+    /// 未标注时会被工程默认隔离（`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`）推断为
+    /// `@MainActor`，于是 `GameSessionStore.update` 里在 `OSAllocatedUnfairLock.withLock`
+    /// 的 `@Sendable` 闭包内读它就是「main actor-isolated property can not be referenced
+    /// from a Sendable closure」——Swift 6 语言模式下直接是 error，而该锁本就设计为
+    /// 任意并发域可用（同文件 `observe` 的 `onTermination` 亦为 `@Sendable`）。
+    /// 依据：《Concurrency》——`nonisolated` 声明不参与 actor 隔离推断，可从任意并发域调用；
+    /// 其实现不得访问 actor 隔离状态（本属性满足）。
+    /// 官方链接：https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/
+    public nonisolated var isTerminal: Bool {
         switch self {
         case .finished, .failed: return true
         default: return false

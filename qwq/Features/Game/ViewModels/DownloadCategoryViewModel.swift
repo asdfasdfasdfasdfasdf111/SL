@@ -355,7 +355,12 @@ final class DownloadCategoryViewModel: ObservableObject {
         let baseItems = items
         Task {
             let result = await ModrinthSearcher.search(type: type, label: "", query: query, offset: offset, limit: 30)
-            if Task.isCancelled { return }
+            // 取消时**必须**一并清 isLoadingMore：该标志是 `loadMore` 入口守卫
+            // （`guard hasMore, !isLoadingMore, …`）的一个条件，只 return 不清标志会把
+            // 「本页没加载」变成「本分类此后永远不能再加载」——与 `LaunchCoordinator`
+            // 非法字符分支未复位 `launchPhase`（按钮永久停在「准备中…」）是同一型缺陷。
+            // 下面第 360 行的归属守卫作者记得复位，这一处漏了；补齐使三条出口一致。
+            if Task.isCancelled { isLoadingMore = false; return }
             await MainActor.run {
                 guard section == self.selectedSection else { self.isLoadingMore = false; return }
                 var merged = baseItems
