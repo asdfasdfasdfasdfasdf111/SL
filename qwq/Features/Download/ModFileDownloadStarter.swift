@@ -42,7 +42,7 @@ enum ModFileDownloadStarter {
                 // 到达时归属不一致 → 拒绝清理，避免误清新任务引用（跨任务交叉清理 UAF，
                 // 崩溃 #4 根因）。顺序无妨：onComplete 只是登记回调，下面才 task.start()。
                 ownerID = await MainActor.run { manager.start(task) }
-                task.onComplete { [pageType, settings, destFile, ownerID] in
+                task.onComplete { [pageType, destFile, ownerID] in
                     Task { @MainActor in
                         if pageType == .modpack, task.failureReason == nil {
                             // 整合包：zip 下载完成后还需解压安装（含 Minecraft/加载器/模组下载）

@@ -14,6 +14,15 @@ struct NoticeOverlay: View {
                     .padding(.top, 10)
                     .padding(.horizontal, 16)
                     .transition(.move(edge: .top).combined(with: .opacity))
+                    // ⚠️ 必须以 `notice.id` 作为身份。`NoticeCenter.current` 是单槽，`deliver()` 里
+                    // 是 `current = notice` **直接顶替**（不经过 nil）；若不给卡片绑定 id，
+                    // 新提示与旧提示落在视图树的同一位置、同一个类型 → 被判定为**同一个视图在更新**，
+                    // 于是 `.transition` 不触发、`NoticeCard.onAppear` 也不再执行
+                    // → 卡片的 `appeared` 一直是上次留下的 `true`。
+                    // 后果：一个会话里**只有第一条提示**有弹入动画（透明度 0→1 + 缩放 0.97→1 + 从顶部滑入），
+                    // 之后所有提示（连点下载失败的连续报错就是这样）都是「啪」地直接出现，动画全部失效。
+                    // 绑定 id 后每次换提示都是「旧视图移除 + 新视图插入」，transition 与 onAppear 均恢复。
+                    .id(notice.id)
             }
             Spacer(minLength: 0)
         }

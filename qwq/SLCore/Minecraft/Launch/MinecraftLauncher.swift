@@ -64,7 +64,8 @@ public class MinecraftLauncher {
         process.arguments!.append(contentsOf: buildJvmArguments(options))
         process.arguments!.append(instance.manifest.mainClass)
         process.arguments!.append(contentsOf: buildGameArguments(options))
-        let command = process.executableURL!.path + " " + process.arguments!.joined(separator: " ")
+        let executablePath = process.executableURL?.path ?? "<未指定 Java 路径>"
+        let command = executablePath + " " + (process.arguments ?? []).joined(separator: " ")
             .replacingOccurrences(of: #"--accessToken\s+\S+"#, with: "--accessToken 🎉", options: .regularExpression)
         debug(command)
         MinecraftCrashHandler.lastLaunchCommand = command

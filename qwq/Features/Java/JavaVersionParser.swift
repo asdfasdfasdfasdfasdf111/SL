@@ -55,18 +55,26 @@ enum JavaVersionParser {
             task.arguments = ["-version"]
             let pipe = Pipe()
             task.standardError = pipe
-            try? task.run()
-
             let sem = DispatchSemaphore(value: 0)
             let drain = DispatchSemaphore(value: 0)
             task.terminationHandler = { _ in sem.signal() }
             var data = Data()
+            do {
+                try task.run()
+            } catch {
+                // 启动失败（如二进制不可执行）：无法解析版本，直接返回 nil，避免进入等待而空等 10 秒
+                return nil
+            }
+            // 启动成功后再起读取线程：与 ProcessPool 同款写法，避免「未连接管道的 read 永久阻塞」泄漏线程
             DispatchQueue.global().async {
                 data = pipe.fileHandleForReading.readDataToEndOfFile()
                 drain.signal()
             }
             if sem.wait(timeout: .now() + 10) == .timedOut {
                 task.terminate()
+                Thread.sleep(forTimeInterval: 0.5)
+                if task.isRunning { kill(task.processIdentifier, SIGKILL) }
+                drain.wait()  // 回收后台读取线程，避免超时后线程泄漏
                 return nil
             }
             drain.wait()  // 进程已退出 ⇒ 读必完成，再安全使用 data
@@ -100,18 +108,31 @@ enum JavaVersionParser {
             fileTask.arguments = [javaBin]
             let filePipe = Pipe()
             fileTask.standardOutput = filePipe
-            try? fileTask.run()
             let fileSem = DispatchSemaphore(value: 0)
             let fileDrain = DispatchSemaphore(value: 0)
             fileTask.terminationHandler = { _ in fileSem.signal() }
             var fileData = Data()
+            do {
+                try fileTask.run()
+            } catch {
+                // 启动失败：架构探测不可用，保持 unknown 回落，直接返回（不进入等待，避免空等 10 秒）
+                let normalizedArch = arch == "x64" ? "x64" : (arch == "arm64" ? "aarch64" : arch)
+                return JavaInfo(path: javaBin, majorVersion: majorVersion, fullVersion: displayVersion, architecture: normalizedArch, vendor: vendor, isValid: true)
+            }
+            // 启动成功后再起读取线程：与 ProcessPool 同款写法，避免未连接管道的 read 永久阻塞
             DispatchQueue.global().async {
                 fileData = filePipe.fileHandleForReading.readDataToEndOfFile()
                 fileDrain.signal()
             }
-            // 超时视为探测失败：不使用 fileData，arch 保持 unknown 回落（原实现超时后仍继续用空数据）
-            if fileSem.wait(timeout: .now() + 10) != .timedOut {
-                fileDrain.wait()
+            // 超时视为探测失败：kill 进程并回收读取线程，arch 保持 unknown 回落（绝不继续使用未完成的缓冲）
+            let timedOut = fileSem.wait(timeout: .now() + 10) == .timedOut
+            if timedOut {
+                fileTask.terminate()
+                Thread.sleep(forTimeInterval: 0.5)
+                if fileTask.isRunning { kill(fileTask.processIdentifier, SIGKILL) }
+            }
+            fileDrain.wait()  // 无论是否超时均回收读取线程，避免线程泄漏
+            if !timedOut {
                 let fileOutput = String(data: fileData, encoding: .utf8) ?? ""
                 if fileOutput.contains("arm64") { arch = "arm64" }
                 else if fileOutput.contains("x86_64") { arch = "x86_64" }

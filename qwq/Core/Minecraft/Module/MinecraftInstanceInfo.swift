@@ -42,7 +42,10 @@ enum MinecraftLoaderKind: String, Sendable, Hashable, CaseIterable {
     /// 判定顺序与关键字与 `MinecraftInstance.getClientBrand(_:)` 完全一致
     /// （neoforged → fabric → forge → vanilla）。该方法**无法识别 quilt**，
     /// 因此文件扫描路径不会产出 `.quilt`；该分支只可能来自 `ClientBrand` 转换。
-    init(manifestText: String) {
+    ///
+    /// `nonisolated`：纯字符串判定，无任何共享状态，且调用方
+    /// `DirectoryScanningMinecraftRepository.scan` 明确在后台任务里跑（见该文件注释）。
+    nonisolated init(manifestText: String) {
         if manifestText.contains("neoforged") {
             self = .neoforge
         } else if manifestText.contains("fabric") {
@@ -82,7 +85,8 @@ enum MinecraftVersionKind: String, Sendable, Hashable, CaseIterable {
 
     /// 由清单 JSON 的 `type` 字段构造。
     /// 取值无法识别时回落 `.release`，与 `VersionType.parse` 的回落行为一致。
-    init(rawVersionType: String) {
+    /// `nonisolated`：纯字符串查表，无共享状态（同 `init(manifestText:)`）。
+    nonisolated init(rawVersionType: String) {
         self = MinecraftVersionKind(rawValue: rawVersionType) ?? .release
     }
 }

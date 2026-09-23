@@ -132,7 +132,7 @@ extension ForgeInstaller {
                     continue
                 }
             }
-            if let index = processor.args.firstIndex(of: "--task") {
+            if let index = processor.args.firstIndex(of: "--task"), index + 1 < processor.args.count {
                 log("正在执行安装器 \(processor.args[index + 1])")
             }
             try executeProcessor(processor)

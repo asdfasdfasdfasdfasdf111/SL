@@ -29,7 +29,16 @@ struct SkinLayerView: View {
     }
 
     /// 后台调用的静态裁剪：yOffset 兼容 64 高（带帽层）与 32 高（旧版无帽）两种贴图
-    static func cropped(imageData: Data, startX: CGFloat, startY: CGFloat) -> NSImage? {
+    ///
+    /// 显式 `nonisolated`：工程启用 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`，不标注会被
+    /// 推断为主 actor 隔离；调用方 `LaunchAvatarSkinViewModel.refreshSkinData()` 在
+    /// `Task.detached` 里同步调用本方法，隔离不匹配会产生
+    /// 「main actor-isolated static method called from outside of the actor」告警
+    ///（Swift 6 语言模式下是错误），且会让本方法承诺的「后台裁剪、主线程零 CoreImage」落空
+    /// —— 被隔离的方法无法在非隔离上下文里真正跑在后台。
+    /// 函数体只用 CIImage / CIContext / NSImage，不触碰任何主 actor 状态（纯计算），
+    /// 因此标注 nonisolated 是语义正确的，不是为了消除告警的妥协。
+    nonisolated static func cropped(imageData: Data, startX: CGFloat, startY: CGFloat) -> NSImage? {
         guard var ciImage = CIImage(data: imageData) else { return nil }
         let h = ciImage.extent.height
         let yOffset: CGFloat = (h == 32 || h == 64) ? (h == 32 ? 0 : 32) : 0

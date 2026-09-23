@@ -76,7 +76,7 @@ extension MinecraftInstaller {
         for case let fileURL as URL in enumerator {
             guard fileURL.pathExtension == "dylib" || fileURL.pathExtension == "jnilib",
                   let resourceValues = try? fileURL.resourceValues(forKeys: [.isDirectoryKey]),
-                  !resourceValues.isDirectory! else { continue }
+                  resourceValues.isDirectory != true else { continue }
             
             // 验证架构
             if fileURL.pathExtension == "dylib" {

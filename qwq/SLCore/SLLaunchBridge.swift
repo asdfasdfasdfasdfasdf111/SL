@@ -355,12 +355,21 @@ private func slLaunchInternal(
     let windowTask = Task.detached(priority: .utility) {
         var fired = false
         while !Task.isCancelled, !fired {
-            if let process = launcher.currentProcess, process.isRunning {
+            // `launcher.currentProcess` 是主 actor 隔离的可变属性（本工程默认隔离为 MainActor），
+            // 写入方在启动线程。原先在这个 detached 任务里直接读它，属于**跨线程读可变状态**，
+            // 编译器已就此告警（SLLaunchBridge.swift:358，Swift 6 语言模式下是错误）。
+            // 改为回主 actor 取一次值，只把 Sendable 的 pid / 运行标记带出隔离域；
+            // CGWindowList 的遍历与进程存活判断仍在后台线程执行，降频省 CPU 的意图不变。
+            let probe: (pid: Int32, running: Bool)? = await MainActor.run {
+                guard let process = launcher.currentProcess else { return nil }
+                return (process.processIdentifier, process.isRunning)
+            }
+            if let probe, probe.running {
                 let cgOptions = CGWindowListOption(arrayLiteral: .excludeDesktopElements, .optionOnScreenOnly)
                 if let windowInfoList = CGWindowListCopyWindowInfo(cgOptions, kCGNullWindowID) as? [[String: Any]] {
                     for info in windowInfoList {
                         if let windowPID = info["kCGWindowOwnerPID"] as? Int32,
-                           windowPID == process.processIdentifier {
+                           windowPID == probe.pid {
                             reportLaunchSuccess()
                             fired = true
                             break

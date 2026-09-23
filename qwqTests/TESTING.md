@@ -14,14 +14,15 @@
 - **运行**：Xcode 中 ⌘U；或 Terminal 执行 `./scripts/verify-test.sh run`（宿主型 XCTest 依赖 testmanagerd 的 XPC，需在脱离 AI 沙箱的 Terminal 里跑，详见 `REFACTOR_PLAN.md` §六）。
 - **接线记录**：见 `REFACTOR_PLAN.md` 第 15 项（`8172dbf`，TEST BUILD SUCCEEDED，14 文件 181 用例可编译）。
 
-测试文件清单（共 14 个，目录自动同步，无需手工加入 target）：
+测试文件清单（共 15 个，目录自动同步，无需手工加入 target）：
 
 | 文件 | 被测对象 | 备注 |
 | --- | --- | --- |
 | `JavaResolverTests.swift` | JavaRequirement / DefaultJavaResolver / JavaInstallation | 经 `JavaRepository` 协议注入 fake，无需真实扫描 |
 | `DownloadVerifierTests.swift` | CryptoKitDownloadVerifier | 临时目录造真实文件，不依赖网络 |
 | `DownloadMergerTests.swift` | DownloadMerger 契约 | 协议无默认实现，用测试替身验证契约 |
-| `DownloadStateTests.swift` | DownloadProgress / DownloadState / DownloadError | 纯值类型 |
+| `DownloadStateTests.swift` | DownloadProgress / DownloadState / DownloadError | 纯值类型，重点覆盖「大小未知」时的 NaN/除零边界 |
+| `InstallTaskProgressTests.swift` | InstallTask.getProgress / InstallTasks.getProgress | 纯值类型；同名的两个 `getProgress()` 边界口径必须一致（空任务组 0/0 → 曾显示字面量「nan %」，见 §4.15） |
 | `LaunchStateTests.swift` | LaunchState / LaunchError / LaunchResult | 纯值类型 |
 | `ModuleRegistryTests.swift` | SLModule / ModuleContext / ModuleRegistry / ModuleCapabilityKey | 用 `SLModule` 替身，不触发真实模块副作用 |
 | `JavaResolverBridgeTests.swift` | JavaResolverBridge | 只覆盖超时/边界；无 resolver 注入点，见缺口 §4.3 |
@@ -95,7 +96,7 @@ func preScan() {
 
 ### 2.2 实测结果
 
-- **退出码 0，0 个 error**（全部 14 个测试文件 + 全部生产源码）。
+- **退出码 0，0 个 error**（全部 15 个测试文件 + 全部生产源码）。
 - 48 条 warning，其中绝大多数是每个测试文件各一条
   `warning: file '...' is part of module 'qwq'; ignoring import`（单模块编译的预期产物）；
   其余是生产代码里既有的 warning（未使用的局部变量、Swift 6 并发警告等），与测试无关。
@@ -321,7 +322,7 @@ rm /tmp/sl-real-launch.enabled
 ## 五、必须遵守：用例一律写成 `async`（Xcode 26.2 隔离析构缺陷）
 
 **结论**：`qwqTests` 里**每个 `test…()` 方法都必须写成 `async`**。这不是为了等待什么，
-而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 14 个测试文件、181 个用例已全部统一。
+而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 15 个测试文件、186 个用例已全部统一。
 
 ### 现象
 

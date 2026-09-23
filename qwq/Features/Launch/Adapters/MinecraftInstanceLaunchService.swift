@@ -254,7 +254,14 @@ public final class MinecraftInstanceLaunchService: LaunchService, @unchecked Sen
     /// 故短暂轮询等待进程出现后再登记会话；超时只告警，不影响启动与终止
     /// （终止路径持有 launcher 引用，不依赖会话登记）。
     private func registerSessionWhenProcessStarts(sessionID: UUID, launcher: MinecraftLauncher, startedAt: Date) {
-        Task.detached(priority: .utility) { [weak self] in
+        // 必须跑在主 actor 上，而不是 `Task.detached`：
+        // `launcher.currentProcess` 是主 actor 隔离的可变属性（本工程默认隔离为 MainActor），
+        // 写入方在启动线程、而这里原本每 50ms 读一次 —— 属于**跨线程读可变状态**的真数据竞争，
+        // 编译器已就此告警（本文件 259:43，Swift 6 语言模式下是错误）。
+        // 本任务全程只有 `await Task.sleep` 与一次 await 登记，不占用主线程做重活，
+        // 故直接在主 actor 上跑是最小且正确的改法（原先标 detached 并未真正脱离主 actor：
+        // 它读的每一个值都是主 actor 隔离的）。
+        Task { @MainActor [weak self] in
             for _ in 0..<100 {
                 if let process = launcher.currentProcess, process.isRunning {
                     await self?.sessionStore?.register(

@@ -79,7 +79,11 @@ struct DirectoryScanningMinecraftRepository: MinecraftRepository {
 
     // MARK: - 目录扫描
 
-    private static func scan(root: URL) -> [MinecraftInstanceInfo] {
+    // 下面三个静态函数一律 `nonisolated`：它们只做文件系统 IO 与纯值类型转换，
+    // 且唯一的调用点就是上面那个 `Task.detached`（注释明写「放到 utility 优先级的 detached task」）。
+    // 若不标 nonisolated，按工程默认隔离会推断成 `@MainActor`，与「在后台跑」的设计意图正好相反，
+    // 编译器会报 `converting function value of type '@MainActor (URL) -> [MinecraftInstanceInfo]'`。
+    nonisolated private static func scan(root: URL) -> [MinecraftInstanceInfo] {
         let versionsURL = root.appendingPathComponent("versions", isDirectory: true)
         guard let entries = try? FileManager.default.contentsOfDirectory(
             at: versionsURL,
@@ -94,7 +98,7 @@ struct DirectoryScanningMinecraftRepository: MinecraftRepository {
             .map { snapshot(instanceDirectory: $0, root: root) }
     }
 
-    private static func snapshot(instanceDirectory: URL, root: URL) -> MinecraftInstanceInfo {
+    nonisolated private static func snapshot(instanceDirectory: URL, root: URL) -> MinecraftInstanceInfo {
         let name = instanceDirectory.lastPathComponent
         let manifest = parseManifest(at: instanceDirectory.appendingPathComponent("\(name).json"))
         return MinecraftInstanceInfo(
@@ -123,7 +127,7 @@ struct DirectoryScanningMinecraftRepository: MinecraftRepository {
     }
 
     /// 解析清单 JSON。文件不存在 / 内容损坏时各字段为 nil，由调用方回落。
-    private static func parseManifest(at url: URL) -> ParsedManifest {
+    nonisolated private static func parseManifest(at url: URL) -> ParsedManifest {
         guard let data = try? Data(contentsOf: url) else {
             return ParsedManifest(id: nil, type: nil, javaVersion: nil, text: nil)
         }

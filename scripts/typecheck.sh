@@ -15,6 +15,16 @@
 # （不只看数量）——故此后以 44 / 56 为准，且判定标准是「告警集合与基线一致」而非仅数量相等。
 # 提示：git archive 是只读操作；不要用 git stash 复核，沙箱内 stash 会留下 .git/index.lock。
 #
+# ⚠️ 口径一有个必须知道的**统计口径**：本脚本把 qwq 与 qwqTests 编进**同一个模块**，
+# 于是每个测试文件里的 `@testable import qwq` 都会产生一条
+#   `file 'XxxTests.swift' is part of module 'qwq'; ignoring import`
+# 这是**本脚本的产物，不是工程告警**（真实 xcodebuild 里 qwqTests 是独立 target，不存在该问题）。
+# 该告警每文件一条，且 swiftc 会把它打印成两行（第二行以 `|` 开头也含 "warning:"），
+# 所以 `grep -c 'warning:'` 的口径一下**每新增一个测试文件就 +2**。
+# 因此 2026-09-23 新增第 15 个测试文件后，基线为**口径一 46 / 口径二 56**（56 不变，
+# 因为口径二不编译 qwqTests）。判定仍以「逐条 diff 告警集合」为准；若口径一少了 2 的整数倍，
+# 先确认是不是测试文件数变了，再去查真实回归。
+#
 # ⚠️ 关键：本脚本额外开启 MemberImportVisibility。
 # 工程（Xcode 26 默认）启用了 SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY，
 # 而**裸 swiftc -typecheck 默认不开该特性**，于是会漏掉「成员来自未 import 的模块」这类错误

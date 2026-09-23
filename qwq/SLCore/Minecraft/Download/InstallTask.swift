@@ -172,6 +172,11 @@ public class InstallTasks: ObservableObject, Identifiable, Hashable, Equatable {
     }
     
     public func getProgress() -> Double {
+        // 空集合时下方除法的分子分母同为 0 → 0/0 = NaN，且 NaN 会穿过所有比较运算
+        // （`nan < 0` 为假），最终被 `String(format: "%.1f %%")` 原样打印成字面量
+        // 「nan %」。下载详情页的总进度就是这么显示出 NaN 的。
+        // 空集合的语义是「无进度」→ 0，与单任务版 getProgress() 的守卫保持同一口径。
+        guard !tasks.isEmpty else { return 0 }
         var progress: Double = 0
         for task in tasks.values {
             progress += task.getProgress()

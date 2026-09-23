@@ -102,7 +102,6 @@ public enum LaunchFix {
         
         // 4) 下载缺失项（NetManager 引擎：多源回退 + 分片 + 重试 + 校验）
         if !items.isEmpty {
-            let total = Double(items.count)
             try await MultiFileDownloader(items: items, concurrentLimit: 32) { progress, _ in
                 onProgress(progress)
             }.start()
@@ -126,9 +125,8 @@ public enum LaunchFix {
                         }
                     }
                     if !assetItems.isEmpty {
-                        let total = Double(assetItems.count)
-                    try await MultiFileDownloader(items: assetItems, concurrentLimit: 32) { progress, _ in
-                        onProgress(progress)
+                        try await MultiFileDownloader(items: assetItems, concurrentLimit: 32) { progress, _ in
+                            onProgress(progress)
                         }.start()
                     }
                 }

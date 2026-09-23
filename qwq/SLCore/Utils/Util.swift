@@ -22,7 +22,8 @@ public class Util {
             // MANIFEST.MF 可能非 UTF-8（任意 forge jar 来源），强解包会崩；失败时按行解码兜底
             let manifest = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
 
-            let regex = try NSRegularExpression(pattern: "(?m)^Main-Class:\\s*([^\\r\\n]+)")
+            // 复用文件顶部静态预编译的 mainClassRegex，避免每次调用都重新编译（原实现在方法体内重复编译）
+            guard let regex = Self.mainClassRegex else { return nil }
             if let match = regex.firstMatch(in: manifest, range: NSRange(manifest.startIndex..., in: manifest)),
                match.numberOfRanges > 1,
                let mainRange = Range(match.range(at: 1), in: manifest) {
@@ -36,24 +37,21 @@ public class Util {
     }
     
     public static func parse(mavenCoordinate: String) -> MavenCoordinate {
-        let pattern = #"^([^:]+):([^:]+):([^:@]+)(?::([^@]+))?(?:@(.+))?$"#
-        // 旧实现强解包：外部 JSON（版本清单/Forge 安装配置）中任何畸形库名都会直接崩溃。
-        // 改为安全解析：匹配失败时把整串当 groupId 兜底返回，避免启动器崩溃。
-        guard let r = mavenCoordinate.range(of: pattern, options: .regularExpression) else {
+        // 复用文件顶部静态预编译的 mavenCoordinateRegex（mavenCoordinatePattern 仅用于构造它），
+        // 避免每次调用都重新编译正则，并消除原实现「先 range(of:) 再对子串编译正则二次匹配」的冗余。
+        // 匹配失败（畸形库名）时按整串兜底返回，避免启动器崩溃（语义与原实现一致）。
+        guard let regex = Self.mavenCoordinateRegex else {
+            err("无法编译 Maven 坐标正则")
+            return MavenCoordinate(mavenCoordinate, "", "", classifier: nil, packaging: nil)
+        }
+        let nsrange = NSRange(mavenCoordinate.startIndex..., in: mavenCoordinate)
+        guard let result = regex.firstMatch(in: mavenCoordinate, options: [], range: nsrange) else {
             err("无法解析 Maven 坐标: \(mavenCoordinate)")
             return MavenCoordinate(mavenCoordinate, "", "", classifier: nil, packaging: nil)
         }
-        let match = String(mavenCoordinate[r])
-        guard let regex = try? NSRegularExpression(pattern: pattern) else {
-            return MavenCoordinate(mavenCoordinate, "", "", classifier: nil, packaging: nil)
-        }
-        let nsrange = NSRange(match.startIndex..<match.endIndex, in: match)
-        guard let result = regex.firstMatch(in: match, options: [], range: nsrange) else {
-            return MavenCoordinate(mavenCoordinate, "", "", classifier: nil, packaging: nil)
-        }
         func group(_ i: Int) -> String? {
-            guard let range = Range(result.range(at: i), in: match) else { return nil }
-            return String(match[range])
+            guard let range = Range(result.range(at: i), in: mavenCoordinate) else { return nil }
+            return String(mavenCoordinate[range])
         }
         // 三组必需捕获（groupId/artifactId/version）缺失时用整串兜底，剩余分组可能为 nil
         return MavenCoordinate(

@@ -98,9 +98,12 @@ public class Requests {
                 case .urlEncoded:
                     request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
                     if method == "GET" {
-                        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
-                        components.queryItems = body.map { URLQueryItem(name: $0.key, value: String(describing: $0.value)) }
-                        request.url = components.url
+                        // URLComponents(url:resolvingAgainstBaseURL:) 对部分非法/特殊 URL 会返回 nil，
+                        // 原实现强制解包会在那种输入下崩溃；此处改为安全绑定，解析失败则保留原 URL（不追加 query）。
+                        if var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+                            components.queryItems = body.map { URLQueryItem(name: $0.key, value: String(describing: $0.value)) }
+                            request.url = components.url
+                        }
                     } else {
                         let query = body.map { key, value in
                             "\(key)=\(String(describing: value))"

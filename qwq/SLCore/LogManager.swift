@@ -9,21 +9,9 @@ import Foundation
 import SwiftUI
 import Combine
 
-class LogLine: Identifiable {
-    let id: UUID = UUID()
-    let string: String
-    
-    init(_ string: String) {
-        self.string = string
-    }
-}
-
 final class LogStore {
     let dateFormatter = DateFormatter()
     static let shared = LogStore()
-    private var logs: [String] = []
-    var logLines: [LogLine] = []
-    private let maxCapacity = 10_000
     private let writeImmediately = true
     
     private let queue = DispatchQueue(label: "io.github.asdfasdfasdfasdfasdf111.SL.LogStoreQueue")
@@ -40,47 +28,51 @@ final class LogStore {
         // 并发调用会同时读写同一个 formatter 实例（未定义行为）。
         queue.async {
             let stamp = self.dateFormatter.string(from: Date())
-            self.appendLocked(
-                "\(stamp) [\(level)] \(caller): \(message)",
-                LogLine("[\(level)] \(caller): \(message)")
-            )
+            self.appendLocked("\(stamp) [\(level)] \(caller): \(message)")
         }
     }
     
-    func appendRaw(_ message: String, _ line: LogLine? = nil, write: Bool = true) {
+    func appendRaw(_ message: String, write: Bool = true) {
         queue.async {
-            self.appendLocked(message, line, write: write)
+            self.appendLocked(message, write: write)
         }
     }
     
     /// 真正的写入实现。**只在 `queue` 上调用**（调用方须已在串行队列内），故无需再加锁。
-    private func appendLocked(_ message: String, _ line: LogLine?, write: Bool = true) {
-        if logs.count >= maxCapacity {
-            logs.removeFirst(1000)
-        }
-        if logLines.count >= 200 {
-            logLines.removeFirst(100)
-        }
-        logs.append(message)
-        logLines.append(line ?? LogLine(message))
+    private func appendLocked(_ message: String, write: Bool = true) {
         if writeImmediately && write {
             appendToDisk(message + "\n")
         }
         print(message)
     }
     
+    /// 追加一行到落盘日志文件。
+    ///
+    /// **失败路径不得回灌日志系统**（本方法曾经调用 `err(...)`，已修）：
+    /// `appendLocked` 每写一行都会进入本方法，而 `err` 的调用链是
+    /// `err → LogManager.err → LogStore.append → queue.async → appendLocked → appendToDisk`。
+    /// 一旦写盘**持续**失败（磁盘写满 / 日志目录不可写 / `logURL` 指向目录），
+    /// 这条链就变成自反馈循环：队列永不停歇地重试失败写盘、每次都再投递一条错误日志，
+    /// CPU 单核打满、stdout 被刷屏，且错误提示本身永远不可能落盘（因为它也要写盘）。
+    /// 故失败时只做一次 `print`（不落盘、不进日志系统），循环被切断。
     func appendToDisk(_ content: String, _ callback: ((Bool) -> Void)? = nil) {
         do {
             try FileManager.writeLog(content)
             callback?(true)
         } catch {
-            err("日志保存失败: \(error.localizedDescription)")
+            print("[LogStore] 日志保存失败: \(error.localizedDescription)")
             callback?(false)
         }
     }
     
+    /// 清空落盘日志文件。
+    /// **必须投递到 `queue`**：`appendLocked` 正在写同一个文件，若在调用方线程直接
+    /// `removeItem`，会与队列上的 `FileHandle` 写入并发（删掉另一个线程已打开的 inode），
+    /// 造成写入落空或句柄错误。投递到同一串行队列后，删除与写入天然互斥。
     func clear() {
-        try? FileManager.default.removeItem(at: SharedConstants.shared.logURL)
+        queue.async {
+            try? FileManager.default.removeItem(at: SharedConstants.shared.logURL)
+        }
     }
 }
 

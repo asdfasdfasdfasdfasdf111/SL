@@ -86,16 +86,11 @@ extension NetManager {
             }
         }
 
-        // 创建分片临时文件（目录可能被系统/用户清理，下载前再次确保存在）
-        try FileManager.default.createDirectory(
-            at: SharedConstants.shared.temperatureURL,
-            withIntermediateDirectories: true
-        )
-        let tempURL = SharedConstants.shared.temperatureURL.appendingPathComponent(UUID().uuidString + ".tmp")
-        guard FileManager.default.createFile(atPath: tempURL.path, contents: nil) else {
-            throw NetDownloadError.fileFailed("无法创建临时文件")
-        }
-        await manager.sliceSetTemp(fileID: fileID, sliceID: sliceID, tempURL: tempURL)
+        // 在 actor 内原子地创建并登记分片临时文件：磁盘 createFile 与 slice.tempURL 的赋值
+        // 同处一个 actor 方法，消除了原实现「detached 任务先在磁盘 createFile 成功、再 await sliceSetTemp
+        // 注册前，记录已被 download / downloadAll 收尾的 removeAll 移除」的竞态——
+        // 该竞态会让临时文件既不在任何 record 的 slices 中、也不被 cleanupTemps 清理，成为孤儿文件（无界增长）。
+        let tempURL = try await manager.sliceCreateTemp(fileID: fileID, sliceID: sliceID)
         let handle = try FileHandle(forWritingTo: tempURL)
         defer { try? handle.close() }
 
@@ -251,9 +246,20 @@ extension NetManager {
         find(fileID)?.fileSize = -1
     }
 
-    func sliceSetTemp(fileID: UUID, sliceID: UUID, tempURL: URL) {
-        guard let record = find(fileID), let slice = record.slice(sliceID) else { return }
+    func sliceCreateTemp(fileID: UUID, sliceID: UUID) throws -> URL {
+        guard let record = find(fileID), let slice = record.slice(sliceID) else {
+            throw NetDownloadError.fileFailed("下载记录已不存在，无法创建分片临时文件")
+        }
+        try FileManager.default.createDirectory(
+            at: SharedConstants.shared.temperatureURL,
+            withIntermediateDirectories: true
+        )
+        let tempURL = SharedConstants.shared.temperatureURL.appendingPathComponent(UUID().uuidString + ".tmp")
+        guard FileManager.default.createFile(atPath: tempURL.path, contents: nil) else {
+            throw NetDownloadError.fileFailed("无法创建临时文件")
+        }
         slice.tempURL = tempURL
+        return tempURL
     }
 
     func sliceAppend(fileID: UUID, sliceID: UUID, bytes: Int) {

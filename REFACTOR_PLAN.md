@@ -17,7 +17,8 @@
 | 2 真实 | `./scripts/verify-build.sh` | 真实 `xcodebuild build`，最终判定 | **每拆一个文件就跑一次** |
 | 3 测试 | `./scripts/verify-test.sh [run]` | 编译（→ 运行）单元测试 | 改动公共逻辑后 |
 
-判定标准：`typecheck` 两口径 0 error 且告警数不超过基线（口径一 44 / 口径二 56）；
+判定标准：`typecheck` 两口径 0 error 且告警**集合**与基线逐条一致（口径一 46 / 口径二 56 —— 口径一含
+每个测试文件各一条的 `ignoring import` 脚本产物，每加一个测试文件 +2，见 `scripts/typecheck.sh` 头注释）；
 `verify-build.sh` 出现 `BUILD SUCCEEDED` 且 `error:` 计数为 0。
 并行任务各自用 `SL_DERIVED=/tmp/SL-DD-<任务名>` 指定独立派生目录，避免互相破坏中间产物。
 

@@ -16,12 +16,12 @@ struct GameSidebarView: View {
             sectionHeader(.game, expanded: true)
 
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(GameSubCategory.allCases.enumerated()), id: \.element.id) { i, sub in
-                    subItem(sub, idx: 1 + i)
+                ForEach(GameSubCategory.allCases) { sub in
+                    subItem(sub)
                 }
             }
 
-            ForEach(Array(GameSidebarSection.allCases.dropFirst().enumerated()), id: \.element.id) { i, section in
+            ForEach(GameSidebarSection.allCases.dropFirst()) { section in
                 sectionHeader(section, expanded: false)
             }
 
@@ -70,7 +70,7 @@ struct GameSidebarView: View {
         .buttonStyle(.plain)
     }
 
-    private func subItem(_ sub: GameSubCategory, idx: Int) -> some View {
+    private func subItem(_ sub: GameSubCategory) -> some View {
         Button(action: { onSelect(.game, sub) }) {
             HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 1.5)

@@ -68,7 +68,11 @@ enum OfflineSkinService {
                         // 必须先落盘再指向：否则 avatarImageURL 指向从未写入的文件（悬空指针）
                         DispatchQueue.main.async {
                             settings.avatarImageURL = avatarDestURL
-                            settings.skinImageURL = skinDestURL
+                            // 仅当皮肤原图落盘成功才更新 skinImageURL：落盘失败（如磁盘瞬时繁忙）
+                            // 时若直接赋 nil，会把用户既有皮肤清空、与已更新的头像产生不一致。
+                            if let skinDestURL {
+                                settings.skinImageURL = skinDestURL
+                            }
                         }
                         // 保存皮肤到持久化目录（供 authlib-injector 使用）
                         // 落盘经 Skin 服务层：DefaultSkinService.saveSkin 内部即委托 MinecraftSkinManager，抛错语义不变
@@ -180,35 +184,32 @@ enum OfflineSkinService {
             }
             return
         }
-        do {
-            let gameDirURL = URL(fileURLWithPath: settings.selectedGameRoot.isEmpty ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "") : settings.selectedGameRoot)
-            if let skinURL = SkinExtractor.extractFromGameJar(version: settings.selectedMinecraftVersion, gameDir: gameDirURL) {
-                // 确定性命名（按版本）：同版本重复提取直接覆盖，不再堆 UUID 孤儿文件
-                let avatarName = "game_avatar_\(settings.selectedMinecraftVersion).png"
-                if let avatarURL = saveAvatar(from: skinURL, fileName: avatarName) {
-                    settings.avatarImageURL = avatarURL
-                } else if let builtinURL = Bundle.main.url(forResource: "stf", withExtension: "png") {
-                    settings.avatarImageURL = builtinURL
-                }
-                // 保存皮肤原图
-                if let skinData = try? Data(contentsOf: skinURL) {
-                    if let dest = saveSkinImage(skinData) {
-                        settings.skinImageURL = dest
-                    } else {
-                        settings.skinImageURL = skinURL
-                    }
+        // 原实现把这段包在 `do { } catch { }` 里，但 do 块内**没有任何会 throw 的调用**
+        // （extractFromGameJar / saveAvatar / saveSkinImage 都是返回可选值，Data 读取走 try?），
+        // 编译器明确告警 `'catch' block is unreachable because no errors are thrown in 'do' block`。
+        // 空壳 catch 的语义等价于「什么都不做」，故直接去掉包装，行为不变。
+        let gameDirURL = URL(fileURLWithPath: settings.selectedGameRoot.isEmpty ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "") : settings.selectedGameRoot)
+        if let skinURL = SkinExtractor.extractFromGameJar(version: settings.selectedMinecraftVersion, gameDir: gameDirURL) {
+            // 确定性命名（按版本）：同版本重复提取直接覆盖，不再堆 UUID 孤儿文件
+            let avatarName = "game_avatar_\(settings.selectedMinecraftVersion).png"
+            if let avatarURL = saveAvatar(from: skinURL, fileName: avatarName) {
+                settings.avatarImageURL = avatarURL
+            } else if let builtinURL = Bundle.main.url(forResource: "stf", withExtension: "png") {
+                settings.avatarImageURL = builtinURL
+            }
+            // 保存皮肤原图
+            if let skinData = try? Data(contentsOf: skinURL) {
+                if let dest = saveSkinImage(skinData) {
+                    settings.skinImageURL = dest
                 } else {
                     settings.skinImageURL = skinURL
                 }
-            } else if let builtinURL = Bundle.main.url(forResource: "stf", withExtension: "png") {
-                settings.avatarImageURL = builtinURL
-                settings.skinImageURL = builtinURL
+            } else {
+                settings.skinImageURL = skinURL
             }
-        } catch {
-            if let builtinURL = Bundle.main.url(forResource: "stf", withExtension: "png") {
-                settings.avatarImageURL = builtinURL
-                settings.skinImageURL = builtinURL
-            }
+        } else if let builtinURL = Bundle.main.url(forResource: "stf", withExtension: "png") {
+            settings.avatarImageURL = builtinURL
+            settings.skinImageURL = builtinURL
         }
     }
 }

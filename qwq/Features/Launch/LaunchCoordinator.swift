@@ -35,7 +35,6 @@ enum LaunchCoordinator {
         // 中文等字符会在服务端抛 "Invalid characters in username" 并断开连接（表现为「连接中断」）。
         // 启动前给明确警告，避免用户误以为启动器异常；保留「仍要启动」以兼容 1.18 之前的版本。
         if finalUsername.range(of: "^[0-9A-Za-z_]*$", options: .regularExpression) == nil {
-            sessionManager.resetProgress()
             let alert = NSAlert()
             alert.messageText = "用户名可能无法进入游戏"
             alert.informativeText = "「\(finalUsername)」含非法字符，1.18+ 服务端会拒绝（连接中断），仅 1.18 前可用。仍要启动？"
@@ -43,8 +42,17 @@ enum LaunchCoordinator {
             alert.addButton(withTitle: "仍要启动")
             alert.addButton(withTitle: "取消")
             if alert.runModal() == .alertSecondButtonReturn {
+                // 用户取消：复位进度并把相位拨回 idle，按钮恢复「启动游戏」。
+                // 注意：绝不能在弹出确认框【前】调 resetProgress()——那会把 isLaunching 清成 false，
+                // 导致下方「仍要启动」分支继续往下走时按钮重新可点、可二次并发启动（并发启动两个游戏）。
+                sessionManager.resetProgress()
+                withAnimation(.easeOut(duration: 0.3)) {
+                    sessionManager.launchPhase = .idle
+                }
                 return
             }
+            // 仍要启动：保持 isLaunching=true 与 preparing 相位，继续进入皮肤准备与启动；
+            // 期间启动按钮保持禁用（防连点二次启动），与正常流程一致。
         }
         // 游戏根目录：取值口径与桥接层 `slLaunchInternal` 的 `resolvedGameDir` 完全一致
         // （selectedGameRoot 优先，为空则取当前实例目录）。同一路径随后也用于皮肤包与 options.txt 写入。

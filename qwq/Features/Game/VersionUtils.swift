@@ -1,38 +1,11 @@
 import Foundation
 
 /// 参考 PCL.Mac MinecraftInstance.getMinJavaVersion
-/// 使用版本号比较而非字符串前缀匹配
+/// 统一委托 `JavaRequirement` 的权威推导（数字逐段比较 + 快照年份映射），
+/// 不再自行用字符串字典序比较版本号——旧实现 "1.9.0" 字典序大于 "1.21.0"
+/// （位置 3 的 '9' > '2'）会把 1.8/1.9 误判为需要 Java 21、把 1.20.5 误判为需要 Java 17。
 func requiredJavaVersionForMinecraft(_ version: String) -> Int {
-    let normalized = normalizeVersion(version)
-    // 24w14a (1.21) 起需要 Java 21
-    if normalized >= normalizeVersion("1.21") { return 21 }
-    // 1.18-pre2 起需要 Java 17
-    if normalized >= normalizeVersion("1.18") { return 17 }
-    // 21w19a 起需要 Java 16
-    if normalized >= normalizeVersion("1.17") { return 16 }
-    return 8
-}
-
-/// 将版本号归一化用于比较：去掉快照前缀，补全为三段式版本号
-private func normalizeVersion(_ version: String) -> String {
-    var v = version.lowercased()
-    // 去掉快照前缀如 "24w14a" 这类直接返回大版本映射
-    if v.range(of: #"^\d{2}w\d{2}[a-z]$"#, options: .regularExpression) != nil {
-        // 快照版本，根据年份估算
-        if let yearStr = v.split(whereSeparator: { $0 == "w" }).first,
-           let year = Int(yearStr), year >= 24 { return "1.21" }
-        if let yearStr = v.split(whereSeparator: { $0 == "w" }).first,
-           let year = Int(yearStr), year >= 23 { return "1.20" }
-        return "1.19"
-    }
-    // 去掉 pre/rc 后缀
-    if let range = v.range(of: "-pre") { v = String(v[..<range.lowerBound]) }
-    if let range = v.range(of: "-rc") { v = String(v[..<range.lowerBound]) }
-    // 补全为三段式
-    let parts = v.split(separator: ".").map(String.init)
-    if parts.count >= 3 { return v }
-    if parts.count == 2 { return "\(v).0" }
-    return "\(v).0.0"
+    JavaRequirement.minimumMajor(forMinecraftVersion: version)
 }
 
 struct MinecraftVersionManager {

@@ -47,6 +47,9 @@ final class TranslationService {
     /// `translateText` 中访问（不受 actor 保护，正是锁的职责所在）。
     private nonisolated let lock = NSLock()
     private nonisolated(unsafe) var inFlight: Set<String> = []
+    /// 同一 projectId 正在翻译时，后续并发请求登记的等待者；翻译完成（owner）统一 resume，
+    /// 让重复请求复用同一结果而非拿未翻译原文（详见 `translateText` 步骤 4）。
+    private nonisolated(unsafe) var waiters: [String: [CheckedContinuation<String, Error>]] = [:]
 
     private init() {
         cache = AppContext.shared.cacheManager
@@ -85,24 +88,67 @@ final class TranslationService {
         }
 
         // 4. 去重（检查 + 登记在一次持锁内完成，保持原子性）
-        let isDuplicated: Bool = lock.withLock {
+        //    同一 projectId 已在翻译中 → 复用其结果，不再重复发网络请求；
+        //    复用方式：登记一个 continuation，待真正翻译完成（owner）统一 resume，
+        //    而非旧实现那样 sleep 500ms 后拿不到就返回未翻译原文
+        //    （旧实现会让重复者把「未翻译原文」当作「已翻译」永久写入 UI：
+        //     列表页与详情页同显一个词时，详情页若在列表翻译未完成期间打开，
+        //     就会拿到原文并写回，副标题永久停在英文）。
+        let isOwner: Bool = lock.withLock {
             if inFlight.contains(projectId) {
-                return true
+                return false
             } else {
                 inFlight.insert(projectId)
-                return false
+                return true
             }
         }
-        if isDuplicated {
-            try? await Task.sleep(nanoseconds: 500_000_000)
-            if let cached = cache.textGet("tr_\(projectId)"), !cached.isEmpty, ChineseText.contains(cached) { return cached }
-            return text
+        if !isOwner {
+            return try await withCheckedThrowingContinuation { continuation in
+                // ⚠️ 这里**必须**再复查一次 `inFlight`，且复查与登记的先后关系要与 owner 的收尾
+                // 严格互斥（同一次持锁内完成）。否则存在丢唤醒（lost wakeup）窗口：
+                // 上方的快速判定释放锁之后、本行登记之前，owner 完全可能已经收尾
+                //（`inFlight.remove` + `waiters.removeValue`）—— 那一刻 `waiters[projectId]` 还是空的，
+                // owner 谁都 resume 不到、并且把该键整个移除；本 continuation 随后才被登记进去，
+                // 结果就是**永远不会有人 resume 它**：该 Task 永久挂起、卡片停在「翻译中」，
+                // 且 continuation 被字典长期持有造成泄漏。这个窗口只有几十纳秒，但并发上限 24、
+                // 卡片逐个触发，属于「低概率但必然踩到」的竞态，后果比原缺陷（拿到原文）更严重。
+                // 复查后只剩两种状态，各自都有确定出路：
+                //   a) inFlight 仍有本 id → owner 仍在跑：登记等待者，owner 收尾时按锁序**必定**
+                //      能看到并 resume 本 continuation；
+                //   b) inFlight 已无本 id → owner 已收尾：直接取它的结果，不登记。
+                let ownerAlreadyFinished: Bool = lock.withLock { () -> Bool in
+                    if inFlight.contains(projectId) {
+                        var list = waiters[projectId] ?? []
+                        list.append(continuation)
+                        waiters[projectId] = list
+                        return false
+                    }
+                    return true
+                }
+                if ownerAlreadyFinished {
+                    // owner 的成功分支一律「先写缓存、后摘除 inFlight」（写缓存在 5a–5d，
+                    // 摘除在函数返回时执行的 defer 里），锁提供了 happens-before，
+                    // 故此处读缓存必定能看到 owner 刚落下的结果；owner 全部失败时缓存无值 →
+                    // 返回原文，与 owner 自身的返回值（5e）一致。
+                    let cached = cache.textGet("tr_\(projectId)")
+                    var resolved = text
+                    if let cached, !cached.isEmpty, ChineseText.contains(cached) {
+                        resolved = cached
+                    }
+                    continuation.resume(returning: resolved)
+                }
+            }
         }
+
+        // owner 收尾：摘除 inFlight，并把等待者（若有）用最终译文一次性 resume
+        var finalResult: String = text
         defer {
-            // 闭包单表达式 `remove` 会返回被移除元素作为 withLock 的结果；
-            // 已删除的兼容层辅助函数 `withLockCompat` 带 @discardableResult，系统原生 `NSLock.withLock` 没有，
-            // 故显式 `_ =`，避免 #no-usage 告警
-            _ = lock.withLock { inFlight.remove(projectId) }
+            var toResume: [CheckedContinuation<String, Error>] = []
+            lock.withLock {
+                inFlight.remove(projectId)
+                toResume = waiters.removeValue(forKey: projectId) ?? []
+            }
+            for w in toResume { w.resume(returning: finalResult) }
         }
 
         // 4a. 全局并发限制（最多 24 个同时翻译）
@@ -115,32 +161,27 @@ final class TranslationService {
         // 5a. Modrinth 返回了中文 → 直接用
         if let result = modrinthDesc, !result.isEmpty, ChineseText.contains(result) {
             cache.setText(result, forKey: "tr_\(projectId)")
-            return result
+            finalResult = result
         }
-
         // 5b. 镜像返回了中文 → 直接用
-        if let result = mirrorTranslated, !result.isEmpty, ChineseText.contains(result) {
+        else if let result = mirrorTranslated, !result.isEmpty, ChineseText.contains(result) {
             cache.setText(result, forKey: "tr_\(projectId)")
-            return result
+            finalResult = result
         }
-
         // 5c. Modrinth 返回了英文原文 → 用 MyMemory 在线翻译
-        if let englishText = modrinthDesc, !englishText.isEmpty, !ChineseText.contains(englishText) {
-            if let translated = await TranslationSourceFetcher.fetchMyMemoryTranslation(text: englishText, session: session) {
-                cache.setText(translated, forKey: "tr_\(projectId)")
-                return translated
-            }
+        else if let englishText = modrinthDesc, !englishText.isEmpty, !ChineseText.contains(englishText),
+                let translated = await TranslationSourceFetcher.fetchMyMemoryTranslation(text: englishText, session: session) {
+            cache.setText(translated, forKey: "tr_\(projectId)")
+            finalResult = translated
         }
-
         // 5d. 用输入的原始 text 最后尝试 MyMemory
-        if !text.isEmpty, !ChineseText.contains(text) {
-            if let translated = await TranslationSourceFetcher.fetchMyMemoryTranslation(text: text, session: session) {
-                cache.setText(translated, forKey: "tr_\(projectId)")
-                return translated
-            }
+        else if !text.isEmpty, !ChineseText.contains(text),
+                let translated = await TranslationSourceFetcher.fetchMyMemoryTranslation(text: text, session: session) {
+            cache.setText(translated, forKey: "tr_\(projectId)")
+            finalResult = translated
         }
-
-        return text
+        // 5e. 全部失败 → 返回原文（调用方仅在结果非空且 isActive 时才写回 UI，不会误标「已翻译」）
+        return finalResult
     }
 
     /// 检查缓存 — 仅返回含中文的缓存
