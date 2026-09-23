@@ -16,7 +16,7 @@ public protocol DownloadSource {
     func getLibraryURL(_ library: ClientManifest.Library) -> URL?
     /// 散列资源文件（assets objects）下载 URL。默认不提供；官方源与镜像源各自实现。
     /// 官方：https://resources.download.minecraft.net/<hash前2位>/<hash>
-    /// 镜像：https://bmclapi2.bangbang93.com/assets/<hash前2位>/<hash>（PCL2 同款规则）
+    /// 镜像：https://bmclapi2.bangbang93.com/assets/<hash前2位>/<hash>（与上游 PCL2 一致的规则）
     func getAssetURL(hash: String) -> URL?
 }
 
@@ -89,7 +89,7 @@ public class BMCLAPIDownloadSource: DownloadSource {
     
     public func getAssetURL(hash: String) -> URL? {
         guard hash.count >= 2 else { return nil }
-        // PCL2 同款规则：resources.download.minecraft.net → bmclapi2.bangbang93.com/assets
+        // 与上游 PCL2 一致的规则：resources.download.minecraft.net → bmclapi2.bangbang93.com/assets
         let prefix = String(hash.prefix(2))
         return URL(string: "https://bmclapi2.bangbang93.com/assets/\(prefix)/\(hash)")
     }

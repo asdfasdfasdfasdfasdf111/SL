@@ -3,7 +3,7 @@
 //  启动用例层：对外唯一入口
 //
 //  目标状态：UI（`LaunchCoordinator`）与兼容桥接（`SLLaunchBridge`）都只调用本协议的同一个实现，
-//  从而消除 `slLaunchInternal` 与 `MinecraftInstance.launch()` 两套并存的启动流程。
+//  从而收敛到 `slLaunchInternal` 单一启动流程（原 `MinecraftInstance.launch(_:)` 流程 A 已删除）。
 //  迁移步骤见同目录 README.md。
 //
 

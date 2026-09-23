@@ -2,7 +2,7 @@
 //  NetScheduling.swift
 //  SL启动器
 //
-//  NetManager 的全局调度循环（对标 PCL2 StartManager 的 40ms tick）：
+//  NetManager 的全局调度循环（对标上游 PCL2 的 StartManager 的 40ms tick）：
 //  速度统计、触发条件判定、按 tick 逐文件开片/分片。
 //  自 NetDownloader.swift 按职责物理拆出，原第 368-437 行，逻辑、常量与注释均未改动。
 //  调度周期由 Config.tickIntervalNs（40ms）决定，分片预算由 Config.maxSlices 决定。
@@ -11,7 +11,7 @@
 import Foundation
 
 extension NetManager {
-    // MARK: - 调度循环（PCL2 StartManager，40ms tick）
+    // MARK: - 调度循环（对标上游 PCL2 的 StartManager，40ms tick）
 
     func startTickerIfNeeded() {
         guard tickTask == nil else { return }
@@ -53,7 +53,7 @@ extension NetManager {
             lastSpeedTime = now
         }
 
-        // 触发条件：速度低于下限，或存在等待中的文件，或存在待续传的失败分片（PCL2 Speed < NetTaskSpeedLimitLow OrElse FileRemain > NetTaskThreadLimit）
+        // 触发条件：速度低于下限，或存在等待中的文件，或存在待续传的失败分片（参照上游 PCL2：Speed < NetTaskSpeedLimitLow OrElse FileRemain > NetTaskThreadLimit）
         let hasFailedSlice = records.contains { record in
             record.slices.contains { $0.state == .failed && $0.undone(of: record) > 0 }
         }
@@ -65,7 +65,7 @@ extension NetManager {
         var budget = max(0, config.maxSlices - activeSlices)
         guard budget > 0 else { return }
 
-        // 优先给等待中的文件开首线程，再给下载中的文件分割（PCL2 FilesWaiting → FilesLoading）
+        // 优先给等待中的文件开首线程，再给下载中的文件分割（参照上游 PCL2：FilesWaiting → FilesLoading）
         for record in records where record.state == .waiting {
             guard budget > 0 else { break }
             if tryBeginSlice(record) {

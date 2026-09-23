@@ -84,7 +84,7 @@ struct RootOverlays: View {
                     .zIndex(150)
             }
 
-            // 圆形毛玻璃下载按钮：全局顶层（对标 PCL.Mac installTaskButtonOverlay），
+            // 圆形毛玻璃下载按钮：全局顶层，
             // 任何页面可见可点；点击 toggle 进/出详情页（无返回键，再次点击回到刚才的页面）。
             // zIndex(40) 高于详情页(30)：详情页打开时按钮仍可见可点。
             if navigation.isDownloadCircleVisible {

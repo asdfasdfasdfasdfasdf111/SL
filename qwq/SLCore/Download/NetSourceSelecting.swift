@@ -34,7 +34,7 @@ extension NetManager {
         return nil
     }
 
-    /// 连接层错误判定：此类错误下同源重试无意义（PCL2 的源失败计数用于瞬时错误，这里单独提速）
+    /// 连接层错误判定：此类错误下同源重试无意义（参照上游 PCL2：其源失败计数用于瞬时错误，这里单独提速）
     static func isConnectionLevelError(_ error: Error) -> Bool {
         guard let urlError = error as? URLError else { return false }
         switch urlError.code {

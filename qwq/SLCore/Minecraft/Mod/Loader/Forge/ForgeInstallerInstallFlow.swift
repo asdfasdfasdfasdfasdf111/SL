@@ -170,7 +170,7 @@ extension ForgeInstaller {
         // 若 inheritsFrom 对应的版本 JSON 不存在，复制
         let baseManifestURL = minecraftDirectory.versionsURL.appendingPathComponent(version.displayName).appendingPathComponent("\(version.displayName).json")
         if !FileManager.default.fileExists(atPath: baseManifestURL.path) {
-            try? FileManager.default.createDirectory(at: baseManifestURL.parent(), withIntermediateDirectories: true)
+            try? FileManager.default.createDirectory(at: baseManifestURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try FileManager.default.copyItem(at: manifestURL, to: baseManifestURL)
         }
         

@@ -106,7 +106,7 @@ struct DownloadCategoryView: View {
             }
         }
         // 注意：圆形下载按钮与下载详情页已提升到 ContentView 顶层渲染
-        // （对标 PCL.Mac AppRouter：详情页为独立页面整页切换，圆按钮为全局 overlay，
+        // （详情页为独立页面整页切换，圆按钮为全局 overlay，
         //  不再挂在本宿主视图的 overlay 上——本视图会随分类切换销毁，是 UAF 崩溃根因）
     }
 

@@ -33,7 +33,7 @@
 | 3 | Java 模块 + 接线 | `35d9a61` `b281217` | 统一模型 / `JavaResolver` / `JavaResolverBridge`（同步桥接） | 中 |
 | 4 | 下载模块抽象 + 适配器 | `c265f10` | 12 个领域文件 + 3 个适配器 + `MIGRATION.md` | 低 |
 | 5 | 下载调用方切换 | `608803b` `364a087` | `ModFileDownloadTask`、`ForgeInstaller`（2 处） | 中 |
-| 6 | 启动模块骨架 + 适配器 | `a5b5b19` | 10 个领域文件 + 3 个适配器 + `DUAL_FLOW.md` | 低 |
+| 6 | 启动模块骨架 + 适配器 | `a5b5b19` | 10 个领域文件 + 3 个适配器 + `LAUNCH_FLOW.md` | 低 |
 | 7 | 四模块骨架 | `f2a73fc` `4c631cb8` | ModBrowser / Minecraft / Skin / Theme（22 个文件） | 低 |
 | 8 | 伪实现治理 | `f2a73fc` | `AccountError`、`AnyAccount` 明确标注未实现、`STUBS_AUDIT.md` | 低 |
 | 9 | **提示通道修复** | `f2a73fc` | `NoticeCenter` + `NoticeOverlay`，修复 3 处"用户看不到提示" | 中 |
@@ -190,5 +190,7 @@ SL_DEBUG_AUTO_LAUNCH=1 SL_DEBUG_AUTO_LAUNCH_DELAY=4 \
   任务状态气泡与失败提示渲染的是同一个类型、同一个锚点、同一套入场退场动画，
   样式**由代码保证相同**，不存在两边各改一半的余地。两个入口唯一的差异是停留时长
   （1.5s → 6s，失败提示是用户唯一能看到的失败原因，一闪而过等于没提示）。
-- `F` 的合并本体（把 `MinecraftInstance.launch` 与 `slLaunch` 合成一条）**尚未开始**，
+- `F` 的合并本体已**失去对象**：旧流程 `MinecraftInstance.launch` 经全库零调用方核实后整段删除
+  （属「运行期不可达」的死代码），现只剩 `slLaunch` 一条链，不存在「两条合并成一条」这件事。
+  真正遗留的是把 `LaunchFix` 这个「什么缺了都由我修」的上帝对象按四类校验拆分。
   本轮只打通了它的验证手段。

@@ -49,11 +49,11 @@ public class MinecraftLauncher {
         self.logURL = SharedConstants.shared.applicationSupportURL.appendingPathComponent("GameLogs").appendingPathComponent(id.uuidString + ".log")
         // 目录 / 文件创建失败在此**不抛错也不报错**：日志写不了不应阻止游戏启动。
         // 失败会在 launch() 打开句柄时被发现，并按「无日志运行 + 提示用户」降级（见 launch 内注释）。
-        try? FileManager.default.createDirectory(at: logURL.parent(), withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: logURL.path, contents: Data())
         // 日志保留策略：日志文件在退出时不再删除（退出码 0 也保留，供日志面板与 LaunchResult.logURL 读取），
         // 改为在新建本次日志后按份数上限修剪历史文件（上限见 GameLogRetention.maxCount）。
-        GameLogRetention.prune(in: logURL.parent())
+        GameLogRetention.prune(in: logURL.deletingLastPathComponent())
     }
     
     public func launch(_ options: LaunchOptions, _ callback: @MainActor @escaping (MinecraftLaunchOutcome) -> Void = { _ in }) {

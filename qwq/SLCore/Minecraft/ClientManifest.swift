@@ -48,8 +48,8 @@ public class ClientManifest {
         let data = (try? fh.readToEnd()) ?? Data()
         let json = try JSON(data: data)
         
-        if json["loader"].exists() && json["intermediary"].exists() && !json["id"].exists() { // 旧版 PCL.Mac Fabric 安装逻辑
-            warn("无法解析旧版 PCL.Mac 安装的 Fabric 版本: \(url.lastPathComponent)")
+        if json["loader"].exists() && json["intermediary"].exists() && !json["id"].exists() { // 旧版启动器的 Fabric 安装逻辑
+            warn("无法解析旧版启动器安装的 Fabric 版本: \(url.lastPathComponent)")
             return nil
         }
         

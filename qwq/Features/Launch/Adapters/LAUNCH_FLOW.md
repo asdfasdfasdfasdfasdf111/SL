@@ -1,53 +1,98 @@
-# 双流程并存说明与合并方案（DUAL_FLOW）
+# 启动流程现状与遗留缺口（LAUNCH_FLOW）
+
+> **2026-09 变更**：原「流程 A」`MinecraftInstance.launch(_:)`（位于 `SLCore/Minecraft/MinecraftInstance.swift`）
+> 经三次独立核实**零调用方**（全库 `.launch(` 的命中分别属于 `MinecraftLauncher.launch`、
+> `LaunchService.launch`、`MinecraftInstanceLaunchService.launch(_:)`），**已整段删除**。
+> 「双流程并存」的状态不复存在，故本文件由原名 `DUAL_FLOW.md` 更名为 `LAUNCH_FLOW.md`，
+> 内容从「合并计划」改为「现状 + 遗留缺口」。
+>
+> **阅读须知**：下文凡标注「流程 A」的列与行号，都是**删除前的历史信息**，
+> 不可按当前代码寻址；它们的作用是记录「曾经存在哪些能力、现在缺哪些」。
+> 同理，文中指向 `SLLaunchBridge.swift` / `MinecraftLauncher.swift` / `LaunchFix.swift`
+> 等文件的 `:行号` 也是**撰写当时的编号**——删除旧流程与兼容层死符号后，这些行号已整体漂移。
+> 需要精确定位时请按**符号名**检索（例如 `options.skipResourceCheck = true`），不要按行号。
 
 本文件回答四件事：
 
-1. 现有两条启动流程逐步做了什么、哪里重复、哪里不一致；
-2. 合并后 `LaunchService` 的完整流程，以及每一步对应**现在哪段代码**；
-3. 合并的敏感点：哪些步骤顺序不能变、哪些回调时序不能动；
-4. 分步合并计划（每步可编译、可回退）与验证责任人。
-
-本阶段（当前提交）只新增适配器，**没有修改任何既有文件，没有切换任何调用方**：
-
-| 新增文件 | 作用 |
-|---|---|
-| `Adapters/LaunchFixPreflight.swift` | `LaunchPreflight` 及 client / library / asset / natives 四类子协议的 LaunchFix 适配实现 |
-| `Adapters/ProcessPoolGameProcessController.swift` | `GameProcessController` 的进程池适配实现 |
-| `Adapters/MinecraftInstanceLaunchService.swift` | `LaunchService` 对现有 `slLaunch` 的包装实现 |
-| `Adapters/DUAL_FLOW.md` | 本文件 |
-
-被包装对象一行未动：`SLLaunchBridge.swift`、`LaunchFix.swift`、`MinecraftInstance.swift`、`LaunchCoordinator.swift`、`ProcessPool.swift`。
+1. 当前唯一启动流程逐步做了什么；
+2. 已删除的旧流程与之逐项对比（历史依据）；
+3. **已删除流程独有的能力 —— 现在都成了没有实现的缺口**（当前最重要的一节）；
+4. 当前流程的已知缺陷（D 系列）与风险点（R 系列）、补齐计划。
 
 ---
 
-## 一、两条流程逐步对比
+## 一、当前唯一流程
 
-流程 A（PCL.Mac 原始）：入口 `MinecraftInstance.launch(_:)`
-（`SLCore/Minecraft/MinecraftInstance.swift:280-364`），调用方为 PCL.Mac 原有 UI。
+入口 `slLaunch` → `slLaunchInternal`（`SLCore/SLLaunchBridge.swift`），
+调用方 `Features/Launch/LaunchCoordinator.swift`（经 `Adapters/MinecraftInstanceLaunchService.swift`
+包装成 `LaunchService` 用例层）。
 
-流程 B（SL 桥接）：入口 `slLaunch` → `slLaunchInternal`
-（`SLCore/SLLaunchBridge.swift:52-329`），调用方为 `Features/Launch/LaunchCoordinator.swift:48`。
+### 当前流程的逐步说明
 
-| # | 步骤 | 流程 A（原始） | 流程 B（桥接） | 判定 |
+| # | 步骤 | 当前实现 |
+|---|---|---|
+| 1 | 入口形态 | 回调式，`completion` 回传 `(MinecraftLauncher?, Result<Int32, Error>)` |
+| 2 | 目录 / 实例 | 自建 `MinecraftDirectory` + `MinecraftInstance.create` |
+| 3 | 用户名校验 | 已上移到服务层 `validatedUsername`；UI 侧 `LaunchCoordinator` 另有输入提示 |
+| 4 | 账号与令牌 | `OfflineAccount` + `putAccessToken`（未实现账号的告警见 D6） |
+| 5 | Java 选择 | 缓存校验 → `JavaResolverBridge` → `findSuitableJava` → `JavaManager` 兜底三级回退，含 3s 扫描等待 |
+| 6 | 启动前文件处理 | `skipResourceCheck` 恒为 true 跳过安装任务，跑 `LaunchFix.perform` 只补缺失；另有客户端 JAR 存在性判定（D1 修复） |
+| 7 | 清单/架构适配 | `ArtifactVersionMapper.map`，但**不写 `isUsingRosetta`** |
+| 8 | JVM 参数过滤 | Java < 23 时过滤 `--sun-misc-unsafe-memory-access` |
+| 9 | 参数组装 | `MinecraftLauncher.buildJvmArguments` / `buildClasspath` / `buildGameArguments` |
+| 10 | 进程与日志落盘 | `MinecraftLauncher.launch`：Pipe + `readabilityHandler` → `GameLogs/<uuid>.log`；桥接**另外再读一次同一日志文件**做增量 tail |
+| 11 | 窗口出现判定 | 桥接自己的 `windowTask` 轮询（2s 间隔）→ `launchSuccess` |
+| 12 | 成功语义 | 「窗口出现」或「exitCode == 0」经一次性门控触发 `launchSuccess` |
+| 13 | 异常退出处理 | 只把退出码交回 UI，由 `LaunchCoordinator` 弹 alert |
+| 14 | 多开会话 | `launcher.currentProcess` + `pendingLogs` 暂存 |
+
+---
+
+## 二、与已删除的旧流程逐项对比（历史依据）
+
+> 下表「流程 A」列的行号均为**删除前**的行号。保留本表是为了让后续读者知道
+> 当前流程相对旧流程少做了什么、以及为什么某些能力现在缺失。
+
+流程 A（已删除）：入口 `MinecraftInstance.launch(_:)`，调用方为旧 UI。
+
+| # | 步骤 | 流程 A（已删除） | 流程 B（当前唯一） | 判定 |
 |---|---|---|---|---|
 | 1 | 入口形态 | `async` 方法，**无返回值**，退出码只在内部用于弹窗 | 回调式，`completion` 回传 `(MinecraftLauncher?, Result<Int32, Error>)` | 不一致：只有 B 能满足 `LaunchService` 契约 |
-| 2 | 目录 / 实例 | 调用方已持有 `instance` | 自建 `MinecraftDirectory` + `MinecraftInstance.create`（`:105-113`） | 重复：实例创建两处实现 |
-| 3 | 用户名校验 | `validateOfflineUsername(account.name)`，失败**只 log 后 return**（`:293-297`） | `validateOfflineUsername(safeUsername)`，失败 `completion(.failure)`（`:97-103`） | 重复且失败反馈不一致：A 静默、B 报错；UI 侧 `LaunchCoordinator:22-28` 还有第三处同名校验 |
-| 4 | 账号与令牌 | 未实现账号告警 + `putAccessToken` + yggdrasil 时预置 authlib-injector（`:285-307`） | 只有 `OfflineAccount` + `putAccessToken`（`:116-120, 156`） | 不一致：B 缺少「未实现账号」告警与 yggdrasil 分支 |
-| 5 | Java 选择 | **无独立步骤**，直接用 `config.javaURL`（由 `setup()` → `resolveAndApplyJava()` 决定，`:308`） | 缓存校验 → `JavaResolverBridge` → `findSuitableJava` → `JavaManager` 兜底三级回退，并含 3s 扫描等待（`:160-222`） | B 独有；与 A 的 `resolveAndApplyJava` 逻辑重复（都做「缓存沿用 + findSuitableJava」） |
-| 6 | 启动前文件处理 | `!config.skipResourcesCheck && !options.skipResourceCheck` 时跑 `MinecraftInstaller.createCompleteTask` 全量安装任务（`:320-327`） | `skipResourceCheck` 恒为 true 跳过安装任务，改跑 `LaunchFix.perform` 只补缺失（`:121, 126-149`） | 两套引擎并存；且 B 路径**从不校验客户端 JAR**（见 D1） |
-| 7 | 清单/架构适配 | `loadManifest()` + `ArtifactVersionMapper.map` + 写回 `isUsingRosetta`（`:310-318`） | `ArtifactVersionMapper.map`，但**不写 `isUsingRosetta`**（`:235-241`） | 不一致：B 路径下 `instance.isUsingRosetta` 恒为 false |
-| 8 | JVM 参数过滤 | 无 | Java < 23 时过滤 `--sun-misc-unsafe-memory-access`（`:245-254`） | B 独有 |
+| 2 | 目录 / 实例 | 调用方已持有 `instance` | 自建 `MinecraftDirectory` + `MinecraftInstance.create` | 重复：实例创建曾两处实现 |
+| 3 | 用户名校验 | `validateOfflineUsername(account.name)`，失败**只 log 后 return** | `validateOfflineUsername(safeUsername)`，失败 `completion(.failure)` | 重复且失败反馈不一致：A 静默、B 报错；UI 侧另有第三处同名校验 |
+| 4 | 账号与令牌 | 未实现账号告警 + `putAccessToken` + yggdrasil 时预置 authlib-injector | 只有 `OfflineAccount` + `putAccessToken` | ⚠️ **能力缺口**：B 缺少「未实现账号」告警与 yggdrasil 分支（见 D6） |
+| 5 | Java 选择 | **无独立步骤**，直接用 `config.javaURL`（由 `setup()` → `resolveAndApplyJava()` 决定） | 三级回退 + 3s 扫描等待 | B 独有；与 A 的 `resolveAndApplyJava` 逻辑重复 |
+| 6 | 启动前文件处理 | 跑 `MinecraftInstaller.createCompleteTask` 全量安装任务 | `skipResourceCheck` 恒为 true 跳过安装任务，改跑 `LaunchFix.perform` 只补缺失 | ⚠️ **能力缺口**：A 有全量安装兜底，B 没有（见第三节） |
+| 7 | 清单/架构适配 | `loadManifest()` + `ArtifactVersionMapper.map` + **写回 `isUsingRosetta`** | `ArtifactVersionMapper.map`，但**不写 `isUsingRosetta`** | ⚠️ **能力缺口**：B 路径下 `instance.isUsingRosetta` 恒为 false |
+| 8 | JVM 参数过滤 | 无 | Java < 23 时过滤 `--sun-misc-unsafe-memory-access` | B 独有（改进） |
 | 9 | 参数组装 | `MinecraftLauncher.buildJvmArguments` / `buildClasspath` / `buildGameArguments` | 同一组函数 | 一致（都以 `MinecraftLauncher` 为唯一实现） |
-| 10 | 进程与日志落盘 | `MinecraftLauncher.launch`：Pipe + `readabilityHandler` → `GameLogs/<uuid>.log` + `LogStore.raw()` | 同一函数；桥接**另外再读一次同一日志文件**做增量 tail（`:276-296`） | 重复：日志存在「落盘」与「读取」两条通道，读侧靠 `pendingLogs` 暂存补时序 |
-| 11 | 窗口出现判定 | `MinecraftLauncher` 内部 Task 轮询，仅 `log("窗口已出现")`，不回调外部（`MinecraftLauncher.swift:104-120`） | 桥接自己的 `windowTask` 轮询（2s 间隔）→ `launchSuccess`（`:299-317`） | 重复实现，且两处间隔不同（1s / 2s） |
-| 12 | 成功语义 | 无 | 「窗口出现」或「exitCode == 0」经一次性门控触发 `launchSuccess`（`:263-271, 325`） | B 独有 |
-| 13 | 异常退出处理 | `exitCode != 0` → hint + 弹窗 + 可导出错误报告（`:331-362`） | 只把退出码交回 UI，由 `LaunchCoordinator:139-153` 弹 alert | 重复：两份异常退出处理 |
-| 14 | 多开会话 | UI 直接持有 instance / process | `launcher.currentProcess` + `pendingLogs` 暂存 | B 独有补救（原始流程下 `instance.process` 会被同版本新启动覆盖） |
+| 10 | 进程与日志落盘 | `MinecraftLauncher.launch`：Pipe + `readabilityHandler` → `GameLogs/<uuid>.log` | 同一函数；桥接**另外再读一次同一日志文件**做增量 tail | 重复：日志存在「落盘」与「读取」两条通道，读侧靠 `pendingLogs` 暂存补时序 |
+| 11 | 窗口出现判定 | `MinecraftLauncher` 内部 Task 轮询，仅 `log("窗口已出现")`，不回调外部 | 桥接自己的 `windowTask` 轮询（2s 间隔）→ `launchSuccess` | 重复实现，且两处间隔不同（1s / 2s） |
+| 12 | 成功语义 | 无 | 「窗口出现」或「exitCode == 0」经一次性门控触发 `launchSuccess` | B 独有 |
+| 13 | 异常退出处理 | `exitCode != 0` → hint + 弹窗 + **可导出错误报告** | 只把退出码交回 UI，由 `LaunchCoordinator` 弹 alert | ⚠️ **能力缺口**：错误报告导出随 A 删除而失去唯一调用方 |
+| 14 | 多开会话 | UI 直接持有 instance / process | `launcher.currentProcess` + `pendingLogs` 暂存 | B 独有补救（旧流程下 `instance.process` 会被同版本新启动覆盖） |
 
-### 流程 B 中已发现的真实缺陷（非重构问题）
+---
 
-- **D1 客户端 JAR 无任何校验与补全**：`LaunchFix.perform` 只处理 libraries / assets / natives，桥接又把 `skipResourceCheck` 恒置为 true（`:121`），于是缺失或损坏的 `<版本>.jar` 会一路进到 `Process.arguments`（classpath 末项）后由 JVM 报 `ClassNotFoundException` 崩溃。流程 A 有 `createCompleteTask` 兜底，流程 B 没有。
+## 三、已删除流程独有的能力（现在是缺口，且没有实现作为参考）
+
+删除流程 A 时，以下三项能力的**唯一调用点**都在 A 内部，因此它们现在**没有调用方**
+（代码本身保留在工程里，作为后续补齐时的参考实现）：
+
+| 能力 | 保留的符号 | 所在文件 | 现状 |
+|---|---|---|---|
+| 全量资源完整性检查 | `MinecraftInstaller.createCompleteTask` | `SLCore/Minecraft/Download/MinecraftInstaller.swift` | 无调用方；当前只有 `LaunchFix.perform` 的「只补缺失」 |
+| 崩溃错误报告导出（zip：环境信息 + 启动命令 + 日志） | `MinecraftCrashHandler.exportErrorReport` | `SLCore/Minecraft/MinecraftCrashHandler.swift` | 无调用方；`MinecraftCrashHandler.lastLaunchCommand` 仍由 `MinecraftLauncher` 写入，链路是活的 |
+| 崩溃弹窗（含「导出错误报告」按钮） | `PopupManager.showAsync` | `SLCore/Stubs.swift` | 无调用方；底层 `NoticeCenter.presentAndWait` 随之失去唯一使用者 |
+
+**重要**：这三项**不是「已修复」**。流程 A 从来没有被执行过，所以它提供的「兜底」本来就没生效；
+删除它只是移除了**参考实现**，缺口照旧存在。
+
+---
+
+## 四、当前唯一流程的已知缺陷（D 系列）
+
+- **D1 客户端 JAR 无任何校验与补全**：`LaunchFix.perform` 只处理 libraries / assets / natives，桥接又把 `skipResourceCheck` 恒置为 true（`SLLaunchBridge.swift` 的 `slLaunchInternal` 内 `options.skipResourceCheck = true`），于是缺失或损坏的 `<版本>.jar` 会一路进到 `Process.arguments`（classpath 末项）后由 JVM 报 `ClassNotFoundException` 崩溃。流程 A 有 `createCompleteTask` 兜底，流程 B 没有。
   - **已修复（桥接层）**：`slLaunchInternal` 在资源补全之后、`phaseHandler("launching")` 之前新增客户端 JAR 判定，路径取 `instance.runningDirectory/<instance.name>.jar`（与 `buildClasspath` 末项、`MinecraftInstaller.downloadClientJar` 落盘目标同一构造式），失败经 `LaunchError.fileVerificationFailed` 明确报错。判定口径为「存在且非空」，**不做 sha1 比对**（理由见风险点 R6）。仍然**没有**客户端 JAR 的自动补全步骤，缺失即失败。
 - **D2 进程启动失败被伪装成异常退出**：`MinecraftLauncher.launch` 的 `catch` 分支走 `reportCompletion(Int32(1))`（`MinecraftLauncher.swift:145-158`），桥接的 `completion` 只看到 `.success(1)`，无法区分「进程没起来」与「游戏崩溃退出」，UI 一律显示「Minecraft 异常退出 (退出码: 1)」。
 - **D3 正常退出时日志被删**：`MinecraftLauncher.swift:136-139` 在 `exitCode == 0` 时删除 `logURL` 文件，而桥接的日志 tail 任务与 UI 会话面板仍指向该文件；`LaunchResult.logURL` 因此可能指向一个已不存在的路径。
@@ -57,18 +102,23 @@
 
 ---
 
-## 二、合并方案：最终 `LaunchService` 的完整流程
+## 五、补齐缺口的方案（原「合并方案」）
 
-目标形态是**一份** `LaunchService` 实现，桥接层退化为「参数转换 + 回调翻译」，`MinecraftInstance.launch(_:)` 的资源检查与崩溃弹窗下沉到用例层（或标注废弃）。
+> 原方案的目标是「把两条流程合并成一份」。流程 A 已删除，**合并这件事不再存在**；
+> 本节保留下来，作用变为**补齐第三节所列能力缺口的目标形态**——
+> 即「这些能力将来应该由谁承担」。
 
-| 步骤 | 合并后由谁负责 | 对应现在的代码 |
+目标形态是**一份** `LaunchService` 实现，桥接层退化为「参数转换 + 回调翻译」；
+原属流程 A 的资源检查与崩溃弹窗，需要重新落到用例层（其参考实现仍在工程内，见第三节）。
+
+| 步骤 | 目标由谁负责 | 对应现在的代码 |
 |---|---|---|
-| 1. 解析实例 | 服务层：`MinecraftDirectory` + `MinecraftInstance.create` | `SLLaunchBridge.swift:105-113` |
-| 2. 用户名校验 | 服务层入口校验（UI 侧只做输入提示） | `Stubs.swift:155` + `SLLaunchBridge.swift:97-103` |
-| 3. 账号与令牌 | 服务层：`OfflineAccount` + `putAccessToken` + 未实现账号告警 | `SLLaunchBridge.swift:116-120, 156`、`MinecraftInstance.swift:285-307` |
-| 4. 启动前补齐 | `LaunchFixPreflight`（本目录）→ 内部委托 `LaunchFix.perform` | `SLLaunchBridge.swift:126-149` |
-| 5. Java 解析 | 抽成独立解析器，两条流程共用（`JavaResolverBridge` + `findSuitableJava` + `JavaManager` 兜底） | `SLLaunchBridge.swift:160-226`、`MinecraftInstance.resolveAndApplyJava()` |
-| 6. 清单/架构适配 | 服务层：`ArtifactVersionMapper.map` + 参数过滤 | `SLLaunchBridge.swift:235-254` |
+| 1. 解析实例 | 服务层：`MinecraftDirectory` + `MinecraftInstance.create` | `SLLaunchBridge.swift` |
+| 2. 用户名校验 | 服务层入口校验（UI 侧只做输入提示） | `Stubs.swift` + `SLLaunchBridge.swift` |
+| 3. 账号与令牌 | 服务层：`OfflineAccount` + `putAccessToken` + **未实现账号告警**（当前缺失，见 D6） | `SLLaunchBridge.swift`、原 `MinecraftInstance.swift`（已删） |
+| 4. 启动前补齐 | `LaunchFixPreflight`（本目录）→ 内部委托 `LaunchFix.perform` | `SLLaunchBridge.swift` |
+| 5. Java 解析 | 抽成独立解析器（`JavaResolverBridge` + `findSuitableJava` + `JavaManager` 兜底） | `SLLaunchBridge.swift`、`MinecraftInstance.resolveAndApplyJava()` |
+| 6. 清单/架构适配 | 服务层：`ArtifactVersionMapper.map` + 参数过滤 + **`isUsingRosetta` 写回**（当前缺失） | `SLLaunchBridge.swift` |
 | 7. 参数组装 | `MinecraftLauncher.buildJvmArguments` / `buildClasspath` / `buildGameArguments`（保留不动） | `MinecraftLauncher.swift:161-319` |
 | 8. 拉起进程 | `ProcessPoolGameProcessController` + `ProcessPool` 新增长驻入口 | `MinecraftLauncher.swift:40-103` |
 | 9. 日志 | 直写文件句柄（替代 Pipe + readabilityHandler + tail 双通道） | `MinecraftLauncher.swift:68-92`、`SLLaunchBridge.swift:276-296` |
@@ -93,7 +143,7 @@
 
 ---
 
-## 三、合并的风险点
+## 六、风险点（R 系列）
 
 ### R1 顺序不可变
 
@@ -159,7 +209,7 @@ func launchLongRunning(_ executable: URL, args: [String],
 
 ---
 
-## 四、分步合并计划
+## 七、分步补齐计划
 
 每一步都可独立编译、可回退（回退 = 撤销该步的单个替换点），且任一步出问题时另一条流程仍可用。
 
@@ -198,7 +248,10 @@ func launchLongRunning(_ executable: URL, args: [String],
 ### 第 5 步：删除桥接层
 
 - 前置：第 4 步稳定运行一个版本周期，且确认 `slLaunch` 无其它调用方。
-- 改动：删除 `SLLaunchBridge.swift`；`MinecraftInstance.launch(_:)` 的资源检查与崩溃弹窗下沉或标注废弃；`LaunchFix` 降级为转发壳后移除。
+- 改动：删除 `SLLaunchBridge.swift`；`LaunchFix` 降级为转发壳后移除。
+- ~~`MinecraftInstance.launch(_:)` 的资源检查与崩溃弹窗下沉或标注废弃~~
+  **→ 已于 2026-09 完成（该方法是死代码，直接整段删除）。** 注意：
+  随它一起失去调用方的三项能力（见第三节）**尚未**补进当前流程，属未完成项。
 - 验证人：**必须真机**做一轮完整回归（安装新版本 → 补全 → 启动 → 进服 → 退出）。
 
 ### 必须真机、无法用编译/单测覆盖的项（汇总）
@@ -207,20 +260,19 @@ func launchLongRunning(_ executable: URL, args: [String],
 
 ---
 
-## 五、当前状态
+## 八、当前状态
 
-- 三个适配器**尚未加入 Xcode target**（`qwq.xcodeproj` 未修改），接线时需加入 `qwq` target 的 Compile Sources。
-- 全部新增文件通过 typecheck（exit 0、error 0），且不产生新的编译告警。
+- `qwq.xcodeproj/project.pbxproj` 使用 `fileSystemSynchronizedGroups`（`qwq` 为同步文件夹），
+  `qwq/` 下的 `.swift` 自动进入 target，**无需**手工添加 Compile Sources。
+  （本节曾记录「三个适配器尚未加入 Xcode target」，该判断已被证实有误，已删除。）
+- 全部文件通过双口径 typecheck（0 错误，告警数与基线逐条一致）。
 - 未引用任务约束中列出的四个已删除文件（App 层窗口封装、旧 Java 环境 / 路径发现、旧启动预检）。
-
-> 更正：`qwq.xcodeproj/project.pbxproj` 使用 `fileSystemSynchronizedGroups`（`qwq` 目录为同步文件夹），
-> `qwq/` 下新增的 `.swift` 会自动进入目标，无需手工添加 Compile Sources。上文第一句已失效。
 
 ---
 
-## 六、本次接线落地记录（第 4 步的子集 + 第 0 步已完成的适配层）
+## 九、接线落地记录（第 4 步的子集 + 第 0 步已完成的适配层）
 
-### 6.1 已完成的改动
+### 9.1 已完成的改动
 
 | 改动 | 文件 | 内容 | 等价性结论 |
 |---|---|---|---|
@@ -230,7 +282,7 @@ func launchLongRunning(_ executable: URL, args: [String],
 
 `LaunchEvent` 之所以不是 `LaunchState`：T1（`phaseHandler("launching")` 早于 Java 选择，若由 `.resolvingJava` 驱动 UI，UI 的「launching」相位会推迟到 `onLauncherReady` 之后）、T2（UI 需要 `MinecraftLauncher` 引用做会话绑定与终止，而 `LaunchState` 不携带引用）、T8 / T9（状态由松散 `Task` 投递且无重放）。这四点未解决前，直接改状态驱动会引入用户可感知的时序变化。
 
-### 6.2 判断为「本次不做」的项与原因
+### 9.2 判断为「本次不做」的项与原因
 
 | 项 | 结论 | 原因 |
 |---|---|---|
@@ -238,7 +290,7 @@ func launchLongRunning(_ executable: URL, args: [String],
 | Java 扫描等待（`preScanJavaAsync` + 3s 等待）上移 | **保留在桥接层** | ① R9：扫描结果在**主线程**回写（`JavaManager.swift:41-45`），服务层若在主 actor 上做同步等待会直接死锁；② 时序变化：现状是「先补文件、再等扫描」，上移后等待发生在补全之前，用户会在启动初期先停顿最多 3s，属可感知变化 |
 | 双份失败处理 / 日志双通道 / 重复窗口检测（表中第 10、11、13 行） | **本次不做** | 需要改 `MinecraftLauncher.swift`、`MinecraftInstance.swift`，不在本次允许修改的范围内 |
 
-### 6.3 本次发现的真实缺陷
+### 9.3 本次发现的真实缺陷
 
 - **D7 会话「运行中」标志恒为 false（已修复）**：`GameSession.isProcessRunning` 初始化 `false`（`GameSession.swift:15`），全代码库**没有任何位置将其置为 `true`**。后果：
   - `LaunchCoordinator.closeSession`（`:227`）的 `if session.isProcessRunning` 恒不成立 → 点日志卡关闭按钮**不会终止游戏进程**，只移除卡片；
@@ -251,7 +303,7 @@ func launchLongRunning(_ executable: URL, args: [String],
   **修复（LaunchCoordinator.swift）**：新增 `reportLaunchFailure`（复用既有 `LaunchPanelState.presentError`，与 launcher 已建立时的失败同一呈现通道，故不改动任何文案），`.failed` 事件不再以 `boundLauncher` / 会话存在为前置条件；`Task { try? await … }` 改为 `do/catch`，把用例层在进入桥接之前抛出的失败（离线用户名非法）也纳入同一通道；两条通道共用一次性门控 `LaunchFailureNoticeGate`，避免同一次启动弹两次提示。进度经 `resetProgress()` + `launchPhase = .idle` 复位。文案仍是桥接层原始描述，与 D2 的「启动失败 vs 异常退出」区分口径一致。
   - 未改动的部分：桥接层各失败分支的文案（已含下一步指引，如 Java 未命中的「请先在「Java 管理」中扫描或下载 Java」、客户端 JAR 缺失的「请在「下载」页重新安装该版本」）。
 
-### 6.4 本次验证
+### 9.4 本次验证
 
 - 类型检查（不跑 `xcodebuild`，避免与测试 target 的验证互相干扰）：
   - 任务给定配置：`exit 0`、`error 0`、告警 **44**（与改动前逐条一致）；
@@ -259,7 +311,7 @@ func launchLongRunning(_ executable: URL, args: [String],
 - 仍未接入：`GameSessionStore`（UI 尚未订阅状态流），故本次服务实例以 `sessionStore: nil` 构造，状态流通道为空转。
 - 终止路径未变：UI 仍调 `session.launcher.terminate()`；`LaunchService.terminate(sessionID:)` 尚未被 UI 使用（R3 未解决前不能换）。
 
-### 6.5 需要真机验证的项（本次改动相关）
+### 9.5 需要真机验证的项（本次改动相关）
 
 1. 正常启动：日志面板逐行刷新时序与暂停 / 恢复（旧路径的 `pendingLogs` 暂存 flush 是否仍无丢行）；
 2. 退出：`exitCode == 0` 自动清卡片、非 0 弹「Minecraft 异常退出 (退出码: N)」文案与旧版一字不差；

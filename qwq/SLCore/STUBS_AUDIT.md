@@ -18,6 +18,29 @@
 `@available(*, deprecated, message: "全库无引用，待清理")` 标注，**本轮不执行删除**；完整表格见 §9。
 本轮同时更正了 §1.4、§5.3、§8 中关于 `AccountManager` / `AppRouter` 的两处误判。
 
+**第三轮（死代码清理，2026-09）**：第二轮标注的 9 项无引用声明**已全部删除**（记录见 §9.3）。
+同轮另删除五处经全库核实「零调用方」的代码：
+
+| # | 删除对象 | 位置 | 零调用方的核实方式 |
+| --- | --- | --- | --- |
+| 1 | 旧启动流程 `MinecraftInstance.launch(_:)`（含 `setup()` 之外的全部实现） | `SLCore/Minecraft/MinecraftInstance.swift` | `grep -rn "\.launch(" qwq qwqTests` 的全部命中都是 `MinecraftLauncher.launch` / `LaunchService.launch` / `MinecraftInstanceLaunchService.launch(_:)`，无一是它 |
+| 2 | `MinecraftLauncher.isCancelled`（no-op 桩，读恒 false、写被丢弃） | `SLCore/SLLaunchBridge.swift` | 排除 `Task.isCancelled` 后 0 命中 |
+| 3 | `MinecraftLauncher.resolveGameDirURL()` | `SLCore/SLLaunchBridge.swift` | 0 命中 |
+| 4 | `NoasyncBridge.swift`（`LockCompat.swift` 拆分后剩下的空壳：仅一个零调用方自由函数 `semaphoreWait(_:)`） | `SLCore/Utils/`（整个文件） | 0 命中 |
+| 5 | `LoaderSupportState.supportedLoaders(for:)` 及其驱动的缓存读侧 API | `SLCore/Minecraft/Mod/Loader/` | 0 命中（同文件的写侧由 `LoaderSupportProbe` 调用，已保留） |
+
+另删除 `AnyAccount.isFullyImplemented`、`AppRouter` 类整体与 `InstallTask` 中依赖它的不可达分支
+（`if case .installing(_) = DataManager.shared.router.getLast()`，因全库无 `append` 调用点而恒为假）。
+
+同轮把 `Stubs.swift` 等文件里失效的「文件:行号」引用标注统一改为「文件 + 符号/场景」形式：
+行号会随任何一次编辑漂移，经过前两轮改动后其中大量标注已指向错误位置甚至已删除的代码。
+
+> **阅读须知**：§1–§9 的表格是**第二轮普查当时的快照**。表中的 `文件:行号` 与
+> 「已标注 deprecated、待清理」等结论均描述**改动前**的状态；被标为「保留」的
+> `AppRouter` / `Theme` / `ColorSchemeOption` / `URL.parent()` 等项，在第三轮已按本表 §9.3
+> 的清单删除。各表行号不再逐个回改——回改本身又会立刻产生新的漂移，
+> 第三轮的处置结果以本节与 §9.3 为准。
+
 ## 1. 账号系统
 
 ### 1.1 `.microsoft` / `.yggdrasil` 伪实现（高）
@@ -124,8 +147,8 @@ Java JDK 下载源（`aka.ms`、`Microsoft JDK`）与离线账号 UUID 算法注
 | 实际行为 | 无法通过该标志取消启动；同步 `launch` 调用不支持中途取消。 |
 | 影响 | 会误导调用方以为可以取消启动。**当前全代码库无任何调用点**（`grep "\.isCancelled"` 排除 `Task.isCancelled` 后 0 命中），故暂无实际用户影响。 |
 | 已完成处置 | 改写注释，明确「读恒 false / 写无效果 / 不得据此判断已取消」，并指向真实可用的 `terminate()`。 |
-| 建议处置 | **标注**（已完成）。如需取消能力应基于 `terminate()` 实现，本次不做。 |
-| 对比 | `isUserTerminated` / `terminate()`（`SLLaunchBridge.swift:16-24`）为**真实实现**，非桩。 |
+| 建议处置 | ~~**标注**（已完成）~~ → **第三轮已删除**。该属性是 no-op 桩且全库零调用方（排除 `Task.isCancelled` 后 0 命中），删除时一并移除了**只为它存在**的 objc 关联对象 key。如需取消能力应基于 `terminate()` 实现，本次不做。 |
+| 对比 | `isUserTerminated` / `terminate()`（`SLLaunchBridge.swift`）为**真实实现**，非桩，且仍有活跃调用，已保留。 |
 
 ## 5. 其他扫描发现
 
@@ -150,7 +173,7 @@ Java JDK 下载源（`aka.ms`、`Microsoft JDK`）与离线账号 UUID 算法注
 | 实际行为 | 不参与任何渲染；切换主题不产生视觉变化。 |
 | 影响 | 当前**无调用方**（全库除定义外 0 处引用），暂无用户影响。真实主题由 `qwq/Features/Settings/ThemeManager.swift` 提供。 |
 | 已完成处置 | 注释改写为显式「桩实现」，并指明真实主题渲染位置，避免维护者误用。 |
-| 建议处置 | **移除或标注**。建议后续清理时整类删除。 |
+| 建议处置 | ~~**移除或标注**~~ → **第三轮已整类删除**（含 `load(id:)`）。指向该桩的描述已在 `Features/Theme/README-Theme.md` 与 `Features/Theme/ThemeDefinition.swift` 中同步修正。 |
 
 ### 5.3 `AppRouter` 路由栈无入栈点（中）
 
@@ -160,7 +183,7 @@ Java JDK 下载源（`aka.ms`、`Microsoft JDK`）与离线账号 UUID 算法注
 | 当前行为 | 提供 `append` / `getLast` / `removeLast` 路由栈。 |
 | 实际行为 | **全库无任何 `router.append(...)` 调用**，栈恒为空，`getLast()` 恒返回 `.other`。因此 `InstallTask.swift:120` 的 `if case .installing(_) = router.getLast()` 判断**永远不会成立**，其中的 `removeLast()`（`:121`）是死代码。真实页面切换由 `DownloadDetailManager` 负责。 |
 | 影响 | 不影响用户；误导维护者以为存在路由系统。 |
-| 建议处置 | **仅记录，不改**。第二轮核实：`AppRouter` 类及 `getLast()` / `removeLast()` **确有活跃引用**（`InstallTask.swift:120,121`，经 `DataManager.shared.router`），不得整体删除；真正的退化点是「无入栈点」而非「无引用」。其无引用成员 `Route.versionList(directory:)` 与 `append(_:)` 已在第二轮加 `@available(*, deprecated)` 标注。 |
+| 建议处置 | ~~**仅记录，不改**~~ → **第三轮已删除**。第二轮核实：`AppRouter` 类及 `getLast()` / `removeLast()` 有引用（`InstallTask.swift`，经 `DataManager.shared.router`），故当时结论是「不得整体删除，真正的退化点是『无入栈点』」。第三轮改判的依据是：该引用**本身恒不成立**——全库不存在任何 `append(...)` 调用点，栈恒为空、`getLast()` 恒返回 `.other`，因此 `if case .installing(_) = ...` 运行期永不成立，其 `removeLast()` 是不可达分支。删掉该分支（控制流与「条件不成立」那条路等价，已逐行核对）后，`AppRouter` 与 `DataManager.router` 即失去唯一引用，整类删除。真实页面切换由 `DownloadDetailManager` 承担，未受影响。 |
 
 ### 5.4 `AppSettings` 部分字段恒为默认值（低）
 
@@ -258,8 +281,10 @@ xcrun swiftc -typecheck -target arm64-apple-macosx13.0 -I /tmp/deps \
    `DataManager.shared.router.getLast()` / `removeLast()` → `InstallTask.swift:120,121`），
    **不得删除**。可再评估的是二者内部的无引用成员（`Route.versionList`、`AppRouter.append(_:)`）。
 5. **`AppSettings.currentMinecraftDirectory` 是否补 UI 入口** —— 属新功能，本次不做。
-6. **9 项「全库无引用」声明是否执行删除** —— 本轮仅标注，未删除；删除前需确认无跨 target / 运行时反射引用，
-   建议单独提交并由工程侧确认编译后执行（清单见 §9.3）。
+6. ~~**9 项「全库无引用」声明是否执行删除**~~ —— **已关闭**：第三轮已全部删除（记录见 §9.3）。
+   原前置条件「需确认无跨 target / 运行时反射 / 条件编译引用，且工程侧确认编译与测试通过」已逐项核实：
+   工程用文件夹同步组（`project.pbxproj` 无 `.swift` 条目，不存在跨 target 单独引用）、
+   全库 `grep` 0 残留、类型检查两口径 0 错误且告警集合等于基线、真实 `xcodebuild` 通过。
 
 ## 9. 附录：`Stubs.swift` 逐声明引用普查（第二轮）
 
@@ -337,22 +362,34 @@ xcrun swiftc -typecheck -target arm64-apple-macosx13.0 -I /tmp/deps \
 | `CodableAppStorage` | 2 / 0 | 本文件 `AccountManager.accounts` / `accountId` | 保留（有引用，仅本文件内） |
 | `Theme`（类）/`load(id:)`/`id`/`init` | 0 / 0 | 仅注释：`Features/Theme/ThemeDefinition.swift:8-13` | **无引用 → 已标注 deprecated** |
 
-### 9.3 无引用清单（本轮已标注，未删除）
+### 9.3 无引用清单（第二轮已标注 → 第三轮已全部删除）
 
-| # | 声明 | 位置 | 备注 |
+下表 9 项于第二轮加 `@available(*, deprecated, message: "全库无引用，待清理")` 标注，
+**第三轮全部实际删除**。删除前的核实结果记录如下，便于复核：
+
+| # | 声明 | 原位置 | 删除前核实 |
 | --- | --- | --- | --- |
-| 1 | `URL.init(fileURLWithUserPath:)` | `Stubs.swift`（`URL` 扩展） | 仅把 `~` 展开后转交 `init(fileURLWithPath:)` |
-| 2 | `ColorSchemeOption` | `Stubs.swift` | 配色由 `Features/Settings/AppSettingsStore.swift:accentColor` 承担 |
-| 3 | `AppRouter.Route.versionList(directory:)` | `Stubs.swift` | 无构造点 |
-| 4 | `AppRouter.append(_:)` | `Stubs.swift` | 无调用点（路由栈无入栈来源） |
-| 5 | `AccountError.networkUnavailable` | `Stubs.swift` | 无构造点 |
-| 6 | `AccountError.popupNotAvailable` | `Stubs.swift` | 无构造点 |
-| 7 | `AnyAccount.isFullyImplemented` | `Stubs.swift` | 非桩，属上一轮新增的治理访问器；消费方实际走 `unimplementedError` |
-| 8 | `PopupManager.isAvailable` | `Stubs.swift` | 同上，属治理访问器 |
-| 9 | `Theme`（含 `load(id:)`/`id`/`init`） | `Stubs.swift` | 历史遗留主题模型，不参与渲染 |
+| 1 | `URL.init(fileURLWithUserPath:)` | `Stubs.swift`（`URL` 扩展） | 0 引用；仅把 `~` 展开后转交 `init(fileURLWithPath:)` |
+| 2 | `ColorSchemeOption` | `Stubs.swift` | 0 引用；配色由 `Features/Settings/AppSettingsStore.swift` 的 `accentColor` 承担 |
+| 3 | `AppRouter.Route.versionList(directory:)` | `Stubs.swift` | 0 构造点 |
+| 4 | `AppRouter.append(_:)` | `Stubs.swift` | 0 调用点（路由栈无入栈来源） |
+| 5 | `AccountError.networkUnavailable` | `Stubs.swift` | 0 构造点 |
+| 6 | `AccountError.popupNotAvailable` | `Stubs.swift` | 0 构造点 |
+| 7 | `AnyAccount.isFullyImplemented` | `Stubs.swift` | 0 引用；消费方实际走 `unimplementedError` |
+| 8 | `PopupManager.isAvailable` | `Stubs.swift` | 0 引用，属治理访问器 |
+| 9 | `Theme`（含 `load(id:)` / `id` / `init`） | `Stubs.swift` | 0 引用；历史遗留主题模型，不参与渲染 |
 
-删除前置条件：需确认无跨 target / 运行时反射 / 条件编译引用，且工程侧确认编译与测试通过。
-本轮经类型检查确认：9 项标注均未引入新告警。
+**同轮一并删除的相邻项**（原在 §9.2 表中被标为「保留」，因第三轮重新核实而改判）：
+
+| 声明 | 改判依据 |
+| --- | --- |
+| `URL.parent()`（连同整个 `extension URL`） | 它是兼容层语法糖，语义等价于系统原生 `deletingLastPathComponent()`。第三轮**先把 14 处调用点全部换成原生 API**、确认 `grep -rn "\.parent()"` 0 残留后，才删除该扩展 |
+| `AppRouter` 类整体（含 `Route` 三个 case、`getLast()`、`removeLast()`） | 第 3、4 项删除后，其唯一剩余引用（`InstallTask` 的 `if case .installing(_) = DataManager.shared.router.getLast()`）**本身恒不成立**，先删该不可达分支、再删类与 `DataManager.router` / `routerCancellable`，详见 §5.3 |
+
+删除前置条件（第二轮提出）与第三轮的落实方式：确认无跨 target / 运行时反射 / 条件编译引用——
+工程使用 `PBXFileSystemSynchronizedRootGroup`，`project.pbxproj` 内既无 `.swift` 条目也无 `PCL`，
+不存在跨 target 单独引用；全库 `grep` 逐项核实 0 残留；`./scripts/typecheck.sh` 两口径 **0 错误**、
+告警**集合逐条等于基线**（口径一 44 / 口径二 56）；真实 `xcodebuild` **编译通过，0 错误**。
 
 ### 9.4 语义可疑项（仅记录，未改动）
 

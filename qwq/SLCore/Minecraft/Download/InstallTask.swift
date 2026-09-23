@@ -132,9 +132,6 @@ public class InstallTask: ObservableObject, Identifiable, Hashable, Equatable {
             // 彻底消除「旧任务清理误清新任务引用 → 新任务失去强持有 → 下载中 UAF」竞态。
             if DataManager.shared.inprogressInstallTasks?.tasks.values.contains(where: { $0 === self }) == true {
                 DataManager.shared.inprogressInstallTasks = nil
-                if case .installing(_) = DataManager.shared.router.getLast() {
-                    DataManager.shared.router.removeLast()
-                }
             }
             self.callback?()
         }

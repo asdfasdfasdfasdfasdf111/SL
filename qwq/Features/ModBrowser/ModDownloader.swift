@@ -8,7 +8,9 @@ import os
 
 /// TTL 结果缓存 + 同 key 并发请求合并
 ///
-/// 锁的选型：原实现是 `private var lock = os_unfair_lock()` + `withUnfairLock(&lock)`。
+/// 锁的选型：原实现是 `private var lock = os_unfair_lock()` + 兼容层辅助函数 `withUnfairLock(&lock)`
+///（该辅助函数已随 `SLCore/Utils/LockCompat.swift` 删除；此处保留这段经过，是因为它记录的
+/// 是一个**静默失效的真缺陷**，不是纯历史）。
 /// Apple《OSAllocatedUnfairLock》文档明确警告「it's unsafe to use `os_unfair_lock` from Swift
 /// because it's a value type… Instead, use `OSAllocatedUnfairLock`, which avoids that pitfall」——
 /// `&lock` 取到的是值的地址，一旦本类型改成非 `final` 或将来被搬进值类型，就会锁在临时副本上、
@@ -64,7 +66,7 @@ final class ModrinthSearchCache<Value> {
 
     func untrack(_ key: String) {
         // 闭包单表达式 `removeValue` 会返回被移除的 Task 作为 withLockUnchecked 的结果；
-        // 原 `withUnfairLock` 带 @discardableResult（静默丢弃），系统原生 API 没有，
+        // 已删除的兼容层辅助函数 `withUnfairLock` 带 @discardableResult（静默丢弃），系统原生 API 没有，
         // 故显式 `_ =` 表达同一语义，避免 #no-usage 告警
         _ = lock.withLockUnchecked { $0.inFlight.removeValue(forKey: key) }
     }

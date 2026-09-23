@@ -5,7 +5,7 @@
 //  加载器支持检测的缓存层（从 LoaderSupportChecker.swift 逐字搬移，逻辑、常量与文案未变）：
 //  - 内存缓存 + 磁盘缓存（`SL启动器/LoaderSupportCache.json`）的读写与 TTL 过滤
 //  - 单加载器定论写入（内存与磁盘分别持锁，磁盘走串行化读-改-写）
-//  - 对外同步查询：cachedLoaderStates / cachedLoaders
+//  - 对外同步查询：cachedLoaderStates
 //
 
 import Foundation
@@ -218,16 +218,4 @@ extension LoaderSupportChecker {
         return states.isEmpty ? nil : states
     }
 
-    /// 同步查询缓存命中（supported 名称列表）：nil = 未缓存；[] = 已缓存但明确不支持。
-    /// 供 UI 层先查一次：命中时直接展示、不闪烁 loading；未命中再走流式检测。
-    ///
-    /// 调用点在另一个文件的 `LoaderSupportState.swift` 的 `supportedLoaders(for:)` 内
-    /// （约 `qwq/SLCore/Minecraft/Mod/Loader/LoaderSupportState.swift:57` 与 `:66`）；
-    /// 后者（`LoaderSupportState.supportedLoaders(for:)`）自身已无调用方、标注待清理，
-    /// 故本方法实际也已无有效调用方。此处用注释而非 `@available` 标注 ——
-    /// 加 `@available` 会让上述调用点新增编译告警，故保持文案一致的注释。
-    public static func cachedLoaders(for version: String) -> [String]? {
-        guard let states = cachedLoaderStates(for: version) else { return nil }
-        return states.compactMap { $0.value == .supported ? $0.key : nil }.sorted { orderIndex($0) < orderIndex($1) }
-    }
 }

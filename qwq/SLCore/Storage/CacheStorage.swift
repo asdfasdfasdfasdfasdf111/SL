@@ -77,7 +77,7 @@ public class CacheStorage {
             }
             
             do {
-                try? FileManager.default.createDirectory(at: dest.parent(), withIntermediateDirectories: true)
+                try? FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try FileManager.default.copyItem(at: path, to: dest)
                 debug("成功拷贝文件: \(name)")
                 return true
@@ -106,7 +106,7 @@ public class CacheStorage {
         let destExists = FileManager.default.fileExists(atPath: dest.path)
         if !destExists {
             do {
-                try? FileManager.default.createDirectory(at: dest.parent(), withIntermediateDirectories: true)
+                try? FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try FileManager.default.copyItem(at: path, to: dest)
             } catch {
                 err("无法复制文件: \(error.localizedDescription)")

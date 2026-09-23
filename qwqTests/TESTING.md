@@ -129,7 +129,7 @@ func preScan() {
 > `JavaResolverTests` 的命令行校验有个已知折中：被测主体（`JavaResolver` / `JavaInstallation` /
 > `JavaRequirement` / `JavaVirtualMachine`）都是真实源码，但三处**直接依赖**用签名一致的替身
 > 顶替，否则会牵出整条依赖链（`JavaRepository` → `JavaManager` → `LauncherSettings` /
-> `AppContext` / SwiftUI；`URL.parent()` 所在的 `Stubs.swift` 依赖 `VersionManifest` /
+> `AppContext` / SwiftUI；`Stubs.swift`（离线账号 / 提示通道）依赖 `VersionManifest` /
 > `MinecraftDirectory`；全局 `err()` 所在的 `LogManager.swift` 依赖 `SharedConstants`）。
 > 替身放在 `/tmp`，不入库；在 Xcode 里跑真身 target 时不受此影响。
 

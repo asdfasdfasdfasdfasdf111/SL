@@ -2,6 +2,19 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 死代码清理 + 命名统一（2026-09-23）
+
+**背景**：工程源自上游两个开源项目，历史上累积了一批「类型上存在、运行期不可达」的假功能与兼容层遗留。本轮在**只删可证明不可达的代码**这一前提下集中清理，并把全库命名统一为自有命名。
+
+- **删除旧启动流程（`MinecraftInstance.launch(_:)`）**：工程长期并存两套启动流程（旧流程与新桥接流程）。经全库核实，旧流程**零调用方**——`grep -rn "\.launch(" qwq qwqTests` 的全部命中都是 `MinecraftLauncher.launch` / `LaunchService.launch` / `MinecraftInstanceLaunchService.launch(_:)`，无一是它，运行期永不可达。整段删除（`MinecraftInstance.swift` 235 → 118 行）。删后失去唯一调用方的三个符号（`MinecraftCrashHandler.exportErrorReport`、`MinecraftInstaller.createCompleteTask`、`PopupManager.showAsync`）**保留在工程内**——它们是补齐启动能力的现成参考实现，对应能力缺口记入 `Features/Launch/Adapters/LAUNCH_FLOW.md`
+- **兼容层死符号全部删除**（`STUBS_AUDIT.md` 第二轮标注的 9 项）：`URL.parent()` 与 `URL.init(fileURLWithUserPath:)`、`ColorSchemeOption`、`AccountError.networkUnavailable` / `.popupNotAvailable`、`AnyAccount.isFullyImplemented`、`PopupManager.isAvailable`、`Theme`、`AppRouter` 类整体（含 `Route` 三个 case / `getLast` / `removeLast` / `append`）。`URL.parent()` 的 14 处调用点全部改为系统原生 `deletingLastPathComponent()`
+- **删除依赖 `AppRouter` 的不可达分支**：`InstallTask` 中 `if case .installing(_) = DataManager.shared.router.getLast()`——全库无任何 `append` 调用点，路由栈恒空、`getLast()` 恒返回 `.other`，该条件运行期**永不成立**，其 `removeLast()` 从未执行。删除后控制流与原来「条件不成立」那条路**完全等价**（已逐行核对 diff）。真实页面切换由 `DownloadDetailManager` 承担，未受影响
+- **其它零调用方死代码**：`MinecraftLauncher.isCancelled`（no-op 桩：读恒 false、写被静默丢弃）、`resolveGameDirURL()`、`NoasyncBridge.swift`（`LockCompat.swift` 拆分后只剩一个零调用方空壳函数）、`LoaderSupportState.supportedLoaders(for:)` 及其读侧缓存 API（同文件写侧由探测层调用，已保留）
+- **命名统一**：`qwq/PCLCore/` → `qwq/SLCore/`、`PCLStubs.swift` → `Stubs.swift`、`PCLLaunchBridge.swift` → `SLLaunchBridge.swift`、`PCLNetFile` → `SLNetFile`、`pclLaunch` → `slLaunch`、`pclLaunchInternal` → `slLaunchInternal`、`pclLegacyUuidHex` → `legacyUuidHex`、实例配置文件名 `.PCL_Mac.json` → `.SL.json`、DispatchQueue 标签、83 处文件头模板。工程用文件夹同步组，`project.pbxproj` 内既无 `.swift` 条目也无 `PCL`，故**无需改动工程文件**；git 全部识别为 rename，历史未丢
+- **用户可见字符串去上游品牌**：启动参数 `launcher_name`、下载请求 `User-Agent`、崩溃日志与导出文件名 → `SL启动器`。**注释中的「算法出处引用」按引用例外保留**（形如「移植自上游 PCL2 的 `ModLaunch.vb` / `McLoginLegacyUuid`」）——删掉会丢失「这段算法从哪来、为什么这么写」的信息，性质是引文而非品牌
+- **修正注释失真**：`Stubs.swift` 等文件中大面积的「`文件:行号`」引用标注改为「文件 + 符号」形式。行号会随任何一次编辑漂移，经前两轮改动后其中大量标注已指向错误位置、甚至指向已删除代码；符号名不漂移
+- **验证**：`./scripts/typecheck.sh` 两口径 **0 错误**、告警**集合逐条等于基线**（口径一 44 / 口径二 56，用 `git archive HEAD` 导出基线单独实测后 diff 得出）；`./scripts/verify-build.sh` 真实 `xcodebuild` **编译通过，0 错误**
+
 ## 配置回退遗留残留清理（2026-09-22）
 
 **背景**：`17cca21`「部署目标回退至 macOS 13.0」只改了 `project.pbxproj` 的 4 行（2 增 2 删），**没有清理**此前为 macOS 12.0 目标（`e62d7f3`）增补的兼容代码——这些代码从此成为死状态。按既定决定（macOS 12 支持单独隔离处理、主目标锁定 13.0）予以清理。

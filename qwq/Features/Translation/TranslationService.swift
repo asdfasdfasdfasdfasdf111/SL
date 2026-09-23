@@ -55,8 +55,9 @@ final class TranslationService {
 
     /// 非隔离的同步中转：在 nonisolated 的 `translateText` 内等待全局并发配额。
     /// 不能直接调用 `DispatchSemaphore.wait()`（标注 `noasync`，在 async 上下文会告警）；
-    /// 也不能复用 `NoasyncBridge.semaphoreWait`——它是主 actor 隔离，从 nonisolated 调用会
-    /// `await` 切回主线程，反而把阻塞带回主线程。本函数自身「同步 + nonisolated」，
+    /// 也不能改用一个**主 actor 隔离**的同类中转函数——从 nonisolated 调用它会 `await` 切回主线程，
+    /// 反而把阻塞带回主线程（历史实现 `semaphoreWait` 正是这样，已随 `SLCore/Utils/LockCompat.swift`、
+    /// `SLCore/Utils/NoasyncBridge.swift` 一并删除）。本函数自身「同步 + nonisolated」，
     /// 调用它不发生 actor 跳转，信号量等待确实落在 `translateText` 所在的协作线程池线程上。
     private nonisolated static func acquireTranslationSlot() {
         translationSemaphore.wait()
@@ -99,7 +100,7 @@ final class TranslationService {
         }
         defer {
             // 闭包单表达式 `remove` 会返回被移除元素作为 withLock 的结果；
-            // 原 `withLockCompat` 带 @discardableResult，系统原生 `NSLock.withLock` 没有，
+            // 已删除的兼容层辅助函数 `withLockCompat` 带 @discardableResult，系统原生 `NSLock.withLock` 没有，
             // 故显式 `_ =`，避免 #no-usage 告警
             _ = lock.withLock { inFlight.remove(projectId) }
         }

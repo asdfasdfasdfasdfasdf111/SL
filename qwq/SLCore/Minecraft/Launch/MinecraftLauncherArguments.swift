@@ -52,7 +52,7 @@ extension MinecraftLauncher {
     public func buildJvmArguments(_ options: LaunchOptions) -> [String] {
         let values: [String: String] = [
             "natives_directory": instance.runningDirectory.appendingPathComponent("natives").path,
-            "launcher_name": "PCL.Mac",
+            "launcher_name": "SL启动器",
             "launcher_version": SharedConstants.shared.version,
             "classpath": buildClasspath(),
             "classpath_separator": ":",
@@ -202,7 +202,7 @@ extension MinecraftLauncher {
             "auth_session": options.accessToken,
             "user_type": userType,
             // version_type：对照 PCL2 ModLaunch.vb（${version_type} = 版本类型，如 release/snapshot）。
-            // 旧实现硬编码 "PCL.Mac x" 会污染 F3 调试面板的版本类型显示，改用 manifest.type。
+            // 旧实现硬编码启动器名（形如「<启动器名> x」）会污染 F3 调试面板的版本类型显示，改用 manifest.type。
             "version_type": instance.manifest.type.isEmpty ? "release" : instance.manifest.type,
             // user_properties：与 PCL2 一致传 {} （不带引号——Process.arguments 不走 shell，
             // 模板值会原样成为单个参数，带引号反而让 Java 收到字面 "{}"）

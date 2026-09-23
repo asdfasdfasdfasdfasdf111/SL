@@ -13,7 +13,7 @@ public class MinecraftCrashHandler {
     
     public static func exportErrorReport(_ instance: MinecraftInstance, _ launcher: MinecraftLauncher, to destination: URL) {
         // MARK: - 输出环境信息
-        log("以下是 PCL.Mac 检测到的环境信息:")
+        log("以下是 SL启动器 检测到的环境信息:")
         log("架构: \(Architecture.system)")
         log("分支: \(SharedConstants.shared.branch)")
         log("Java 架构: \(Architecture.getArchOfFile(instance.config.javaURL!))")
@@ -40,7 +40,7 @@ public class MinecraftCrashHandler {
         tmp.createFile(path: "启动命令.command", data: lastLaunchCommand.data(using: .utf8))
         
         // 导出日志与输出
-        try? FileManager.default.copyItem(at: SharedConstants.shared.logURL, to: tmp.root.appendingPathComponent("PCL.Mac 启动器日志.log"))
+        try? FileManager.default.copyItem(at: SharedConstants.shared.logURL, to: tmp.root.appendingPathComponent("SL启动器日志.log"))
         try? FileManager.default.copyItem(at: launcher.logURL, to: tmp.root.appendingPathComponent("游戏崩溃前的输出.txt"))
         copyGameLogs(instance: instance, report: tmp.root)
         

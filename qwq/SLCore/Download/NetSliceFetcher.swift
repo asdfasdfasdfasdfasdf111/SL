@@ -46,7 +46,7 @@ extension NetManager {
         let url = urls[sourceIndex]
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("PCL.Mac/\(SharedConstants.shared.version)", forHTTPHeaderField: "User-Agent")
+        request.setValue("SL启动器/\(SharedConstants.shared.version)", forHTTPHeaderField: "User-Agent")
         // 显式禁用压缩：URLSession 默认自动发送 Accept-Encoding: gzip，
         // 服务器对压缩响应会忽略 Range 返回 200 全量（实测 piston-meta：gzip→200，identity→206），
         // 导致分片被误判为「源不支持断点续传」退化为单线程全量下载。PCL2 无此问题（.NET 默认 identity）。

@@ -35,7 +35,7 @@ extension NetManager {
             self.sourceIndex = sourceIndex
         }
 
-        /// 本片结束位置 = 下一片起点 - 1；最后一片 = 文件大小 - 1（PCL2 DownloadEnd）
+        /// 本片结束位置 = 下一片起点 - 1；最后一片 = 文件大小 - 1（参照上游 PCL2 的 DownloadEnd）
         func end(of record: FileRecord) -> Int64 {
             let sorted = record.slices.sorted { $0.start < $1.start }
             guard let idx = sorted.firstIndex(where: { $0.id == id }) else { return record.fileSize - 1 }
@@ -43,7 +43,7 @@ extension NetManager {
             return record.fileSize - 1
         }
 
-        /// 剩余字节 = End + 1 - (Start + Done)（PCL2 DownloadUndone）
+        /// 剩余字节 = End + 1 - (Start + Done)（参照上游 PCL2 的 DownloadUndone）
         func undone(of record: FileRecord) -> Int64 {
             if record.fileSize == -1 { return -1 } // 未知大小：不限
             return max(0, end(of: record) + 1 - (start + done))

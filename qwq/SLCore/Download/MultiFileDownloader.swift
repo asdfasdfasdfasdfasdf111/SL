@@ -110,7 +110,7 @@ public class MultiFileDownloader {
     public func start() async throws {
         guard !items.isEmpty else { return }
         
-        // 构造多源分片下载任务：主源 + 官方源 fallback（PCL2 NetFile.Sources 多源失败切换）
+        // 构造多源分片下载任务：主源 + 官方源 fallback（参照上游 PCL2 的 NetFile.Sources 多源失败切换）
         let files = items.map { item in
             var urls = [item.url]
             if let fallback = item.fallbackURL {

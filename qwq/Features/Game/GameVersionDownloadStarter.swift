@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - 游戏版本下载编排（对标 PCL.Mac DownloadPage「开始下载」，自 ModDetailView 拆出）
+// MARK: - 游戏版本下载编排（下载入口，自 ModDetailView 拆出）
 // 用 MinecraftInstaller.createTask 建 Minecraft 安装任务（客户端清单/资源索引/本体/依赖/natives），
 // 若用户选了加载器则追加对应加载器任务（key = fabric/forge/neoforge），组合成 InstallTasks
 // 进入下载详情页；createTask 内部会从 DataManager.inprogressInstallTasks 按 key 找到加载器任务，

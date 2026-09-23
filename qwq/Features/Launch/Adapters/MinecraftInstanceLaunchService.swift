@@ -3,16 +3,15 @@
 //  启动用例层适配器：`LaunchService` → 现有桥接启动流程（`slLaunch`）的包装
 //
 //  本文件是**包装层**，不是合并层：它把 `LaunchRequest` 与六段回调互相翻译，
-//  内部调用的仍是 `SLLaunchBridge.slLaunch`（即现有的第二套启动实现），
-//  `MinecraftInstance.launch(_:)` 那条流程原样保留、未被触碰。
+//  内部调用的仍是 `SLLaunchBridge.slLaunch`（唯一的启动实现）。
+//  原 `MinecraftInstance.launch(_:)`（流程 A）已于本次改动中删除，本文件不再引用它。
 //
-//  MARK: - 为什么包 `slLaunch` 而不是 `MinecraftInstance.launch(_:)`
+//  MARK: - 为什么包 `slLaunch`
 //
 //  `LaunchService.launch` 契约要求返回退出码、会话标识与日志位置；
-//  `MinecraftInstance.launch(_:)` 是 `async` 且**无返回值**（退出码只在内部用于弹窗），
-//  无法满足契约；`slLaunch` 的 `completion` 携带
-//  `(MinecraftLauncher?, Result<Int32, Error>)`，是当前唯一能提供退出码与 launcher 引用的入口。
-//  两条流程的完整差异见 `Adapters/DUAL_FLOW.md`。
+//  `slLaunch` 的 `completion` 携带
+//  `(MinecraftLauncher?, Result<Int32, Error>)`，是能提供退出码与 launcher 引用的入口。
+//  启动流程的差异背景见 `Adapters/LAUNCH_FLOW.md`。
 //
 //  MARK: - 回调 → LaunchState 映射
 //
@@ -27,7 +26,7 @@
 //  | `completion`          | 进程退出 / 启动失败                        | `.finished(result)` / `.failed(error)` |
 //  | （terminate 被调用）   | 服务侧主动终止                            | `.stopping` |
 //
-//  源映射不可达 / 不精确之处（合并阶段需修正，详见 DUAL_FLOW.md 风险点）：
+//  源映射不可达 / 不精确之处（合并阶段需修正，详见 LAUNCH_FLOW.md 风险点）：
 //    - `.verifyingFiles` 恒不可达：`LaunchFix.perform` 把「校验」与「下载」合成一条进度，
 //      不暴露「校验完成」事件，无法与 `.downloading` 区分。
 //    - `.buildingArguments` 恒不可达：桥接层未为「参数组装完成」提供回调。
@@ -45,7 +44,7 @@
 //  | javaExecutable            | 未使用 | 桥接层自行走 JavaResolverBridge → DataManager → JavaManager 三级选择 |
 //  | memoryMB / qualityOfServiceRawValue | 未使用 | 内存与 QoS 取自 `instance.config.maxMemory` / `.qualityOfService`，不经过请求 |
 //  | extraJVMArgs / windowSize | 未使用 | 桥接层只做 `--sun-misc-unsafe-memory-access` 过滤，无自定义参数与窗口尺寸入口 |
-//  | isDemo / skipResourceCheck | 未使用 | 见 DUAL_FLOW.md 风险点 R4（skipResourceCheck 语义歧义） |
+//  | isDemo / skipResourceCheck | 未使用 | 见 LAUNCH_FLOW.md 风险点 R4（skipResourceCheck 语义歧义） |
 //
 //  MARK: - 终止路径（重要）
 //
@@ -90,7 +89,7 @@ public enum LaunchEvent {
     /// 进程退出（含退出码）→ `slLaunch.completion` 的 `.success` 分支
     case finished(LaunchResult)
     /// 启动失败（携带桥接层原始错误）→ `slLaunch.completion` 的 `.failure` 分支。
-    /// 携带原始 `Error` 而非 `LaunchError`：桥接层文案尚未类型化（见 DUAL_FLOW.md 风险点 R5），
+    /// 携带原始 `Error` 而非 `LaunchError`：桥接层文案尚未类型化（见 LAUNCH_FLOW.md 风险点 R5），
     /// 转成 `LaunchError` 会改变 UI 展示文案，迁移期必须保持原文案。
     case failed(Error)
 }
@@ -284,7 +283,7 @@ public final class MinecraftInstanceLaunchService: LaunchService, @unchecked Sen
     ///  - 传给桥接层的玩家名：仍是兜底后的值（桥接层用它构造 `OfflineAccount` 与 `options.playerName`）；
     ///  - UI 可见行为：旧路径下该校验失败经 `completion(nil, .failure)` 回传，launcher 为 nil，
     ///    UI 不产生任何提示；新路径抛出错误、`LaunchCoordinator` 同样不提示（行为一致）。
-    /// 唯一差异是错误载体由 `MyLocalizedError` 变为契约要求的 `LaunchError`（DUAL_FLOW.md 风险点 R5 的整改方向）。
+    /// 唯一差异是错误载体由 `MyLocalizedError` 变为契约要求的 `LaunchError`（LAUNCH_FLOW.md 风险点 R5 的整改方向）。
     static func validatedUsername(_ raw: String) throws -> String {
         var safe = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if safe.isEmpty { safe = "Player" }
@@ -299,7 +298,7 @@ public final class MinecraftInstanceLaunchService: LaunchService, @unchecked Sen
 
     /// 桥接层以 `MyLocalizedError(reason:)` 携带中文文案返回失败，没有类型化错误码，
     /// 故此处按文案前缀做一次映射。**这是临时桥接**：
-    /// 文案本地化或改写都会静默退化为 `.unknown`（见 DUAL_FLOW.md 风险点 R5）。
+    /// 文案本地化或改写都会静默退化为 `.unknown`（见 LAUNCH_FLOW.md 风险点 R5）。
     static func mapFailure(_ error: Error, version: String) -> LaunchError {
         let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
 

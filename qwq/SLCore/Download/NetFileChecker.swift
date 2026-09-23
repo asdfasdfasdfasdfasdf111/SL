@@ -10,7 +10,7 @@
 import Foundation
 import CryptoKit
 
-// MARK: - FileChecker（PCL2 ModBase.vb FileChecker 移植）
+// MARK: - FileChecker（移植自上游 PCL2 的 ModBase.vb / FileChecker）
 
 public struct FileChecker {
     public var actualSize: Int64 = -1

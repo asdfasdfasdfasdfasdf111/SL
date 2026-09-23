@@ -41,11 +41,12 @@
 //
 //  `DefaultLaunchPreflight.prepare` 在 `request.skipResourceCheck == true` 时直接返回。
 //  本适配器**不采用**该早退：`LaunchRequest.skipResourceCheck` 来源于
-//  `LaunchOptions.skipResourceCheck`，而桥接层把它恒置为 true（用于跳过
-//  `MinecraftInstance.launch` 内 `config.skipResourcesCheck` 分支的
-//  `MinecraftInstaller.createCompleteTask`），与「是否执行 LaunchFix」无关。
+//  `LaunchOptions.skipResourceCheck`，而桥接层把它恒置为 true（该标记的原始用途是跳过
+//  旧启动流程里 `config.skipResourcesCheck` 分支的
+//  `MinecraftInstaller.createCompleteTask` 全量安装；该分支已随旧流程删除，
+//  但本字段仍被沿用为「跳过安装任务」的语义），与「是否执行 LaunchFix」无关。
 //  照搬早退会直接跳过启动前补齐，属于行为回退。
-//  该字段语义歧义需在合并阶段改名或拆分（见 DUAL_FLOW.md 风险点 R4）。
+//  该字段语义歧义需在合并阶段改名或拆分（见 LAUNCH_FLOW.md 风险点 R4）。
 //
 
 import Foundation
@@ -120,11 +121,11 @@ enum LaunchFixPreflightContextBuilder {
 /// 故这里没有可委托的实现，只做只读校验并显式抛出。
 ///
 /// 状态与差异：桥接层 `slLaunchInternal` 已单独补上「存在且非空」判定
-/// （`SLLaunchBridge.swift`，DUAL_FLOW 缺陷 D1 的修复点），但**未**采用本类型的 sha1 口径。
+/// （`SLLaunchBridge.swift`，LAUNCH_FLOW 缺陷 D1 的修复点），但**未**采用本类型的 sha1 口径。
 /// 原因：带 inheritsFrom 的加载器实例，其清单经 `ClientManifest.merge` 后沿用父级
 /// `clientDownload.sha1`，而版本目录内的 JAR 会被加载器安装器就地改写，哈希必然不同；
 /// 此处按 sha1 判定会把这些实例误判为损坏。故本校验器仅在「确认实例的版本目录 JAR
-/// 恒为原版本体」的调用方（如纯原版路径或补齐后的复检）接线，见 DUAL_FLOW.md 风险点 R6。
+/// 恒为原版本体」的调用方（如纯原版路径或补齐后的复检）接线，见 LAUNCH_FLOW.md 风险点 R6。
 public struct LaunchFixClientVerifier: ClientFileVerifier, @unchecked Sendable {
 
     public init() {}

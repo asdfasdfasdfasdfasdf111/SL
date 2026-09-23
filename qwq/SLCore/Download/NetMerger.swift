@@ -2,7 +2,7 @@
 //  NetMerger.swift
 //  SL启动器
 //
-//  NetManager 的分片合并与下载后校验（对标 PCL2 Merge）：
+//  NetManager 的分片合并与下载后校验（对标上游 PCL2 的 Merge）：
 //  - tryMergeIfPossible：记录已判定失败时不再合并；无活动分片且不存在待续传分片时触发合并，
 //    成功置 done 并回调完成，失败置 failed 并清理临时分片；
 //  - merge：覆盖策略处理（.replace/.skip 覆盖、.throw 抛错）、单分片直接移动、
@@ -24,7 +24,7 @@
 import Foundation
 
 extension NetManager {
-    // MARK: - 合并（PCL2 Merge，1295-1335 行）
+    // MARK: - 合并（对标上游 PCL2 的 Merge，1295-1335 行）
 
     func tryMergeIfPossible(_ record: FileRecord) {
         guard record.activeSliceCount == 0 else { return }
@@ -118,7 +118,7 @@ extension NetManager {
             throw NetDownloadError.mergeFailed("文件大小不符，期望 \(record.fileSize) B，实际为 \(actualSize) B")
         }
 
-        // 下载后四合一校验（PCL2 FileChecker.Check）
+        // 下载后四合一校验（参照上游 PCL2 的 FileChecker.Check）
         if let checker = record.file.checker {
             if let err = checker.check(destination) {
                 try? FileManager.default.removeItem(at: destination)

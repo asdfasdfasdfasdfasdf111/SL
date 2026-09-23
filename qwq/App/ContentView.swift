@@ -15,8 +15,8 @@ struct ContentView: View {
     // 启动相关界面状态（Java 提示气泡、启动失败提示）。由场景入口注入，
     // 本视图只订阅、不创建（@ObservedObject 不拥有对象，不得写默认值）
     @ObservedObject var launchPanel: LaunchPanelState
-    // 下载详情页独立页面 + 全局圆形下载按钮（对标 PCL.Mac AppRouter：
-    // 详情页为整页替换渲染的独立页面，圆按钮为 ContentView 顶层全局 overlay）
+    // 下载详情页独立页面 + 全局圆形下载按钮：
+    // 详情页为整页替换渲染的独立页面，圆按钮为 ContentView 顶层全局 overlay。
     
     var body: some View {
         ZStack {

@@ -2,26 +2,8 @@ import Foundation
 import Cocoa
 import Combine
 
-/// 兼容层：桥接旧 UI 代码到 PCL.Mac 启动核心
+/// 兼容层：桥接旧 UI 代码到启动核心（MinecraftLauncher）
 extension MinecraftLauncher {
-    /// 取消标志（兼容旧 UI 的关闭按钮逻辑，**当前为 no-op 桩**）。
-    /// 读恒为 false，写不产生任何效果：同步 launch 调用无法中途取消。
-    /// 调用方不得据此判断「已取消」，也不得依赖赋值来终止启动；
-    /// 需要终止运行中的进程请使用 `terminate()`（真实生效）。
-    /// 当前代码库中无任何调用点，详见 `qwq/SLCore/STUBS_AUDIT.md`。
-    ///
-    /// **为什么不能接上真实取消源**（而非「暂未接线」）：
-    /// 本属性挂在 `MinecraftLauncher` 实例上，而唯一存在「中途取消」语义的阶段——
-    /// 启动前补全（`LaunchFix`，600s 超时）——发生在 `MinecraftLauncher` 被构造**之前**
-    /// （`slLaunchInternal` 先做补全，之后才 `MinecraftLauncher(instance)`），
-    /// 因此该属性没有任何可承载的取消源；补全阶段的取消已由 `slLaunchInternal` 内的
-    /// `AbandonFlag`（闸断 UI 回调）+ `fixTask.cancel()` 直接实现，不经本属性。
-    /// 而 `MinecraftLauncher.launch` 是「同步阻塞到进程退出」的调用，其唯一的真实停止手段是
-    /// `terminate()`（SIGTERM），不存在「取消启动但不终止进程」的中间状态。
-    public var isCancelled: Bool {
-        get { false }
-        set { /* no-op 桩：同步 launch 调用无法中途取消，赋值被静默忽略 */ }
-    }
     /// 用户主动终止标志：terminate() 时置 true，completion 回调据此判断不报异常
     public var isUserTerminated: Bool {
         get { _objCIsUserTerminated }
@@ -33,9 +15,6 @@ extension MinecraftLauncher {
         _objCIsUserTerminated = true
         currentProcess?.terminate()
     }
-    public func resolveGameDirURL() throws -> URL {
-        return instance.runningDirectory
-    }
     /// 日志缓冲：logHandler 在 session 建立前到达时暂存于此，session 建立后 flush
     public var pendingLogs: [String] {
         get { _objCPendingLogs }
@@ -46,7 +25,7 @@ extension MinecraftLauncher {
 private var _objCIsUserTerminatedKey: UInt8 = 0
 private var _objCPendingLogsKey: UInt8 = 0
 extension MinecraftLauncher {
-    /// 用 objc 关联对象存储 isUserTerminated（不修改 PCL.Mac 核心类的存储）
+    /// 用 objc 关联对象存储 isUserTerminated（不修改 MinecraftLauncher 核心类的存储）
     private var _objCIsUserTerminated: Bool {
         get { (objc_getAssociatedObject(self, &_objCIsUserTerminatedKey) as? NSNumber)?.boolValue ?? false }
         set { objc_setAssociatedObject(self, &_objCIsUserTerminatedKey, NSNumber(value: newValue), .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
@@ -57,7 +36,7 @@ extension MinecraftLauncher {
     }
 }
 
-/// 兼容启动入口：从旧 UI 参数构建 PCL.Mac 实例并启动
+/// 兼容启动入口：从旧 UI 参数构建 MinecraftInstance 并启动
 /// 注意：本函数不阻塞，立即返回；启动过程通过回调通知 UI
 /// 前置条件：`username` 必须已通过用例层校验（trim 后非空、无英文引号、≤16 UTF-16 code unit，
 /// 空值调用方需自行兜底为 "Player"），本函数不再重复校验。
@@ -106,7 +85,7 @@ private func slLaunchInternal(
     // Features/Launch/Adapters/MinecraftInstanceLaunchService.swift）：
     // 本函数的调用方必须保证 `username` 已 trim、非空、不含英文引号且不超过 16 个 UTF-16 code unit。
     // 上移依据：该判定原本在三处重复（UI 输入提示 / 本函数 / 用例层），逐步合并到用例层唯一入口；
-    // 等价性论证（判定、兜底、失败时机、失败时 UI 不提示）见同目录 DUAL_FLOW.md。
+    // 等价性论证（判定、兜底、失败时机、失败时 UI 不提示）见同目录 LAUNCH_FLOW.md。
 
     let minecraftDir = MinecraftDirectory(
         rootURL: URL(fileURLWithPath: resolvedGameDir),
@@ -126,7 +105,7 @@ private func slLaunchInternal(
     options.account = .offline(account)
     options.skipResourceCheck = true
 
-    // 未实现账号告警（与流程 A `MinecraftInstance.launch` 同一治理口径）：
+    // 未实现账号告警（迁自原启动流程，治理口径不变）：
     // 微软 / Yggdrasil 登录流程尚未实现，运行期一律按离线账号处理，必须显式告知用户，
     // 避免其误以为本次启动已完成联网登录。本路径只构造离线账号，
     // 因此未实现账号只可能来自持久化的账号选择（AccountManager）。
@@ -136,9 +115,10 @@ private func slLaunchInternal(
         hint(unimplemented.errorDescription ?? "该账号类型尚未实现，本次启动按离线账号处理。", .critical)
     }
 
-    // MARK: 客户端 JAR 校验（DUAL_FLOW 缺陷 D1）
-    // 桥接路径把 skipResourceCheck 恒置为 true，不执行 MinecraftInstance.launch 内的
-    // createCompleteTask 全量安装；而 LaunchFix.perform 只覆盖 libraries / assets / natives，
+    // MARK: 客户端 JAR 校验（LAUNCH_FLOW 缺陷 D1）
+    // 本路径把 skipResourceCheck 恒置为 true（该标记的原始用途是跳过旧启动流程里的
+    // createCompleteTask 全量安装任务；该任务已随旧流程删除，但字段语义被沿用）；
+    // 而 LaunchFix.perform 只覆盖 libraries / assets / natives，
     // 不含客户端本体。缺 JAR 时 classpath 末项仍是该路径，JVM 对不存在的 classpath 条目静默忽略，
     // 直到进入游戏才以 ClassNotFoundException 崩溃，UI 只能显示「异常退出」。
     // 故必须在拉起进程前显式判定并失败。
@@ -161,7 +141,7 @@ private func slLaunchInternal(
     // 判定口径：只校验「存在且非空」，不与 manifest.clientDownload?.sha1 比对。
     // 带 inheritsFrom 的加载器实例其清单合并后沿用父级 clientDownload.sha1
     // （ClientManifest.merge 保留父级字段），而版本目录内的 JAR 会被加载器安装器就地改写，
-    // 哈希必然不同；按 sha1 判定会把本可正常启动的加载器实例判为损坏（DUAL_FLOW 风险点 R6）。
+    // 哈希必然不同；按 sha1 判定会把本可正常启动的加载器实例判为损坏（LAUNCH_FLOW 风险点 R6）。
     let clientJAR = instance.runningDirectory.appendingPathComponent("\(instance.name).jar")
     if let reason = FileChecker(minSize: 1).check(clientJAR) {
         log("客户端 JAR 校验失败：\(clientJAR.path)（\(reason)）")
@@ -225,7 +205,7 @@ private func slLaunchInternal(
 
     let launcher = MinecraftLauncher(instance)!
 
-    // 复刻 MinecraftInstance.launch 中启动前的最小化设置
+    // 沿用原启动流程中启动前的最小化设置
     account.putAccessToken(options: options)
 
     // MARK: Java 选择：统一走 manifest 优先的动态策略

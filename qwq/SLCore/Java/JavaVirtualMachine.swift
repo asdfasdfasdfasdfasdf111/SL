@@ -79,8 +79,8 @@ public class JavaVirtualMachine: Identifiable, Equatable {
         
         // 获取版本信息
         let releaseURLs = [
-            executableURL.parent().parent().appendingPathComponent("release"),
-            executableURL.parent().parent().parent().appendingPathComponent("release")
+            executableURL.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("release"),
+            executableURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("release")
         ]
         var version: Int = 0
         var displayVersion: String = "未知"

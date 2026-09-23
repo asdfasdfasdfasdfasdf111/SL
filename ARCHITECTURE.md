@@ -72,11 +72,11 @@ View → ViewModel → UseCase → Service → Infrastructure
 
 ## 七、启动模块
 
-问题：存在两套启动流程（`MinecraftInstance.launch()` 与 `slLaunchInternal()`），`LaunchFix` 是"什么缺了都由我修"的上帝对象。
+问题：历史上存在两套并行的启动流程（`MinecraftInstance.launch()` 与 `slLaunchInternal()`）。前者经全库零调用方核实后已于 2026-09 整段删除（属「运行期不可达」的死代码），现只剩 `slLaunchInternal()` 一条。`LaunchFix` 仍是"什么缺了都由我修"的上帝对象（待拆）。
 
 新增（`qwq/Features/Launch/`）：`LaunchRequest`、`LaunchState`、`LaunchResult`、`LaunchError`、`LaunchPreflight`（含 client / library / asset / natives 四类校验的拆分）、`LaunchArgumentBuilder`、`GameProcessController`、`GameSessionStore`、`LaunchService`。
 
-目标：合并为一条启动链，`LaunchCoordinator` 只做"UI 意图 → 用例 → 状态映射"。
+目标：`LaunchCoordinator` 只做"UI 意图 → 用例 → 状态映射"。原「合并两条流程」的目标已随旧流程删除而失去对象；真正遗留的是把 `LaunchFix` 按四类校验拆分。
 
 ## 八、测试
 

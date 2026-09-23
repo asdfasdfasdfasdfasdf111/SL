@@ -6,7 +6,7 @@ import AppKit
 /// 启动入口由用例层 `LaunchService` 承担（实现为 `Adapters/MinecraftInstanceLaunchService`，
 /// 内部仍委托桥接层 `slLaunch`）：本文件只构造 `LaunchRequest` 并处理 `LaunchEvent`，
 /// 不再直接依赖 `slLaunch` 的六段回调签名。事件处理与原回调逐条等价（时序与文案一致），
-/// 迁移计划、差异分析与不可迁移项见 `Adapters/DUAL_FLOW.md`。
+/// 迁移计划、差异分析与不可迁移项见 `Adapters/LAUNCH_FLOW.md`。
 /// 回退：还原本文件的启动入口接线即可恢复旧路径（桥接层与旧流程未被删除）。
 ///
 /// 只操作引用类型全局单例（LauncherSettings / LaunchSessionManager）与用例层服务：

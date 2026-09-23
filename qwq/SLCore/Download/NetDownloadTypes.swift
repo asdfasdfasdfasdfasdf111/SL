@@ -10,7 +10,7 @@
 
 import Foundation
 
-// MARK: - 下载文件描述（PCL2 NetFile 移植）
+// MARK: - 下载文件描述（移植自上游 PCL2 的 NetFile）
 
 public final class SLNetFile {
     public let urls: [URL]
