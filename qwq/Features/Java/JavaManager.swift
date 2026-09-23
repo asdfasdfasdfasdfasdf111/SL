@@ -156,8 +156,36 @@ class JavaManager {
         for info in infos {
             guard !existingPaths.contains(info.path) else { continue }
             let url = URL(fileURLWithPath: info.path)
-            let arch: Architecture = info.architecture == "arm64" ? .arm64 : (info.architecture == "x86_64" || info.architecture == "x64" ? .x64 : .getArchOfFile(url))
-            let callMethod: CallMethod = arch == Architecture.system ? .direct : (Architecture.system == .arm64 ? .transition : .incompatible)
+            // 架构与调用方式。原实现这里是两个可证缺陷的叠加，逐个说明：
+            //
+            // ① 原写法 `info.architecture == "arm64" ? .arm64 : (… "x86_64" / "x64" ? .x64 : .getArchOfFile(url))`
+            //    中的 `"arm64"` 分支**永不成立**：`JavaVersionParser.parse` 第 142 行已把架构归一化过
+            //    （`arch == "arm64" ? "aarch64" : …`），JavaInfo.architecture 的取值只可能是
+            //    `"aarch64"` / `"x64"` / `"unknown"`。于是每个 ARM Java 都会落到 `getArchOfFile(url)`
+            //    —— 一次多余的「开文件句柄 + 读 Mach-O 头」。而本方法是经
+            //    `DispatchQueue.main.async { syncJavaVirtualMachines(...) }` 调用的，即这次多余 IO
+            //    发生在主线程上（预扫描时逐个 Java 都来一次）。
+            //    别名处理不再手写：`JavaArchitecture(rawArchitecture:)` 已把
+            //    arm64/aarch64/arm 与 x64/x86_64/amd64/x86 全部覆盖（见 JavaInstallation.swift:35-42）。
+            //
+            // ② 原写法内联的调用方式规则漏了 `.fatFile`：项目自己的权威实现
+            //    `JavaVirtualMachine.of`（SLCore/Java/JavaVirtualMachine.swift:72）写的是
+            //    `if arch == Architecture.system || arch == .fatFile { callMethod = .direct }`，
+            //    即**通用（fat）二进制算原生直跑**。这里少了 `|| arch == .fatFile`，于是
+            //    Temurin / Zulu / Oracle 在 macOS 上最常发的**通用二进制 JDK 被判成 `.transition`
+            //    （Rosetta 转译）**——而 `MinecraftInstanceJava.findSuitableJava` 优先选 `.direct`、
+            //    把 `.transition` 只当兜底，后果是「本机只有一个通用 JDK」的用户被降级到 Rosetta 跑游戏。
+            //    概率不低：本项目历史上已有一轮「打包默认发通用二进制」的记录。
+            let arch: Architecture
+            switch JavaArchitecture(rawArchitecture: info.architecture) {
+            case .arm64: arch = .arm64
+            case .x64: arch = .x64
+            case .universal: arch = .fatFile
+            case .unknown: arch = .getArchOfFile(url)   // 仅探测失败时才读文件兜底
+            }
+            let callMethod: CallMethod = (arch == Architecture.system || arch == .fatFile)
+                ? .direct
+                : (Architecture.system == .arm64 ? .transition : .incompatible)
             let jvm = JavaVirtualMachine(
                 arch: arch,
                 version: info.majorVersion,
