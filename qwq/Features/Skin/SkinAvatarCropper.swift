@@ -4,10 +4,17 @@ import CoreGraphics
 
 // MARK: - 皮肤头像裁剪（纯图像逻辑，无副作用，自 MinecraftSkinManager 拆出）
 
+/// 皮肤头像裁剪（**纯图像计算、无副作用**）—— 不读写文件、不改全局状态。
+/// ⚠️ 本类型走 CoreGraphics（`cropping` + `CGContext` 合成），与
+/// `UI/ViewComponents.swift` 里 `SkinLayerView.cropped` 走 CoreImage 的实现是**两套独立代码**：
+/// 这里产出「头 + 帽已合成好的整张头像」，那里产出「单独一层」。改其一别以为改了另一处。
 enum SkinAvatarCropper {
-    /// 头像取景方向（皮肤展开图坐标）
+    /// 头像取景方向（皮肤展开图坐标）。
+    /// ⚠️ 六个方向里四个只改 x（y 恒为 8），只有顶 / 底把 y 换成 0 ——
+    /// 这是按 **64×64 新版布局**写死的，32×32 旧布局的贴图区并不相同。
     enum HeadDirection {
         case front, back, left, right, top, bottom
+        /// 该方向对应的裁剪起点。返回元组而非 CGRect：宽高恒为 8×8，没必要重复表达。
         var offset: (x: Int, y: Int) {
             switch self {
             case .front: return (8, 8)
@@ -21,6 +28,10 @@ enum SkinAvatarCropper {
     }
 
     /// 校验皮肤图片合法性：必须是标准尺寸（64×64 / 64×32 / 128×128）
+    /// 校验皮肤图是否可接受：**只校验尺寸**，不检查内容（全黑图也会通过）。
+    /// 允许三种尺寸：64×64（新版带帽层）、64×32（1.8 之前的旧版）、128×128（高清重制版）。
+    /// ⚠️ 与 `cropAvatar` 的校验**口径不一致**：后者不接受 128×128。
+    /// 于是 128×128 能通过本方法、却会在裁剪时抛错。
     static func validateSkin(at url: URL) throws {
         guard let image = NSImage(contentsOf: url) else {
             throw LauncherError.skinValidationFailed("无法读取图片")
@@ -36,6 +47,10 @@ enum SkinAvatarCropper {
 
     /// 从皮肤原图裁剪正面头像：64 像素高度时叠加 layer1（头）与 layer2（帽）消除半透明，
     /// 32 像素高度（旧格式）直接用头图层；结果缩放至 targetSize。
+    /// 裁剪正面头像：头层（layer1）与帽层（layer2）在 8×8 画布上叠加合成，再放大到目标尺寸。
+    /// 32×32 旧格式没有帽层，直接用头层。
+    /// ⚠️ 只接受 64×64 / 64×32 —— 128×128 会被这里拒掉（与 `validateSkin` 口径不同）。
+    /// 任何一步失败都**抛错**（本文件不返回可选值），错误文案会直接展示给用户。
     static func cropAvatar(from url: URL, targetSize: NSSize = NSSize(width: 128, height: 128)) throws -> NSImage {
         guard let image = NSImage(contentsOf: url),
               let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
@@ -55,6 +70,8 @@ enum SkinAvatarCropper {
         if height == 32 {
             return try zoomImage(layer1, to: targetSize)
         }
+        // 帽层（layer2）在贴图右侧 x=40 处 —— 与头层同 y，只有 x 不同。
+        // ⚠️ 这个坐标属于「图层体系」，与上面 HeadDirection 的「取景方向体系」不是一回事。
         let layer2Rect = CGRect(x: 40, y: 8, width: 8, height: 8)
         guard let layer2 = cgImage.cropping(to: layer2Rect) else {
             return try zoomImage(layer1, to: targetSize)
@@ -66,6 +83,8 @@ enum SkinAvatarCropper {
                                       space: colorSpace, bitmapInfo: bitmapInfo.rawValue) else {
             throw LauncherError.skinValidationFailed("无法创建画布")
         }
+        // 先画头层再画帽层：后者覆盖前者，半透明像素自然混合 —— 这就是「消除半透明」的做法。
+        // 顺序不能反，反过来帽子会被头盖住。
         context.draw(layer1, in: CGRect(x: 0, y: 0, width: 8, height: 8))
         context.draw(layer2, in: CGRect(x: 0, y: 0, width: 8, height: 8))
         guard let finalHead = context.makeImage() else {
@@ -74,7 +93,9 @@ enum SkinAvatarCropper {
         return try zoomImage(finalHead, to: targetSize)
     }
 
-    /// 最近邻缩放到目标尺寸（保持像素风格，不做平滑）
+    /// 最近邻缩放到目标尺寸（保持像素风格，不做平滑）。
+    /// ⚠️ 用的是 `lockFocus` / `unlockFocus` 这条较老的 API：它依赖「当前 NSGraphicsContext」，
+    /// 在非主线程调用并不安全 —— 调用方需自行保证线程（本类型未标注 nonisolated）。
     private static func zoomImage(_ cgImage: CGImage, to targetSize: NSSize) throws -> NSImage {
         let finalImage = NSImage(size: targetSize)
         finalImage.lockFocus()
