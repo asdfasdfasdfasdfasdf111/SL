@@ -2,18 +2,6 @@ import SwiftUI
 import AppKit
 import CoreGraphics
 
-struct PixelArtImageView: View {
-    let image: NSImage
-    let size: CGFloat
-
-    var body: some View {
-        Image(nsImage: image)
-            .interpolation(.none)
-            .resizable()
-            .frame(width: size, height: size)
-    }
-}
-
 struct SkinLayerView: View {
     /// 预裁成品（后台裁剪缓存），主线程渲染路径零 CoreImage
     let image: NSImage?
@@ -50,39 +38,6 @@ struct SkinLayerView: View {
         let extent = ciImage.extent
         guard let cgImage = context.createCGImage(ciImage, from: extent) else { return nil }
         return NSImage(cgImage: cgImage, size: extent.size)
-    }
-}
-
-struct LogView: View {
-    @Binding var logs: [String]
-    @State private var scrollTarget: Int?
-    
-    var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 4) {
-                    ForEach(logs.indices, id: \.self) { idx in
-                        Text(logs[idx])
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundColor(.secondary)
-                            .id(idx)
-                    }
-                }
-                .padding(8)
-            }
-            .frame(width: 260, height: 300)
-            .background(RoundedRectangle(cornerRadius: 16).fill(.regularMaterial).shadow(radius: 4))
-            .onChange(of: logs.count) { _ in
-                // ⚠️ onChange 处于视图更新事务中，同步 scrollTo 会强制 layout，
-                // 触发 AppKit "It's not legal to call -layoutSubtreeIfNeeded..." 布局递归警告；
-                // 延迟到渲染事务外滚动
-                DispatchQueue.main.async {
-                    withAnimation(.exaggeratedSpring) {
-                        proxy.scrollTo(logs.count - 1, anchor: .bottom)
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -150,20 +105,6 @@ struct ThanksCard: View {
         .padding()
         .frame(width: 180, height: 180)
         .background(RoundedRectangle(cornerRadius: 20).fill(.regularMaterial).shadow(radius: 6))
-    }
-}
-
-struct ComingSoonCardView: View {
-    let title: String
-    var body: some View {
-        VStack {
-            Spacer()
-            Text(title).font(.title2).foregroundColor(.secondary)
-            Text("待开发").font(.headline).foregroundColor(.secondary.opacity(0.7))
-            Spacer()
-        }
-        .frame(width: 280, height: 200)
-        .background(RoundedRectangle(cornerRadius: 16).fill(.regularMaterial).shadow(radius: 4))
     }
 }
 

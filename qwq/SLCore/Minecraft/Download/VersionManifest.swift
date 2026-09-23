@@ -70,7 +70,7 @@ public class VersionManifest: Codable {
                         url: version.url,
                         root: "https://zkitefly.github.io/unlisted-versions-of-minecraft",
                         target: "https://alist.8mi.tech/d/mirror/unlisted-versions-of-minecraft/Auto"
-                    ).url.absoluteString
+                    ).url?.absoluteString ?? version.url
                 }
                 versions.versions.append(contentsOf: unlistedVersions.versions)
                 versions.versions.sort { $0.releaseTime > $1.releaseTime }

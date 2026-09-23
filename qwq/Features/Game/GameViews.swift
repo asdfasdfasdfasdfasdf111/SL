@@ -3,7 +3,7 @@ import AppKit
 import Combine
 import zlib
 
-// ScrollBounceModifier → Core/ScrollBounceModifier.swift
+// ScrollBounceModifier → UI/ScrollBounceModifier.swift
 // VersionButton → UI/VersionButton.swift
 // JavaPickerView, JavaPickerRow → Features/Java/JavaPickerView.swift
 // GameSubCategory, GameSidebarSection, ModrinthTagMap, DownloadedItem → Models/GameModels.swift

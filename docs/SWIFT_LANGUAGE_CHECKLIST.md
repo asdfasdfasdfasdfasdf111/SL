@@ -1,5 +1,13 @@
 # Swift 语言特性核对手册（Swim111Launcher）
 
+> ⚠️ **行号引用已失效（快照声明）**
+> 本文件中的 `路径/文件.swift:行号` 是 **refactor/modular 模块化重构之前**记录的快照（核验于 2026-09，分支 `refactor/modular`，HEAD `a08186f` 之前）。
+> 重构对大量源文件做了拆分、重命名、删减（例如 `NetDownloader` 由 889→172 行、`MinecraftInstance` 由 505→118 行），
+> 原有的 `:行号` 已全部越界失效。
+> 为治本，已将所有「文档指针式」的 `文件.swift:行号` **批量降级为 `文件.swift`**（仅保留文件路径，删除行号）。
+> 正文内嵌的**编译器 warning 原文块**属于某次实跑的历史日志（如 `LocalModCatalog.swift:30: warning:` 等），其行号是该次运行的原始记录，按日志原文保留、未作改动。
+> 如需精确定位，请按文件内的**符号名**（函数 / 类型 / 枚举 case）在源码中检索，行号不可靠。
+
 > 用途：在 `xcodebuild` 被沙箱拦截、无法真正编译的前提下，用 `swiftc -typecheck` + 官方文档语义核对项目的并发/内存/值语义写法，供后续写代码时逐条查证。
 >
 > 范围：**只核对语言层面**（Swift 并发、内存与并发原语、值语义/引用语义）。不评价业务逻辑、架构、性能。
@@ -55,14 +63,14 @@ swiftc -typecheck -swift-version 5 -default-isolation MainActor \
 | # | 语法点 | 官方规则要点（原文关键句） | 项目对应位置 | 结论 |
 |---|---|---|---|---|
 | A1 | `async` / `await` 与挂起点 | “Inside an asynchronous method, the flow of execution can be suspended **only** when you call another asynchronous method — suspension is never implicit or preemptive — which means every possible suspension point is marked with `await`.” | 全局 | **写法正确**：项目未出现「隐式挂起」假设 |
-| A2 | 同步代码中无法安全等待异步结果 | “In contrast, there's no safe way to wrap asynchronous code so you can call it from synchronous code and wait for the result. The Swift standard library intentionally omits this unsafe functionality — trying to implement it yourself can lead to problems like subtle races, threading issues, and deadlocks.” | `qwq/Features/Java/JavaResolverBridge.swift:19-50` | **写法错误（官方明文禁止的手写形态）**：该文件正是「自己实现从同步代码等待异步结果」。详见 §2.2 |
-| A3 | `Task {}` 继承当前上下文 | “The new task defaults to running with the same actor isolation, priority, and task-local state as the current task.” | `qwq/UI/Notices/NoticeCenter.swift:138`（`Task { @MainActor in … }`） | **写法正确**；显式 `@MainActor` 与继承语义一致，冗余但不致错 |
-| A4 | `Task.detached` 不继承任何上下文 | “The new task defaults to running **without any actor isolation** and doesn't inherit the current task's priority or task-local state.” | `NetDownloaderDownloadEngine.swift:91`、`AppContext.swift:71`、`JavaResolverBridge.swift:34`、`SLLaunchBridge.swift:290,313`、`CardTranslationModel.swift:48,83,102` | **部分有风险**：`Task.detached` 内访问被默认隔离到 `@MainActor` 的成员会被告警（见 §2.4~§2.8）；本身用 `detached` 的动机（脱离主线程）成立 |
-| A5 | `Task.detached` 的 `operation` 当前是 `sending` 而非 `@Sendable` | SDK 签名实测：`static func detached(name:priority:operation: sending @escaping @isolated(any) () async -> Success)`；SE-0430：“When a call passes an argument to a `sending` parameter, the caller cannot use the argument value again after the callee returns.” | `JavaResolverBridge.swift:32,34,49` | **写法错误（竞态）**：编译器**不会**给出诊断（实测见 §5.4），故只能靠人工发现 |
-| A6 | 取消是协作式的 | “it's the responsibility of the code running as part of the task to check for cancellation whenever stopping is appropriate… call the `Task.checkCancellation()` function” | `NetDownloaderDownloadEngine.swift:124-128`、`SLLaunchBridge.swift:294,315`、`MinecraftLauncher.swift:189-195` | **写法正确**：均通过 `Task.isCancelled` / 取消承载 Task 表达 |
-| A7 | 任务闭包生命周期 | “Retaining a task object doesn't indefinitely retain the closure… Consequently, tasks rarely need to capture weak references to values.” | `NetDownloaderDownloadEngine.swift:90-93`（强引用 `self`）、`CardTranslationModel.swift:48`（`[weak self]`） | **写法正确**（两者都成立）：强引用在任务终结后释放；`[weak self]` 属保守写法，非错 |
-| A8 | `TaskGroup` 结构化并发 | “In a parent task, you can't forget to wait for its child tasks to complete… When a parent task is canceled, each of its child tasks is also automatically canceled.” <https://developer.apple.com/documentation/swift/taskgroup> | `LoaderSupportChecker.swift:488,560`、`TranslationSourceFetcher.swift:16` | **写法正确**：`withTaskGroup` 离开作用域自动取消未完成子任务，注释亦如此声明 |
-| A9 | `async let` 并行 | “Call asynchronous functions with `async`-`let` when you don't need the result until later in your code. This creates work that can be carried out in parallel.” | `MinecraftInstaller.swift:446-447,462-463`、`GameVersionManifest.swift:60-62` | **写法正确** |
+| A2 | 同步代码中无法安全等待异步结果 | “In contrast, there's no safe way to wrap asynchronous code so you can call it from synchronous code and wait for the result. The Swift standard library intentionally omits this unsafe functionality — trying to implement it yourself can lead to problems like subtle races, threading issues, and deadlocks.” | `qwq/Features/Java/JavaResolverBridge.swift` | **写法错误（官方明文禁止的手写形态）**：该文件正是「自己实现从同步代码等待异步结果」。详见 §2.2 |
+| A3 | `Task {}` 继承当前上下文 | “The new task defaults to running with the same actor isolation, priority, and task-local state as the current task.” | `qwq/UI/Notices/NoticeCenter.swift`（`Task { @MainActor in … }`） | **写法正确**；显式 `@MainActor` 与继承语义一致，冗余但不致错 |
+| A4 | `Task.detached` 不继承任何上下文 | “The new task defaults to running **without any actor isolation** and doesn't inherit the current task's priority or task-local state.” | `NetDownloaderDownloadEngine.swift`、`AppContext.swift`、`JavaResolverBridge.swift`、`SLLaunchBridge.swift`、`CardTranslationModel.swift` | **部分有风险**：`Task.detached` 内访问被默认隔离到 `@MainActor` 的成员会被告警（见 §2.4~§2.8）；本身用 `detached` 的动机（脱离主线程）成立 |
+| A5 | `Task.detached` 的 `operation` 当前是 `sending` 而非 `@Sendable` | SDK 签名实测：`static func detached(name:priority:operation: sending @escaping @isolated(any) () async -> Success)`；SE-0430：“When a call passes an argument to a `sending` parameter, the caller cannot use the argument value again after the callee returns.” | `JavaResolverBridge.swift` | **写法错误（竞态）**：编译器**不会**给出诊断（实测见 §5.4），故只能靠人工发现 |
+| A6 | 取消是协作式的 | “it's the responsibility of the code running as part of the task to check for cancellation whenever stopping is appropriate… call the `Task.checkCancellation()` function” | `NetDownloaderDownloadEngine.swift`、`SLLaunchBridge.swift`、`MinecraftLauncher.swift` | **写法正确**：均通过 `Task.isCancelled` / 取消承载 Task 表达 |
+| A7 | 任务闭包生命周期 | “Retaining a task object doesn't indefinitely retain the closure… Consequently, tasks rarely need to capture weak references to values.” | `NetDownloaderDownloadEngine.swift`（强引用 `self`）、`CardTranslationModel.swift`（`[weak self]`） | **写法正确**（两者都成立）：强引用在任务终结后释放；`[weak self]` 属保守写法，非错 |
+| A8 | `TaskGroup` 结构化并发 | “In a parent task, you can't forget to wait for its child tasks to complete… When a parent task is canceled, each of its child tasks is also automatically canceled.” <https://developer.apple.com/documentation/swift/taskgroup> | `LoaderSupportChecker.swift`、`TranslationSourceFetcher.swift` | **写法正确**：`withTaskGroup` 离开作用域自动取消未完成子任务，注释亦如此声明 |
+| A9 | `async let` 并行 | “Call asynchronous functions with `async`-`let` when you don't need the result until later in your code. This creates work that can be carried out in parallel.” | `MinecraftInstaller.swift`、`GameVersionManifest.swift` | **写法正确** |
 
 ### 1.2 actor 与隔离
 
@@ -74,15 +82,15 @@ swiftc -typecheck -swift-version 5 -default-isolation MainActor \
 
 | # | 语法点 | 官方规则要点（原文关键句） | 项目对应位置 | 结论 |
 |---|---|---|---|---|
-| B1 | `actor` 串行化与跨 actor 需 `await` | “actors allow only one task to access their mutable state at a time”；“When you access a property or method of an actor, you use `await` to mark the potential suspension point.” | `SpeedMeter.swift:59-71`（`actor CounterActor`）+ `SpeedMeter.swift:31,44,50` | **写法正确**：`await self.counter.takeInterval()` / `await counter.add(1)` 均带 `await`，且非隔离 `init` 不触碰 actor 状态 |
-| B2 | actor 可重入（reentrancy） | SE-0306：“When an actor-isolated function suspends, reentrancy allows other work to execute on the actor before the original actor-isolated function resumes… it means that actor-isolated state can change across an `await`”；“synchronous code in an actor provides a critical section, whereas an `await` interrupts a critical section.” | `SpeedMeter.swift:24-40`（ticker 循环内 `await` 后继续用 `self`） | **有风险（低）**：`ensureTicker` 在 `await self.counter.takeInterval()` 之后写 `self.tickerTask = nil`，跨 `await` 的两次检查非原子；当前无竞争来源，但迁到 Swift 6 时需复查 |
-| B3 | `@MainActor` 类型：成员隐式隔离、跨入需 `await` | SE-0316：“A type declared with a global actor attribute propagates the attribute to all methods, properties, subscripts, and extensions of the type by default.”；“all of the normal actor-isolation restrictions come into play: the declaration can only be synchronously accessed from another declaration on the same global actor, but can be asynchronously accessed from elsewhere.” | `NavigationState.swift:15-16`、`NoticeCenter.swift:113`、`DownloadDetailManager.swift:13`、`CardTranslationModel.swift:12`、`SpeedMeter.swift:11` | **写法正确** |
-| B4 | `@MainActor` 类型实例隐式 `Sendable` | SE-0316：“A non-protocol type that is annotated with a global actor implicitly conforms to `Sendable`. Instances of such types are safe to share across concurrency domains because access to their state is guarded by the global actor.” | `NavigationState.swift:15-16`（`@MainActor final class … ObservableObject`） | **写法正确**：无需再写 `Sendable` |
+| B1 | `actor` 串行化与跨 actor 需 `await` | “actors allow only one task to access their mutable state at a time”；“When you access a property or method of an actor, you use `await` to mark the potential suspension point.” | `SpeedMeter.swift`（`actor CounterActor`）+ `SpeedMeter.swift` | **写法正确**：`await self.counter.takeInterval()` / `await counter.add(1)` 均带 `await`，且非隔离 `init` 不触碰 actor 状态 |
+| B2 | actor 可重入（reentrancy） | SE-0306：“When an actor-isolated function suspends, reentrancy allows other work to execute on the actor before the original actor-isolated function resumes… it means that actor-isolated state can change across an `await`”；“synchronous code in an actor provides a critical section, whereas an `await` interrupts a critical section.” | `SpeedMeter.swift`（ticker 循环内 `await` 后继续用 `self`） | **有风险（低）**：`ensureTicker` 在 `await self.counter.takeInterval()` 之后写 `self.tickerTask = nil`，跨 `await` 的两次检查非原子；当前无竞争来源，但迁到 Swift 6 时需复查 |
+| B3 | `@MainActor` 类型：成员隐式隔离、跨入需 `await` | SE-0316：“A type declared with a global actor attribute propagates the attribute to all methods, properties, subscripts, and extensions of the type by default.”；“all of the normal actor-isolation restrictions come into play: the declaration can only be synchronously accessed from another declaration on the same global actor, but can be asynchronously accessed from elsewhere.” | `NavigationState.swift`、`NoticeCenter.swift`、`DownloadDetailManager.swift`、`CardTranslationModel.swift`、`SpeedMeter.swift` | **写法正确** |
+| B4 | `@MainActor` 类型实例隐式 `Sendable` | SE-0316：“A non-protocol type that is annotated with a global actor implicitly conforms to `Sendable`. Instances of such types are safe to share across concurrency domains because access to their state is guarded by the global actor.” | `NavigationState.swift`（`@MainActor final class … ObservableObject`） | **写法正确**：无需再写 `Sendable` |
 | B5 | **项目启用了默认 MainActor 隔离** | `-default-isolation MainActor`：未显式标注隔离的声明被推断为 `@MainActor`。实测（§5.1）：`final class PlainClass`、`enum` 的 `static func`、`Sendable` 枚举的计算属性**全部**变成 `@MainActor` 隔离 | 全项目；具体受害点见 §2.5~§2.8、§2.10 | **有风险（高，系统性）**：大量「看起来是纯函数/纯数据结构」的声明实际带 MainActor 隔离，任何后台线程/非隔离闭包访问都会告警→Swift 6 下报错 |
-| B6 | `nonisolated(unsafe)` 用于关闭静态检查 | SE-0412：“The attribute `nonisolated(unsafe)` can be used to annotate the global variable (or any form of storage). Though this will disable static checking of data isolation for the global variable, note that without correct implementation of a synchronization mechanism to achieve data isolation, dynamic run-time analysis from exclusivity enforcement or tools such as Thread Sanitizer could still identify failures.” <https://github.com/swiftlang/swift-evolution/blob/main/proposals/0412-strict-concurrency-for-global-variables.md> | `SpeedMeter.swift:18`（`nonisolated(unsafe) var tickerTask`） | **写法可接受**：访问点均在 MainActor 上下文（`ensureTicker`、`deinit`）。注意 `deinit` 非隔离，SE-0412 说明必须自行保证同步；此处 `tickerTask` 在 `deinit` 时已无并发写者，判定成立但脆弱 |
-| B7 | `nonisolated` 显式退出隔离 | 同上（SE-0316 示例：`nonisolated private func gatherContents(url:)`） | `NoticeCenter.swift:116,132,137`、`NetDownloader.swift:34,69,79,83,87`、`LoaderSupportChecker.swift:518` | **写法正确**：`NoticeCenter.post` 是 `nonisolated` + 内部 `Task { @MainActor in … }` hop，符合「任意线程可调用」的声明 |
-| B8 | MainActor 隔离的静态成员从非隔离上下文访问 | “Global and static variables can be annotated with a global actor. Such variables can only be accessed from the same global actor or asynchronously.”（SE-0316） | `LoaderSupportChecker.swift:271`、`NetDownloader.swift:245,563,605,608`、`LocalModCatalog.swift:93-99,113,127,174` | **有风险**：实测告警 `[#ActorIsolatedCall]`；详见 §2.6 |
-| B9 | MainActor 隔离的**计算属性**从非隔离上下文访问 | 同上；实测（§5.2）：`Sendable` 枚举的计算属性在默认隔离下变 `@MainActor`，非隔离读取 → Swift 5 告警 / Swift 6 报错 | `GameSessionStore.swift:60`（`launchState.isTerminal`，定义于 `LaunchState.swift:42-47`） | **有风险**：告警 `main actor-isolated property 'isTerminal' can not be referenced from a Sendable closure`；详见 §2.9 |
+| B6 | `nonisolated(unsafe)` 用于关闭静态检查 | SE-0412：“The attribute `nonisolated(unsafe)` can be used to annotate the global variable (or any form of storage). Though this will disable static checking of data isolation for the global variable, note that without correct implementation of a synchronization mechanism to achieve data isolation, dynamic run-time analysis from exclusivity enforcement or tools such as Thread Sanitizer could still identify failures.” <https://github.com/swiftlang/swift-evolution/blob/main/proposals/0412-strict-concurrency-for-global-variables.md> | `SpeedMeter.swift`（`nonisolated(unsafe) var tickerTask`） | **写法可接受**：访问点均在 MainActor 上下文（`ensureTicker`、`deinit`）。注意 `deinit` 非隔离，SE-0412 说明必须自行保证同步；此处 `tickerTask` 在 `deinit` 时已无并发写者，判定成立但脆弱 |
+| B7 | `nonisolated` 显式退出隔离 | 同上（SE-0316 示例：`nonisolated private func gatherContents(url:)`） | `NoticeCenter.swift`、`NetDownloader.swift`、`LoaderSupportChecker.swift` | **写法正确**：`NoticeCenter.post` 是 `nonisolated` + 内部 `Task { @MainActor in … }` hop，符合「任意线程可调用」的声明 |
+| B8 | MainActor 隔离的静态成员从非隔离上下文访问 | “Global and static variables can be annotated with a global actor. Such variables can only be accessed from the same global actor or asynchronously.”（SE-0316） | `LoaderSupportChecker.swift`、`NetDownloader.swift`、`LocalModCatalog.swift` | **有风险**：实测告警 `[#ActorIsolatedCall]`；详见 §2.6 |
+| B9 | MainActor 隔离的**计算属性**从非隔离上下文访问 | 同上；实测（§5.2）：`Sendable` 枚举的计算属性在默认隔离下变 `@MainActor`，非隔离读取 → Swift 5 告警 / Swift 6 报错 | `GameSessionStore.swift`（`launchState.isTerminal`，定义于 `LaunchState.swift`） | **有风险**：告警 `main actor-isolated property 'isTerminal' can not be referenced from a Sendable closure`；详见 §2.9 |
 
 ### 1.3 Sendable
 
@@ -93,12 +101,12 @@ swiftc -typecheck -swift-version 5 -default-isolation MainActor \
 
 | # | 语法点 | 官方规则要点（原文关键句） | 项目对应位置 | 结论 |
 |---|---|---|---|---|
-| C1 | `Sendable` 的三类合法形态 | “The type is a value type, and its mutable state is made up of other sendable data…; The type doesn't have any mutable state…; The type has code that ensures the safety of its mutable state, like a class that's marked `@MainActor` or a class that serializes access to its properties on a particular thread or queue.” | `DownloadState.swift:16`、`LaunchState.swift:17`、`DownloadRequest.swift:27`、`MinecraftInstanceInfo.swift:93` 等 | **写法正确**：均为只含 `Sendable` 成员的枚举/结构体 |
-| C2 | `@unchecked Sendable` 的责任归属 | “To declare conformance to `Sendable` without any compiler enforcement, write `@unchecked Sendable`. **You are responsible for the correctness** of unchecked sendable types, for example, by protecting all access to its state with a lock or a queue.”；“Classes that don't meet the requirements above can be marked as `@unchecked Sendable`… after you manually verify that they satisfy the `Sendable` protocol's semantic requirements.” | `NetDownloaderDownloadEngine.swift:18`、`GameSessionStore.swift:39`、`MinecraftInstanceLaunchService.swift:64,68,252,267`、`ProcessPoolGameProcessController.swift:54`、`LaunchFixPreflight.swift:124,140,168,211,234`、`MinecraftLauncher.swift:13,44` | **写法正确（需持续维护）**：每处都配了 `NSLock` / `OSAllocatedUnfairLock` 或「状态只在构造时写入」的说明。`LaunchFixPreflight.swift` 的 5 个 case 用 `@unchecked Sendable` 标注在**结构体**上是官方明确允许的形态 |
-| C3 | `@Sendable` 闭包的捕获规则 | SE-0302：“Closures that have `@Sendable` function type can only use by-value captures. Captures of immutable values introduced by `let` are implicitly by-value; **any other capture must be specified via a capture list**”；“The types of all captured values must conform to `Sendable`.” | `SLLaunchBridge.swift:66-78`（`DispatchQueue.global().async { … }` 捕获 6 个闭包参数） | **有风险**：实测 6 条 `[#SendableClosureCaptures]` 告警（`progressHandler`/`phaseHandler`/`logHandler`/`launchSuccess`/`onLauncherReady`/`completion` 均为非 Sendable 函数类型）。Swift 5 为告警、Swift 6 为错误；详见 §2.11 |
+| C1 | `Sendable` 的三类合法形态 | “The type is a value type, and its mutable state is made up of other sendable data…; The type doesn't have any mutable state…; The type has code that ensures the safety of its mutable state, like a class that's marked `@MainActor` or a class that serializes access to its properties on a particular thread or queue.” | `DownloadState.swift`、`LaunchState.swift`、`DownloadRequest.swift`、`MinecraftInstanceInfo.swift` 等 | **写法正确**：均为只含 `Sendable` 成员的枚举/结构体 |
+| C2 | `@unchecked Sendable` 的责任归属 | “To declare conformance to `Sendable` without any compiler enforcement, write `@unchecked Sendable`. **You are responsible for the correctness** of unchecked sendable types, for example, by protecting all access to its state with a lock or a queue.”；“Classes that don't meet the requirements above can be marked as `@unchecked Sendable`… after you manually verify that they satisfy the `Sendable` protocol's semantic requirements.” | `NetDownloaderDownloadEngine.swift`、`GameSessionStore.swift`、`MinecraftInstanceLaunchService.swift`、`ProcessPoolGameProcessController.swift`、`LaunchFixPreflight.swift`、`MinecraftLauncher.swift` | **写法正确（需持续维护）**：每处都配了 `NSLock` / `OSAllocatedUnfairLock` 或「状态只在构造时写入」的说明。`LaunchFixPreflight.swift` 的 5 个 case 用 `@unchecked Sendable` 标注在**结构体**上是官方明确允许的形态 |
+| C3 | `@Sendable` 闭包的捕获规则 | SE-0302：“Closures that have `@Sendable` function type can only use by-value captures. Captures of immutable values introduced by `let` are implicitly by-value; **any other capture must be specified via a capture list**”；“The types of all captured values must conform to `Sendable`.” | `SLLaunchBridge.swift`（`DispatchQueue.global().async { … }` 捕获 6 个闭包参数） | **有风险**：实测 6 条 `[#SendableClosureCaptures]` 告警（`progressHandler`/`phaseHandler`/`logHandler`/`launchSuccess`/`onLauncherReady`/`completion` 均为非 Sendable 函数类型）。Swift 5 为告警、Swift 6 为错误；详见 §2.11 |
 | C4 | 显式 `@Sendable` 闭包内改捕获 var | 实测（§5.3）：`let g: @Sendable () -> Void = { x = 1 }` → **error: mutation of captured var 'x' in concurrently-executing code** | 项目未使用该形态（项目里的同类问题走 `Task`，见 A5） | **写法正确**：未踩此形态 |
-| C5 | `DispatchQueue.async` 闭包内改捕获 var | 实测（§5.3）：`DispatchQueue.global().async { x = 1 }` → **warning: mutation of captured var 'x' in concurrently-executing code [#SendableClosureCaptures]** | `ProcessPool.swift:75,125`（`DispatchQueue.global().async { stdoutData = … }`） | **有风险（低）**：`stdoutData` 由后台写、主流程随后读，`sem.wait` 之前无人读取；实际存在竞态窗口但被 `terminationHandler` 时序掩盖。未产生告警（编译器仅对显式 `@Sendable`/`DispatchQueue.async` 形态报） |
-| C6 | `sending` 与游离区域 | SE-0430：“A `sending` function parameter requires that the argument value be in a disconnected region. At the point of the call, the disconnected region is no longer in the caller's isolation domain…”；“In the Swift 5 language mode, `sending` diagnostics are suppressed under minimal concurrency checking, and diagnosed as warnings under strict concurrency checking.” | `JavaResolverBridge.swift:32,34,49`（正是「实参未游离、调用后又被使用」的反例） | **写法错误**：违反 `sending` 契约；且实测在 `minimal`/`complete`/Swift 6 三档下**均无诊断**（§5.4），属编译器盲区 |
+| C5 | `DispatchQueue.async` 闭包内改捕获 var | 实测（§5.3）：`DispatchQueue.global().async { x = 1 }` → **warning: mutation of captured var 'x' in concurrently-executing code [#SendableClosureCaptures]** | `ProcessPool.swift`（`DispatchQueue.global().async { stdoutData = … }`） | **有风险（低）**：`stdoutData` 由后台写、主流程随后读，`sem.wait` 之前无人读取；实际存在竞态窗口但被 `terminationHandler` 时序掩盖。未产生告警（编译器仅对显式 `@Sendable`/`DispatchQueue.async` 形态报） |
+| C6 | `sending` 与游离区域 | SE-0430：“A `sending` function parameter requires that the argument value be in a disconnected region. At the point of the call, the disconnected region is no longer in the caller's isolation domain…”；“In the Swift 5 language mode, `sending` diagnostics are suppressed under minimal concurrency checking, and diagnosed as warnings under strict concurrency checking.” | `JavaResolverBridge.swift`（正是「实参未游离、调用后又被使用」的反例） | **写法错误**：违反 `sending` 契约；且实测在 `minimal`/`complete`/Swift 6 三档下**均无诊断**（§5.4），属编译器盲区 |
 
 ### 1.4 AsyncStream
 
@@ -112,14 +120,14 @@ swiftc -typecheck -swift-version 5 -default-isolation MainActor \
 
 | # | 语法点 | 官方规则要点（原文关键句） | 项目对应位置 | 结论 |
 |---|---|---|---|---|
-| D1 | 回调 → AsyncStream 的正确桥接 | “AsyncStream… is well-suited to adapt callback- or delegation-based APIs to participate with `async`-`await`.`”；“Produce elements in this closure, then provide them to the stream by calling the continuation's `yield(_:)` method.” | `NetDownloaderDownloadEngine.swift:101-122,174-197` | **写法正确**：`observe(taskID:)` 返回流、`publish` 内 `continuation.yield(state)`；回调 `(Double) -> Void` 经 `publish` 转成流元素 |
+| D1 | 回调 → AsyncStream 的正确桥接 | “AsyncStream… is well-suited to adapt callback- or delegation-based APIs to participate with `async`-`await`.`”；“Produce elements in this closure, then provide them to the stream by calling the continuation's `yield(_:)` method.” | `NetDownloaderDownloadEngine.swift` | **写法正确**：`observe(taskID:)` 返回流、`publish` 内 `continuation.yield(state)`；回调 `(Double) -> Void` 经 `publish` 转成流元素 |
 | D2 | `for await` 消费 | “Because the stream is an `AsyncSequence`, the call point can use the `for`-`await`-`in` syntax to process each `Quake` instance as the stream produces it.” | 项目内消费点分散在 ViewModel/View（未逐个列出） | **写法正确**（未发现错误用法） |
-| D3 | `finish()` 终结语义 | “When there are no further elements to produce, call the continuation's `finish()` method. This causes the sequence iterator to produce a `nil`, which terminates the sequence.”；`finish()` 文档：“Resume the task awaiting the next iteration point by having it return nil, which signifies the end of the iteration.” | `NetDownloaderDownloadEngine.swift:219`、`GameSessionStore.swift`（未显式 finish，靠 `AsyncStream` 建流闭包结束时终结） | **写法正确**：终态时对全部订阅者 `finish()` |
-| D4 | 缓冲策略与背压 | `unbounded`：“Continue to add to the buffer, without imposing a limit on the number of buffered elements.”；`bufferingOldest(Int)`：“When the buffer is full, discard the newly received element.”；`bufferingNewest(Int)`：“When the buffer is full, discard the oldest element in the buffer.”；默认 `.unbounded`。**注意官方原文未出现 “back pressure” 一词**，只有「缓冲上限 + 丢弃策略」的描述 | `NetDownloaderDownloadEngine.swift:107`（`.unbounded`，注释理由：旧引擎已节流到 ~200ms，用有界策略反而可能丢终态） | **有风险（低）**：选 `.unbounded` 的依据（上游节流）成立，但**该保证来自项目注释而非官方契约**；旧引擎若改成高频回调，缓冲将无界增长。若要严格化，改为 `.bufferingNewest(N)` 并保证终态单独走 `finish()` |
-| D5 | `Continuation` 是 `Sendable`、可跨上下文 `yield` | “The continuation conforms to `Sendable`, which permits calling it from concurrent contexts external to the iteration of the `AsyncStream`.”；`init` 文档补充：“It is thread safe to send and finish; all calls to the continuation are serialized. However, calling this from multiple concurrent contexts could result in out-of-order delivery.” | `NetDownloaderDownloadEngine.swift:217-220` | **写法正确**：`yield`/`finish` 在锁外调用，但仍然串行（由发布路径保证）。注意官方提示的「多并发上下文可能乱序」——本项目通过单一 `publish` 出口避免 |
-| D6 | `onTermination` 的正确用法与死锁注意 | “Canceling an active iteration invokes the `onTermination` callback first, then resumes by yielding `nil`… After reaching a terminal state as a result of cancellation, the `AsyncStream` sets the callback to `nil`.”；“Because the system might call the `onTermination` callback as part of task cancellation, it's subject to the same considerations for avoiding deadlock as outlined in the documentation for `withTaskCancellationHandler`.” | `GameSessionStore.swift:74-76`（在 `onTermination` 里 `lock.withLock { … removeValue }`） | **写法正确**：闭包内只做 `OSAllocatedUnfairLock.withLock`（作用域锁，无 `await`、无阻塞等待），不会死锁 |
-| D7 | 多订阅者与终态回放 | 官方无「多订阅者/回放」的直接条款（`AsyncStream` 是单消费者模型） | `NetDownloaderDownloadEngine.swift:22-28,101-122,199-221`（`continuations` 数组 + `terminalHistory` 回放） | **未找到官方依据，标记存疑**：`AsyncStream` 官方文档只描述单一迭代点；对同一 continuation 的多次 `yield` 分发给多个订阅者是项目自建语义，需在合并阶段确认。代码层面无语法错误 |
-| D8 | `AsyncStream.makeStream` 替代写法 | “Initializes a new `AsyncStream` and an `AsyncStream.Continuation`.”（`static func makeStream(of:bufferingPolicy:)`） | 项目统一用 `AsyncStream(bufferingPolicy:) { continuation = $0 }` 双段式 | **写法正确**：`observe` 内先把 `continuation` 传出闭包再 `yield`（`NetDownloaderDownloadEngine.swift:104-112`），因为 `AsyncStream` 的 `build` 闭包返回后 `continuation` 仍可逃逸使用 |
+| D3 | `finish()` 终结语义 | “When there are no further elements to produce, call the continuation's `finish()` method. This causes the sequence iterator to produce a `nil`, which terminates the sequence.”；`finish()` 文档：“Resume the task awaiting the next iteration point by having it return nil, which signifies the end of the iteration.” | `NetDownloaderDownloadEngine.swift`、`GameSessionStore.swift`（未显式 finish，靠 `AsyncStream` 建流闭包结束时终结） | **写法正确**：终态时对全部订阅者 `finish()` |
+| D4 | 缓冲策略与背压 | `unbounded`：“Continue to add to the buffer, without imposing a limit on the number of buffered elements.”；`bufferingOldest(Int)`：“When the buffer is full, discard the newly received element.”；`bufferingNewest(Int)`：“When the buffer is full, discard the oldest element in the buffer.”；默认 `.unbounded`。**注意官方原文未出现 “back pressure” 一词**，只有「缓冲上限 + 丢弃策略」的描述 | `NetDownloaderDownloadEngine.swift`（`.unbounded`，注释理由：旧引擎已节流到 ~200ms，用有界策略反而可能丢终态） | **有风险（低）**：选 `.unbounded` 的依据（上游节流）成立，但**该保证来自项目注释而非官方契约**；旧引擎若改成高频回调，缓冲将无界增长。若要严格化，改为 `.bufferingNewest(N)` 并保证终态单独走 `finish()` |
+| D5 | `Continuation` 是 `Sendable`、可跨上下文 `yield` | “The continuation conforms to `Sendable`, which permits calling it from concurrent contexts external to the iteration of the `AsyncStream`.”；`init` 文档补充：“It is thread safe to send and finish; all calls to the continuation are serialized. However, calling this from multiple concurrent contexts could result in out-of-order delivery.” | `NetDownloaderDownloadEngine.swift` | **写法正确**：`yield`/`finish` 在锁外调用，但仍然串行（由发布路径保证）。注意官方提示的「多并发上下文可能乱序」——本项目通过单一 `publish` 出口避免 |
+| D6 | `onTermination` 的正确用法与死锁注意 | “Canceling an active iteration invokes the `onTermination` callback first, then resumes by yielding `nil`… After reaching a terminal state as a result of cancellation, the `AsyncStream` sets the callback to `nil`.”；“Because the system might call the `onTermination` callback as part of task cancellation, it's subject to the same considerations for avoiding deadlock as outlined in the documentation for `withTaskCancellationHandler`.” | `GameSessionStore.swift`（在 `onTermination` 里 `lock.withLock { … removeValue }`） | **写法正确**：闭包内只做 `OSAllocatedUnfairLock.withLock`（作用域锁，无 `await`、无阻塞等待），不会死锁 |
+| D7 | 多订阅者与终态回放 | 官方无「多订阅者/回放」的直接条款（`AsyncStream` 是单消费者模型） | `NetDownloaderDownloadEngine.swift`（`continuations` 数组 + `terminalHistory` 回放） | **未找到官方依据，标记存疑**：`AsyncStream` 官方文档只描述单一迭代点；对同一 continuation 的多次 `yield` 分发给多个订阅者是项目自建语义，需在合并阶段确认。代码层面无语法错误 |
+| D8 | `AsyncStream.makeStream` 替代写法 | “Initializes a new `AsyncStream` and an `AsyncStream.Continuation`.”（`static func makeStream(of:bufferingPolicy:)`） | 项目统一用 `AsyncStream(bufferingPolicy:) { continuation = $0 }` 双段式 | **写法正确**：`observe` 内先把 `continuation` 传出闭包再 `yield`（`NetDownloaderDownloadEngine.swift`），因为 `AsyncStream` 的 `build` 闭包返回后 `continuation` 仍可逃逸使用 |
 
 ### 1.5 续体（continuation）
 
@@ -129,11 +137,11 @@ swiftc -typecheck -swift-version 5 -default-isolation MainActor \
 
 | # | 语法点 | 官方规则要点（原文关键句） | 项目对应位置 | 结论 |
 |---|---|---|---|---|
-| E1 | 必须**恰好一次** resume | “**You must call a resume method exactly once on every execution path throughout the program.** Resuming from a continuation more than once is undefined behavior. Never resuming leaves the task in a suspended state indefinitely, and leaks any associated resources. `CheckedContinuation` logs a message if either of these invariants is violated.” | 全部续体使用点 | **部分有风险**：多数正确，但 `GameProcessController.swift:39-48` 存在「永不 resume」路径，详见 §2.1 |
-| E2 | 回调式 API → async 的标准桥接 | `withCheckedThrowingContinuation`：“Invokes the passed in closure with a checked continuation for the current task.”；配合 `CheckedContinuation` 的「恰好一次」约束使用 | `MinecraftInstanceLaunchService.swift:97-149` | **写法正确**：用 `LaunchResumeGate`（`NSLock` + `claimed`）保证 `completion` 只 resume 一次，注释也点明「重复恢复会直接触发运行时崩溃」 |
-| E3 | 续体在非主线程 resume 是否合法 | 官方未限制 resume 的线程；`CheckedContinuation` 本身 `Sendable`（见其 Relationships 节 `Conforms To: Sendable`） | `ProcessPoolGameProcessController.swift:121-132`（在 `DispatchQueue.global` 内 resume） | **写法正确** |
-| E4 | 超时兜底避免永久挂起 | 见 E1（“Never resuming leaves the task in a suspended state indefinitely”） | `NoticeCenter.swift:158-175` | **写法正确**：`hasPresenter == false` 直接返回 0；否则投递一个 300s 兜底 `Task`。`choose` 用 `pending.removeValue` 保证超时与用户点选不会双重 resume |
-| E5 | 续体跨 `await` 持有的状态 | 无专门的官方条款 | `NoticeCenter.swift:130`（`pending: [UUID: CheckedContinuation<Int, Never>]`） | **有风险（低）**：若调用方 Task 被取消而 UI 承载者仍在，`pending` 条目会保留到兜底超时（300s）后才清理；不会崩溃，但有 300s 的资源滞留。Swift 并发未提供 `withTaskCancellationHandler` 保护此表 |
+| E1 | 必须**恰好一次** resume | “**You must call a resume method exactly once on every execution path throughout the program.** Resuming from a continuation more than once is undefined behavior. Never resuming leaves the task in a suspended state indefinitely, and leaks any associated resources. `CheckedContinuation` logs a message if either of these invariants is violated.” | 全部续体使用点 | **部分有风险**：多数正确，但 `GameProcessController.swift` 存在「永不 resume」路径，详见 §2.1 |
+| E2 | 回调式 API → async 的标准桥接 | `withCheckedThrowingContinuation`：“Invokes the passed in closure with a checked continuation for the current task.”；配合 `CheckedContinuation` 的「恰好一次」约束使用 | `MinecraftInstanceLaunchService.swift` | **写法正确**：用 `LaunchResumeGate`（`NSLock` + `claimed`）保证 `completion` 只 resume 一次，注释也点明「重复恢复会直接触发运行时崩溃」 |
+| E3 | 续体在非主线程 resume 是否合法 | 官方未限制 resume 的线程；`CheckedContinuation` 本身 `Sendable`（见其 Relationships 节 `Conforms To: Sendable`） | `ProcessPoolGameProcessController.swift`（在 `DispatchQueue.global` 内 resume） | **写法正确** |
+| E4 | 超时兜底避免永久挂起 | 见 E1（“Never resuming leaves the task in a suspended state indefinitely”） | `NoticeCenter.swift` | **写法正确**：`hasPresenter == false` 直接返回 0；否则投递一个 300s 兜底 `Task`。`choose` 用 `pending.removeValue` 保证超时与用户点选不会双重 resume |
+| E5 | 续体跨 `await` 持有的状态 | 无专门的官方条款 | `NoticeCenter.swift`（`pending: [UUID: CheckedContinuation<Int, Never>]`） | **有风险（低）**：若调用方 Task 被取消而 UI 承载者仍在，`pending` 条目会保留到兜底超时（300s）后才清理；不会崩溃，但有 300s 的资源滞留。Swift 并发未提供 `withTaskCancellationHandler` 保护此表 |
 
 ### 1.6 锁与信号量
 
@@ -145,14 +153,14 @@ swiftc -typecheck -swift-version 5 -default-isolation MainActor \
 
 | # | 语法点 | 官方规则要点（原文关键句） | 项目对应位置 | 结论 |
 |---|---|---|---|---|
-| F1 | `noasync` 属性语义 | Swift 书：“The `noasync` argument indicates that the declared symbol can't be used directly in an asynchronous context. Because Swift concurrency can resume on a different thread after a potential suspension point, using elements like thread-local storage, locks, mutexes, or semaphores across suspension points can lead to incorrect results.”；“This attribute raises a compile-time error when someone uses the symbol in an asynchronous context.”；“If you can guarantee that your code uses a potentially unsafe symbol in a safe manner, you can wrap it in a synchronous function and call that function from an asynchronous context.” | `NoasyncBridge.swift:30-33`（原 `LockCompat.swift:32-37`；`semaphoreWait` 同步中转） | **写法有争议**：官方**确实**给出了「用同步函数包装以绕过 noasync」的正式做法，故 `LockCompat.semaphoreWait` 有官方依据。但官方语义是「你能保证安全时才这么做」——`semaphoreWait` 在语义上并未改变阻塞行为，只是绕过诊断，属「诊断规避」而非「安全化」 |
-| F2 | 同步包装可绕过 noasync 的适用边界 | 同上：“You can wrap it in a synchronous function and call that function from an asynchronous context.”（官方示例是 `withLock` 作用域锁，本质改变了用法而非仅隐藏调用） | `LockCompat.swift:13-30`（`withUnfairLock`、`NSLock.withLockCompat`） | **写法正确**：作用域锁形态符合官方示例 |
-| F3 | 信号量禁止在 async 上下文直接使用 | 实测（§5.5）：`DispatchSemaphore.wait()` 在 `async` 函数内 → Swift 5 **warning**：“instance method 'wait' is unavailable from asynchronous contexts; Await a Task handle instead; this is an error in the Swift 6 language mode”；Swift 6 → **error** | `LocalModCatalog.swift:97-99`（在 `Task.detached` 的 async 闭包内直接 `localCatalogLock.lock()/unlock()`） | **写法错误**：实测告警 `instance method 'lock'/'unlock' is unavailable from asynchronous contexts`；详见 §2.3 |
-| F4 | 信号量阻塞协作线程池 | WWDC21 10254：“primitives like semaphores and condition variables are unsafe to use with Swift concurrency… **do not use primitives that create unstructured tasks and then retroactively introduce a dependency across task boundaries by using a semaphore or an unsafe primitive.** Such a code pattern means that a thread can block indefinitely against the semaphore until another thread is able to unblock it. This violates the runtime contract of forward progress for threads.” | `JavaResolverBridge.swift:31-48`、`SLLaunchBridge.swift:138-155,177-182`、`MinecraftLauncher.swift:139,189`、`ProcessPool.swift:52,72-82,110-131` | **有风险**：`JavaResolverBridge` 完全命中官方点名的反模式（unstructured task + 跨 task 边界用信号量建立依赖）。`SLLaunchBridge` 的 `fixSemaphore` 同理（见 §2.2 同源问题） |
-| F5 | 锁在同步临界区内是安全的 | WWDC21 10254：“Using a lock in synchronous code is safe when used for data synchronization around a tight, well-known critical section. This is because the thread holding the lock is always able to make progress towards releasing the lock.” | `CacheManager.swift:11,21-45`、`NetDownloaderDownloadEngine.swift:46,145-170`、`LaunchResumeGate`、`GameLogWriter`、`LaunchProgressRelay` | **写法正确**：均为同步临界区，且锁内只做内存操作（`CacheManager.swift:48-51` 的注释与实现一致：磁盘 IO 全部在锁外） |
-| F6 | `NSLock` 直接 `lock()/unlock()` 是 noasync | 实测（§5.5）：`l.lock()` / `l.unlock()` 在 async 上下文 → 同类诊断（Swift 6 error） | `NSLock.withLockCompat`（`LockCompat.swift:21-30`，同步包装，正确）；`LocalModCatalog.swift:97-99`（**未包装，错误**） | 见 F3 |
-| F7 | `NSLock.withLock` 的可用版本 | `OSAllocatedUnfairLock` 文档：“it's unsafe to use `os_unfair_lock` from Swift because it's a value type… Instead, use `OSAllocatedUnfairLock`, which avoids that pitfall”；`OSAllocatedUnfairLock` 可用性：**macOS 13.0+** | `~~LockCompat.swift:6-10~~` 注释：「Apple 官方建议的 `OSAllocatedUnfairLock` / `NSLock.withLock` 需要 macOS 13」 | **注释有误（结论无害）**：实测（§5.6）`NSLock.withLock` 在 `-target arm64-apple-macos10.13` 下**可直接编译通过**（SDK 中经 `@_alwaysEmitIntoClient` 回部署，声明可用性为 `macOS 10.10, iOS 8.0`）。只有 `OSAllocatedUnfairLock` 确实需要 macOS 13。项目部署目标是 13.0，故 `withLockCompat` 属冗余但不错。**2026-09-22 已落地本结论**：该符号删除，Translation 模块 5 处调用改用原生 `withLock`（`_ =` 显式丢弃闭包返回值，替代原 `@discardableResult`） |
-| F8 | 作用域锁跨 `await` 安全 | `OSAllocatedUnfairLock` 文档：“When using this approach, you must call `unlock()` from the same thread you use to call `lock()`. Because of this, **it's unsafe to use this approach across an `await` suspension point.** When using a lock with asynchronous code, lock using a closure or, even better, consider using an `Actor`.” | `MinecraftInstanceLaunchService.swift:77,153,186,190`、`GameSessionStore.swift:47,52,58,67,73-76`、`ProcessPoolGameProcessController.swift:63,73,104` | **写法正确**：全部使用 `withLock { }` 作用域形态，无 `lock()/unlock()` 跨 `await` |
+| F1 | `noasync` 属性语义 | Swift 书：“The `noasync` argument indicates that the declared symbol can't be used directly in an asynchronous context. Because Swift concurrency can resume on a different thread after a potential suspension point, using elements like thread-local storage, locks, mutexes, or semaphores across suspension points can lead to incorrect results.”；“This attribute raises a compile-time error when someone uses the symbol in an asynchronous context.”；“If you can guarantee that your code uses a potentially unsafe symbol in a safe manner, you can wrap it in a synchronous function and call that function from an asynchronous context.” | `NoasyncBridge.swift`（原 `LockCompat.swift`；`semaphoreWait` 同步中转） | **写法有争议**：官方**确实**给出了「用同步函数包装以绕过 noasync」的正式做法，故 `LockCompat.semaphoreWait` 有官方依据。但官方语义是「你能保证安全时才这么做」——`semaphoreWait` 在语义上并未改变阻塞行为，只是绕过诊断，属「诊断规避」而非「安全化」 |
+| F2 | 同步包装可绕过 noasync 的适用边界 | 同上：“You can wrap it in a synchronous function and call that function from an asynchronous context.”（官方示例是 `withLock` 作用域锁，本质改变了用法而非仅隐藏调用） | `LockCompat.swift`（`withUnfairLock`、`NSLock.withLockCompat`） | **写法正确**：作用域锁形态符合官方示例 |
+| F3 | 信号量禁止在 async 上下文直接使用 | 实测（§5.5）：`DispatchSemaphore.wait()` 在 `async` 函数内 → Swift 5 **warning**：“instance method 'wait' is unavailable from asynchronous contexts; Await a Task handle instead; this is an error in the Swift 6 language mode”；Swift 6 → **error** | `LocalModCatalog.swift`（在 `Task.detached` 的 async 闭包内直接 `localCatalogLock.lock()/unlock()`） | **写法错误**：实测告警 `instance method 'lock'/'unlock' is unavailable from asynchronous contexts`；详见 §2.3 |
+| F4 | 信号量阻塞协作线程池 | WWDC21 10254：“primitives like semaphores and condition variables are unsafe to use with Swift concurrency… **do not use primitives that create unstructured tasks and then retroactively introduce a dependency across task boundaries by using a semaphore or an unsafe primitive.** Such a code pattern means that a thread can block indefinitely against the semaphore until another thread is able to unblock it. This violates the runtime contract of forward progress for threads.” | `JavaResolverBridge.swift`、`SLLaunchBridge.swift`、`MinecraftLauncher.swift`、`ProcessPool.swift` | **有风险**：`JavaResolverBridge` 完全命中官方点名的反模式（unstructured task + 跨 task 边界用信号量建立依赖）。`SLLaunchBridge` 的 `fixSemaphore` 同理（见 §2.2 同源问题） |
+| F5 | 锁在同步临界区内是安全的 | WWDC21 10254：“Using a lock in synchronous code is safe when used for data synchronization around a tight, well-known critical section. This is because the thread holding the lock is always able to make progress towards releasing the lock.” | `CacheManager.swift`、`NetDownloaderDownloadEngine.swift`、`LaunchResumeGate`、`GameLogWriter`、`LaunchProgressRelay` | **写法正确**：均为同步临界区，且锁内只做内存操作（`CacheManager.swift` 的注释与实现一致：磁盘 IO 全部在锁外） |
+| F6 | `NSLock` 直接 `lock()/unlock()` 是 noasync | 实测（§5.5）：`l.lock()` / `l.unlock()` 在 async 上下文 → 同类诊断（Swift 6 error） | `NSLock.withLockCompat`（`LockCompat.swift`，同步包装，正确）；`LocalModCatalog.swift`（**未包装，错误**） | 见 F3 |
+| F7 | `NSLock.withLock` 的可用版本 | `OSAllocatedUnfairLock` 文档：“it's unsafe to use `os_unfair_lock` from Swift because it's a value type… Instead, use `OSAllocatedUnfairLock`, which avoids that pitfall”；`OSAllocatedUnfairLock` 可用性：**macOS 13.0+** | `~~LockCompat.swift~~` 注释：「Apple 官方建议的 `OSAllocatedUnfairLock` / `NSLock.withLock` 需要 macOS 13」 | **注释有误（结论无害）**：实测（§5.6）`NSLock.withLock` 在 `-target arm64-apple-macos10.13` 下**可直接编译通过**（SDK 中经 `@_alwaysEmitIntoClient` 回部署，声明可用性为 `macOS 10.10, iOS 8.0`）。只有 `OSAllocatedUnfairLock` 确实需要 macOS 13。项目部署目标是 13.0，故 `withLockCompat` 属冗余但不错。**2026-09-22 已落地本结论**：该符号删除，Translation 模块 5 处调用改用原生 `withLock`（`_ =` 显式丢弃闭包返回值，替代原 `@discardableResult`） |
+| F8 | 作用域锁跨 `await` 安全 | `OSAllocatedUnfairLock` 文档：“When using this approach, you must call `unlock()` from the same thread you use to call `lock()`. Because of this, **it's unsafe to use this approach across an `await` suspension point.** When using a lock with asynchronous code, lock using a closure or, even better, consider using an `Actor`.” | `MinecraftInstanceLaunchService.swift`、`GameSessionStore.swift`、`ProcessPoolGameProcessController.swift` | **写法正确**：全部使用 `withLock { }` 作用域形态，无 `lock()/unlock()` 跨 `await` |
 | F9 | `OSAllocatedUnfairLock` 非递归 | “`OSAllocatedUnfairLock` isn't a recursive lock. Attempting to lock an object more than once from the same thread without unlocking in between triggers a runtime exception.” | 上列各处 | **写法正确**：无嵌套 `withLock`（`GameSessionStore.observe` 的 `onTermination` 与 `update` 不会重入） |
 
 ### 1.7 DispatchSource 内存压力
@@ -161,11 +169,11 @@ swiftc -typecheck -swift-version 5 -default-isolation MainActor \
 
 | # | 语法点 | 官方规则要点（原文关键句） | 项目对应位置 | 结论 |
 |---|---|---|---|---|
-| G1 | 构造与事件处理挂载 | “After creating the dispatch source, use the methods of the `DispatchSourceProtocol` protocol to install the event handlers you need. **The returned dispatch source is in the inactive state initially.** When you are ready to begin processing events, call its `activate()` method.” | `AppContext.swift:76-84` | **写法正确（但用旧 API）**：`setEventHandler` + `resume()` 语义等价于 `activate()`；`resume()` 已不在当前文档正文中出现，建议迁到 `activate()` |
-| G2 | `queue` 参数缺省意味着什么 | 签名：`queue: DispatchQueue? = nil`；参数说明：“The dispatch queue to use when executing the installed handlers.”（**官方未在正文说明 nil 时落到哪个队列**） | `AppContext.swift:76`（未传 `queue` → `nil`） | **未找到官方依据，标记存疑**：`nil` 时的实际执行队列官方未写明（实践上落到默认全局并发队列，**不是主队列**）。本项目 `eventHandler` 里调用 `self?.cacheManager.trimMemory(toFraction: 0.5)` 与 `DownloadCategoryView.clearStaticCaches()`，二者在默认隔离下均为 `@MainActor` 隔离 → 实测告警（§2.10）。**结论：应显式传 `queue: .main`**，见 §2.10 |
-| G3 | 事件源必须 `resume/activate` 才会投递 | 见 G1 | `AppContext.swift:83`（`source.resume()`） | **写法正确** |
-| G4 | 生命周期与取消 | 官方未给出 `deinit` 中取消的明文要求；`DispatchSourceProtocol.cancel()` 存在 | `AppContext.swift:87-89` | **写法正确**：`AppContext.shared` 是进程级单例，`deinit` 实际不会执行；`cancel()` 属防御性写法 |
-| G5 | `DispatchSourceMemoryPressure` 的事件掩码 | `eventMask: DispatchSource.MemoryPressureEvent`，项目传 `[.warning, .critical]` | `AppContext.swift:76` | **写法正确** |
+| G1 | 构造与事件处理挂载 | “After creating the dispatch source, use the methods of the `DispatchSourceProtocol` protocol to install the event handlers you need. **The returned dispatch source is in the inactive state initially.** When you are ready to begin processing events, call its `activate()` method.” | `AppContext.swift` | **写法正确（但用旧 API）**：`setEventHandler` + `resume()` 语义等价于 `activate()`；`resume()` 已不在当前文档正文中出现，建议迁到 `activate()` |
+| G2 | `queue` 参数缺省意味着什么 | 签名：`queue: DispatchQueue? = nil`；参数说明：“The dispatch queue to use when executing the installed handlers.”（**官方未在正文说明 nil 时落到哪个队列**） | `AppContext.swift`（未传 `queue` → `nil`） | **未找到官方依据，标记存疑**：`nil` 时的实际执行队列官方未写明（实践上落到默认全局并发队列，**不是主队列**）。本项目 `eventHandler` 里调用 `self?.cacheManager.trimMemory(toFraction: 0.5)` 与 `DownloadCategoryView.clearStaticCaches()`，二者在默认隔离下均为 `@MainActor` 隔离 → 实测告警（§2.10）。**结论：应显式传 `queue: .main`**，见 §2.10 |
+| G3 | 事件源必须 `resume/activate` 才会投递 | 见 G1 | `AppContext.swift`（`source.resume()`） | **写法正确** |
+| G4 | 生命周期与取消 | 官方未给出 `deinit` 中取消的明文要求；`DispatchSourceProtocol.cancel()` 存在 | `AppContext.swift` | **写法正确**：`AppContext.shared` 是进程级单例，`deinit` 实际不会执行；`cancel()` 属防御性写法 |
+| G5 | `DispatchSourceMemoryPressure` 的事件掩码 | `eventMask: DispatchSource.MemoryPressureEvent`，项目传 `[.warning, .critical]` | `AppContext.swift` | **写法正确** |
 
 ### 1.8 值语义 / 引用语义
 
@@ -173,11 +181,11 @@ swiftc -typecheck -swift-version 5 -default-isolation MainActor \
 
 | # | 语法点 | 官方规则要点（原文关键句） | 项目对应位置 | 结论 |
 |---|---|---|---|---|
-| H1 | `struct` 是值类型 | “A *value type* is a type whose value is *copied* when it's assigned to a variable or constant, or when it's passed to a function.”；“All structures and enumerations are value types in Swift. This means that any structure and enumeration instances you create — and any value types they have as properties — are always copied when they're passed around in your code.” | `SLModule.swift:15-18`（`protocol SLModule { func register(in context: ModuleContext) throws }`） | — |
-| H2 | `class` 是引用类型 | “Unlike value types, *reference types* are *not* copied when they're assigned to a variable or constant, or when they're passed to a function. Rather than a copy, a reference to the same existing instance is used.” | `SLModule.swift:33-48`（`final class ModuleContext`） | **写法正确**：`ModuleContext` 用 class 是**必需**的 |
-| H3 | 「`ModuleContext` 必须用 class」的论证 | 由 H1+H2 直接推出：若 `ModuleContext` 是 struct，`register(in:)` 内部写入的是**副本**，能力注册对调用方不可见 | `SLModule.swift:29-33` 的注释正是此论证 | **论点成立，且已实跑验证**（§5.7）：struct 版上下文注册后 `resolve` 返回 `nil`；class 版返回 `Optional(42)` |
-| H4 | 泛型能力键用 `struct: Hashable` | 官方未专门条款；`Hashable` 作为字典键的标准用法 | `SLModule.swift:21-27`（`struct ModuleCapabilityKey<Value>: Hashable`） | **写法正确** |
-| H5 | 模块上下文的并发可达性 | 官方无条款要求 `ModuleContext` 必须 `Sendable`；`final class` 无隔离时在默认隔离设置下变 `@MainActor`（§5.1） | `SLModule.swift:33`、`ModuleRegistry.swift:7-25` | **有风险（中）**：`ModuleContext` / `ModuleRegistry` 内部无锁、无隔离声明；在默认 MainActor 隔离下它们**被**推断为 `@MainActor`，但一旦有人在 `nonisolated` 上下文（例如子模块在后台线程做注册）触碰，即告警→Swift 6 报错。若意图是「启动期单线程装配」，建议在类型上**显式**写 `@MainActor` 把意图固化；若意图是「并发可访问」，必须加锁并标 `@unchecked Sendable`。当前二者皆无，属意图未表达 |
+| H1 | `struct` 是值类型 | “A *value type* is a type whose value is *copied* when it's assigned to a variable or constant, or when it's passed to a function.”；“All structures and enumerations are value types in Swift. This means that any structure and enumeration instances you create — and any value types they have as properties — are always copied when they're passed around in your code.” | `SLModule.swift`（`protocol SLModule { func register(in context: ModuleContext) throws }`） | — |
+| H2 | `class` 是引用类型 | “Unlike value types, *reference types* are *not* copied when they're assigned to a variable or constant, or when they're passed to a function. Rather than a copy, a reference to the same existing instance is used.” | `SLModule.swift`（`final class ModuleContext`） | **写法正确**：`ModuleContext` 用 class 是**必需**的 |
+| H3 | 「`ModuleContext` 必须用 class」的论证 | 由 H1+H2 直接推出：若 `ModuleContext` 是 struct，`register(in:)` 内部写入的是**副本**，能力注册对调用方不可见 | `SLModule.swift` 的注释正是此论证 | **论点成立，且已实跑验证**（§5.7）：struct 版上下文注册后 `resolve` 返回 `nil`；class 版返回 `Optional(42)` |
+| H4 | 泛型能力键用 `struct: Hashable` | 官方未专门条款；`Hashable` 作为字典键的标准用法 | `SLModule.swift`（`struct ModuleCapabilityKey<Value>: Hashable`） | **写法正确** |
+| H5 | 模块上下文的并发可达性 | 官方无条款要求 `ModuleContext` 必须 `Sendable`；`final class` 无隔离时在默认隔离设置下变 `@MainActor`（§5.1） | `SLModule.swift`、`ModuleRegistry.swift` | **有风险（中）**：`ModuleContext` / `ModuleRegistry` 内部无锁、无隔离声明；在默认 MainActor 隔离下它们**被**推断为 `@MainActor`，但一旦有人在 `nonisolated` 上下文（例如子模块在后台线程做注册）触碰，即告警→Swift 6 报错。若意图是「启动期单线程装配」，建议在类型上**显式**写 `@MainActor` 把意图固化；若意图是「并发可访问」，必须加锁并标 `@unchecked Sendable`。当前二者皆无，属意图未表达 |
 
 ---
 
@@ -187,7 +195,7 @@ swiftc -typecheck -swift-version 5 -default-isolation MainActor \
 
 ### 2.1 【严重】`GameProcessController.waitForTermination()` 存在续体永不 resume 的路径
 
-- 位置：`qwq/Features/Launch/GameProcessController.swift:39-48`
+- 位置：`qwq/Features/Launch/GameProcessController.swift`
 - 官方依据：`CheckedContinuation` <https://developer.apple.com/documentation/swift/checkedcontinuation> —— “**You must call a resume method exactly once on every execution path throughout the program.** … Never resuming leaves the task in a suspended state indefinitely, and leaks any associated resources.”
 - 官方依据：`Process.terminationHandler` <https://developer.apple.com/documentation/foundation/process/terminationhandler> —— 签名 `(@Sendable (Process) -> Void)?`；Discussion 只说明“A completion block the system invokes when the task completes”，**未承诺「进程已退出后再设置 handler 仍会被调用」**。
 - 情况：先判断 `process.isRunning`，再在 `withCheckedContinuation` 内**设置** `terminationHandler`。若进程在这两步之间退出，handler 可能永不触发 → continuation 永不 resume → 该 `await` 永久挂起并泄漏。文件自己的注释只把它当成「窄窗口竞态」并推给调用方，但官方对续体的要求是**所有路径恰好 resume 一次**，不能用「窗口很窄」豁免。
@@ -226,11 +234,11 @@ public func waitForTermination() async -> Int32 {
 }
 ```
 
-> 说明：`LaunchResumeGate` 定义于 `MinecraftInstanceLaunchService.swift:252`；若跨文件使用需将其提升为 internal（这属于改动，须在合并阶段统一决策）。
+> 说明：`LaunchResumeGate` 定义于 `MinecraftInstanceLaunchService.swift`；若跨文件使用需将其提升为 internal（这属于改动，须在合并阶段统一决策）。
 
 ### 2.2 【严重】`JavaResolverBridge.resolveSynchronously` —— 官方明文禁止的「同步等待异步」，且存在数据竞争
 
-- 位置：`qwq/Features/Java/JavaResolverBridge.swift:19-50`
+- 位置：`qwq/Features/Java/JavaResolverBridge.swift`
 - 官方依据（三条同时命中）：
   1. Swift 书《Concurrency》 <https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/> —— “**In contrast, there's no safe way to wrap asynchronous code so you can call it from synchronous code and wait for the result. The Swift standard library intentionally omits this unsafe functionality — trying to implement it yourself can lead to problems like subtle races, threading issues, and deadlocks.**”
   2. WWDC21 10254 <https://developer.apple.com/videos/play/wwdc2021/10254/> —— “**do not use primitives that create unstructured tasks and then retroactively introduce a dependency across task boundaries by using a semaphore or an unsafe primitive.** … This violates the runtime contract of forward progress for threads.”
@@ -312,18 +320,18 @@ private func resolveWithTimeout(minimumMajor: Int, mcVersion: String?, timeout: 
 
 ### 2.3 【严重】`LocalModCatalog`：async 上下文内直接调用 `NSLock.lock()/unlock()`
 
-- 位置：`qwq/Features/ModBrowser/LocalModCatalog.swift:97-99`（`preload()` 的 `Task.detached` 闭包内）
+- 位置：`qwq/Features/ModBrowser/LocalModCatalog.swift`（`preload()` 的 `Task.detached` 闭包内）
 - 官方依据：Swift 书《Attributes》`noasync` <https://docs.swift.org/swift-book/documentation/the-swift-programming-language/attributes/> —— “This attribute raises a compile-time error when someone uses the symbol in an asynchronous context.”
 - 实测诊断（工程设置下）：
 
 ```
-qwq/Features/ModBrowser/LocalModCatalog.swift:97:30: warning: instance method 'lock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
-qwq/Features/ModBrowser/LocalModCatalog.swift:99:30: warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+qwq/Features/ModBrowser/LocalModCatalog.swift:30: warning: instance method 'lock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
+qwq/Features/ModBrowser/LocalModCatalog.swift:30: warning: instance method 'unlock' is unavailable from asynchronous contexts; Use async-safe scoped locking instead; this is an error in the Swift 6 language mode
 ```
 
-- 重要：同一文件 `:74-80`、`:88-90` 处的 `localCatalogLock.lock()/unlock()` 位于**同步函数**内，不违反 `noasync`；**只有 `:97-99` 那三行在 async 闭包内**。项目已备有 `LockCompat.swift:21-30` 的 `NSLock.withLockCompat`，此处未使用。
+- 重要：同一文件 `:74-80`、`:88-90` 处的 `localCatalogLock.lock()/unlock()` 位于**同步函数**内，不违反 `noasync`；**只有 `:97-99` 那三行在 async 闭包内**。项目已备有 `LockCompat.swift` 的 `NSLock.withLockCompat`，此处未使用。
 
-改前（`LocalModCatalog.swift:92-103` 节选）：
+改前（`LocalModCatalog.swift` 节选）：
 
 ```swift
 Task.detached(priority: .userInitiated) {
@@ -357,8 +365,8 @@ Task.detached(priority: .userInitiated) {
 
 ### 2.4 【严重】`SLLaunchBridge`：`Task.detached` 内访问 `@MainActor` 隔离属性（Swift 6 硬错误）
 
-- 位置：`qwq/SLCore/SLLaunchBridge.swift:316`（`windowTask` 内 `launcher.currentProcess`）
-- 定义处：`qwq/SLCore/Minecraft/Launch/MinecraftLauncher.swift:105` `public private(set) var currentProcess: Process?`
+- 位置：`qwq/SLCore/SLLaunchBridge.swift`（`windowTask` 内 `launcher.currentProcess`）
+- 定义处：`qwq/SLCore/Minecraft/Launch/MinecraftLauncher.swift` `public private(set) var currentProcess: Process?`
 - 官方依据：SE-0316 <https://github.com/swiftlang/swift-evolution/blob/main/proposals/0316-global-actors.md> —— “the declaration can only be synchronously accessed from another declaration on the same global actor, but can be asynchronously accessed from elsewhere.”
 - 实测诊断：
 
@@ -370,7 +378,7 @@ Swift 6 语言模式      ：error:   main actor-isolated property 'currentProce
 - 这是全项目在 Swift 6 语言模式下**第一个**（也是编译中止前唯一暴露出的）硬错误。
 - 根因有二：① `MinecraftLauncher` 未显式标注隔离，在 `-default-isolation MainActor` 下整个类被推断为 `@MainActor`；② 访问发生在无隔离的 `Task.detached` 内。
 
-改前（`SLLaunchBridge.swift:313-331` 节选）：
+改前（`SLLaunchBridge.swift` 节选）：
 
 ```swift
 let windowTask = Task.detached(priority: .utility) {
@@ -397,7 +405,7 @@ let windowTask = Task.detached(priority: .utility) {
 
 ### 2.5 【严重】`slLaunchInternal` 被推断为 `@MainActor`，却被丢到 GCD 后台队列 —— 隔离声明与运行线程不一致
 
-- 位置：调用方 `qwq/SLCore/SLLaunchBridge.swift:66-78`（`DispatchQueue.global(qos: .userInitiated).async { slLaunchInternal(…) }`）；被调用方 `qwq/SLCore/SLLaunchBridge.swift:81-91`（`private func slLaunchInternal(…)`）
+- 位置：调用方 `qwq/SLCore/SLLaunchBridge.swift`（`DispatchQueue.global(qos: .userInitiated).async { slLaunchInternal(…) }`）；被调用方 `qwq/SLCore/SLLaunchBridge.swift`（`private func slLaunchInternal(…)`）
 - 官方依据：同 §2.4（SE-0316）；`-default-isolation MainActor` 使未标注的自由函数也变 `@MainActor`。
 - 实测（§5.1 复刻验证）：非隔离闭包内调用默认隔离的自由函数，在 **Swift 6 语言模式下报 `[#ActorIsolatedCall]` 告警**；在 **Swift 5 语言模式下不报**。因此工程当前**静默**地违反了自己的隔离声明。
 - 影响面：整条 `slLaunchInternal` 链路上的「主 actor 隔离」都是**假的**（运行在 GCD 线程上）。这既掩盖了真实的主线程阻塞风险（如 §2.2 的 8s 等待），也让任何后续「合规地」从 MainActor 调用它的人踩雷。
@@ -433,18 +441,18 @@ Task { await slLaunchInternal(version: version, …) }   // 继承 MainActor 隔
 
 ### 2.6 【严重】`LocalModCatalog`：`Task.detached` 内调用 MainActor 隔离的静态成员
 
-- 位置：`qwq/Features/ModBrowser/LocalModCatalog.swift:93-96`（`items(for:)` × 4）、`:97,99`（`localCatalogLock`）、`:113`（`TranslationService.shared`）、`:127`（`cachedTranslation(for:)`）、`:174`（`saveCatalogToDisk`）
+- 位置：`qwq/Features/ModBrowser/LocalModCatalog.swift`（`items(for:)` × 4）、`:97,99`（`localCatalogLock`）、`:113`（`TranslationService.shared`）、`:127`（`cachedTranslation(for:)`）、`:174`（`saveCatalogToDisk`）
 - 官方依据：SE-0316（同 §2.4）；Swift 书《Concurrency》——“The new task defaults to running **without any actor isolation**”（`Task.detached`）。
 - 实测诊断（工程设置下，节选）：
 
 ```
-LocalModCatalog.swift:93:17: warning: main actor-isolated static method 'items(for:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
-LocalModCatalog.swift:94:17: warning: …（同上，×4）
-LocalModCatalog.swift:97:13: warning: main actor-isolated static property 'localCatalogLock' cannot be accessed from outside of the actor; …
-LocalModCatalog.swift:99:13: warning: …（同上）
-LocalModCatalog.swift:113:46: warning: main actor-isolated static property 'shared' cannot be accessed from outside of the actor; …
-LocalModCatalog.swift:127:55: warning: main actor-isolated instance method 'cachedTranslation(for:)' cannot be called from outside of the actor; …
-LocalModCatalog.swift:174:45: warning: main actor-isolated static method 'saveCatalogToDisk' cannot be called from outside of the actor; …
+LocalModCatalog.swift:17: warning: main actor-isolated static method 'items(for:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+LocalModCatalog.swift:17: warning: …（同上，×4）
+LocalModCatalog.swift:13: warning: main actor-isolated static property 'localCatalogLock' cannot be accessed from outside of the actor; …
+LocalModCatalog.swift:13: warning: …（同上）
+LocalModCatalog.swift:46: warning: main actor-isolated static property 'shared' cannot be accessed from outside of the actor; …
+LocalModCatalog.swift:55: warning: main actor-isolated instance method 'cachedTranslation(for:)' cannot be called from outside of the actor; …
+LocalModCatalog.swift:45: warning: main actor-isolated static method 'saveCatalogToDisk' cannot be called from outside of the actor; …
 ```
 
 - 注意 `LocalModCatalog` 并未标注 `@MainActor` —— 这些隔离**全部来自默认隔离设置**。
@@ -497,19 +505,19 @@ static func preTranslateAll() async {
 
 ### 2.7 【中】`NetDownloader.shared` / `LoaderSupportChecker`：MainActor 隔离静态成员被非隔离上下文访问
 
-- 位置：`qwq/SLCore/Download/NetDownloader.swift:245,563,605,608`；`qwq/SLCore/Minecraft/Mod/Loader/LoaderSupportChecker.swift:271`
+- 位置：`qwq/SLCore/Download/NetDownloader.swift`；`qwq/SLCore/Minecraft/Mod/Loader/LoaderSupportChecker.swift`
 - 官方依据：SE-0316 —— “Global and static variables can be annotated with a global actor. Such variables can only be accessed from the same global actor or asynchronously.”
 - 实测诊断：
 
 ```
-NetDownloader.swift:245:33: warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context
-NetDownloader.swift:563:53: warning: main actor-isolated static property 'shared' cannot be accessed from outside of the actor; this is an error in the Swift 6 language mode
-NetDownloader.swift:605:33: warning: …（同上）
-NetDownloader.swift:608:39: warning: …（同上）
-LoaderSupportChecker.swift:271:17: warning: call to main actor-isolated static method 'unsubscribeInflight(version:ownerID:subscriberID:)' in a synchronous nonisolated context [#ActorIsolatedCall]
+NetDownloader.swift:33: warning: main actor-isolated static property 'shared' can not be referenced from a nonisolated context
+NetDownloader.swift:53: warning: main actor-isolated static property 'shared' cannot be accessed from outside of the actor; this is an error in the Swift 6 language mode
+NetDownloader.swift:33: warning: …（同上）
+NetDownloader.swift:39: warning: …（同上）
+LoaderSupportChecker.swift:17: warning: call to main actor-isolated static method 'unsubscribeInflight(version:ownerID:subscriberID:)' in a synchronous nonisolated context [#ActorIsolatedCall]
 ```
 
-- 特别提示：`NetDownloaderDownloadEngine.swift:177` 在 `Task.detached` 内调用 `NetManager.shared.download(file)`，而 `NetManager.shared` 在默认隔离下是 `@MainActor` —— 这是 §2.2 之外第二处「后台任务摸主 actor 单例」的形态。
+- 特别提示：`NetDownloaderDownloadEngine.swift` 在 `Task.detached` 内调用 `NetManager.shared.download(file)`，而 `NetManager.shared` 在默认隔离下是 `@MainActor` —— 这是 §2.2 之外第二处「后台任务摸主 actor 单例」的形态。
 
 改前 / 改后（范式固定，逐处套用）：
 
@@ -530,12 +538,12 @@ try await Task.detached { try await manager.download(file) { … } }.value
 
 ### 2.8 【中】`AppContext`：`Task.detached` 内调用 MainActor 隔离方法 + 内存压力事件处理器未指定队列
 
-- 位置：`qwq/App/AppContext.swift:71-73`（`Task.detached { cacheManager.cleanDiskCache(olderThan: 30) }`）、`:76-82`（`makeMemoryPressureSource` 未传 `queue`）
+- 位置：`qwq/App/AppContext.swift`（`Task.detached { cacheManager.cleanDiskCache(olderThan: 30) }`）、`:76-82`（`makeMemoryPressureSource` 未传 `queue`）
 - 官方依据：SE-0316（同 §2.7）；`makeMemoryPressureSource` 签名 `queue: DispatchQueue? = nil`，参数说明仅“The dispatch queue to use when executing the installed handlers”，**未说明 `nil` 落到哪个队列**。
 - 实测诊断：
 
 ```
-qwq/App/AppContext.swift:72:26: warning: main actor-isolated instance method 'cleanDiskCache(olderThan:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
+qwq/App/AppContext.swift:26: warning: main actor-isolated instance method 'cleanDiskCache(olderThan:)' cannot be called from outside of the actor; this is an error in the Swift 6 language mode
 ```
 
 改前：
@@ -578,13 +586,13 @@ source.activate()          // 官方文档：返回的 source 初始为 inactive
 
 ### 2.9 【中】`GameSessionStore`：`Sendable` 闭包内引用 MainActor 隔离的计算属性
 
-- 位置：`qwq/Features/Launch/GameSessionStore.swift:60`（`if launchState.isTerminal { … }` 位于 `lock.withLock { … }` 闭包内）
-- 定义处：`qwq/Features/Launch/LaunchState.swift:42-47`
+- 位置：`qwq/Features/Launch/GameSessionStore.swift`（`if launchState.isTerminal { … }` 位于 `lock.withLock { … }` 闭包内）
+- 定义处：`qwq/Features/Launch/LaunchState.swift`
 - 官方依据：SE-0316（同 §2.7）。实测（§5.2）：`Sendable` 枚举的计算属性在 `-default-isolation MainActor` 下**被推断为 `@MainActor`**，从非隔离上下文读取即告警/报错。
 - 实测诊断：
 
 ```
-qwq/Features/Launch/GameSessionStore.swift:60:28: warning: main actor-isolated property 'isTerminal' can not be referenced from a Sendable closure
+qwq/Features/Launch/GameSessionStore.swift:28: warning: main actor-isolated property 'isTerminal' can not be referenced from a Sendable closure
 ```
 
 改前 / 改后：
@@ -601,24 +609,24 @@ public enum LaunchState: Sendable, Equatable {
 }
 ```
 
-> 同一形态还有 `DownloadState.isTerminal` / `.progress` / `.error`（`qwq/Core/Download/DownloadState.swift:28-47`）。这三个属性被 `NetDownloaderDownloadEngine` 的非隔离路径使用，建议一并加 `nonisolated`。
+> 同一形态还有 `DownloadState.isTerminal` / `.progress` / `.error`（`qwq/Core/Download/DownloadState.swift`）。这三个属性被 `NetDownloaderDownloadEngine` 的非隔离路径使用，建议一并加 `nonisolated`。
 
 ### 2.10 【中】`MinecraftRepository` / `VersionUtils` / `CardTranslationModel` / `ModFileDownloadStarter` / `CategoryContentView`：函数值转换丢失 MainActor
 
 - 位置与实测诊断：
 
 ```
-qwq/Core/Minecraft/Module/MinecraftRepository.swift:61:27: warning: converting function value of type '@MainActor (URL) -> [MinecraftInstanceInfo]' to '(URL) throws -> [MinecraftInstanceInfo]' loses global actor 'MainActor'; this is an error in the Swift 6 language mode
-qwq/Features/Game/VersionUtils.swift:185:20: warning: main actor-isolated static method 'findGameRootDirectories()' cannot be called from outside of the actor; …
-qwq/Features/Game/VersionUtils.swift:191:20: warning: main actor-isolated static method 'findFirstValidGame()' cannot be called from outside of the actor; …
-qwq/Features/Translation/CardTranslationModel.swift:52:33: warning: main actor-isolated instance method 'prefetchTranslations(ids:)' cannot be called from outside of the actor; …
-qwq/Features/Translation/CardTranslationModel.swift:83:90: warning: main actor-isolated instance method 'cachedTranslation(for:)' cannot be called from outside of the actor; …
-qwq/Features/Download/ModFileDownloadStarter.swift:35:28,45:22,79:22: warning: main actor-isolated … cannot be called from outside of the actor; …
-qwq/Features/ModBrowser/CategoryContentView.swift:169:38,170:37: warning: main actor-isolated static method 'cropped(imageData:startX:startY:)' cannot be called from outside of the actor; …
+qwq/Core/Minecraft/Module/MinecraftRepository.swift:27: warning: converting function value of type '@MainActor (URL) -> [MinecraftInstanceInfo]' to '(URL) throws -> [MinecraftInstanceInfo]' loses global actor 'MainActor'; this is an error in the Swift 6 language mode
+qwq/Features/Game/VersionUtils.swift:20: warning: main actor-isolated static method 'findGameRootDirectories()' cannot be called from outside of the actor; …
+qwq/Features/Game/VersionUtils.swift:20: warning: main actor-isolated static method 'findFirstValidGame()' cannot be called from outside of the actor; …
+qwq/Features/Translation/CardTranslationModel.swift:33: warning: main actor-isolated instance method 'prefetchTranslations(ids:)' cannot be called from outside of the actor; …
+qwq/Features/Translation/CardTranslationModel.swift:90: warning: main actor-isolated instance method 'cachedTranslation(for:)' cannot be called from outside of the actor; …
+qwq/Features/Download/ModFileDownloadStarter.swift:28,45:22,79:22: warning: main actor-isolated … cannot be called from outside of the actor; …
+qwq/Features/ModBrowser/CategoryContentView.swift:38,170:37: warning: main actor-isolated static method 'cropped(imageData:startX:startY:)' cannot be called from outside of the actor; …
 ```
 
 - 官方依据：SE-0316（“it is permissible for the global actor qualifier to be removed when the result of the conversion is an `async` function”；反之，同步函数值转换会丢失隔离并报错）。
-- 特别说明 `MinecraftRepository.swift:61`：该文件注释自称“跨线程只传递 Sendable 的 `MinecraftInstanceInfo`”，但**函数值本身**携带了 `@MainActor` 限定，转换到非限定函数类型即丢失隔离。这是「值 Sendable ≠ 函数 Sendable」的典型误判。
+- 特别说明 `MinecraftRepository.swift`：该文件注释自称“跨线程只传递 Sendable 的 `MinecraftInstanceInfo`”，但**函数值本身**携带了 `@MainActor` 限定，转换到非限定函数类型即丢失隔离。这是「值 Sendable ≠ 函数 Sendable」的典型误判。
 
 改后（统一范式）：
 
@@ -636,16 +644,16 @@ let instances = await repository.instances(at: url)
 
 ### 2.11 【中】`slLaunch`：`DispatchQueue.global().async` 捕获 6 个非 Sendable 闭包参数
 
-- 位置：`qwq/SLCore/SLLaunchBridge.swift:66-78`
+- 位置：`qwq/SLCore/SLLaunchBridge.swift`
 - 官方依据：SE-0302 <https://github.com/swiftlang/swift-evolution/blob/main/proposals/0302-concurrent-value-and-concurrent-closures.md> —— “A `@Sendable` function type is safe to transfer across concurrency domains… the compiler checks several things about values (e.g. closures and functions) that have `@Sendable` function type: A function can be marked `@Sendable`. **Any captures must also conform to `Sendable`.**”
 - 实测诊断（Swift 5 + 默认隔离下 6 条，节选）：
 
 ```
-qwq/SLCore/SLLaunchBridge.swift:71:30: warning: capture of 'progressHandler' with non-Sendable type '(Double) -> Void' in a '@Sendable' closure [#SendableClosureCaptures]
-qwq/SLCore/SLLaunchBridge.swift:72:27: warning: capture of 'phaseHandler' with non-Sendable type '(String) -> Void' in a '@Sendable' closure [#SendableClosureCaptures]
+qwq/SLCore/SLLaunchBridge.swift:30: warning: capture of 'progressHandler' with non-Sendable type '(Double) -> Void' in a '@Sendable' closure [#SendableClosureCaptures]
+qwq/SLCore/SLLaunchBridge.swift:27: warning: capture of 'phaseHandler' with non-Sendable type '(String) -> Void' in a '@Sendable' closure [#SendableClosureCaptures]
 … （logHandler / launchSuccess / onLauncherReady / completion 各一条）
-qwq/SLCore/SLLaunchBridge.swift:341:36: warning: capture of 'reportLaunchSuccess' with non-Sendable type '() -> ()' in a '@Sendable' closure [#SendableClosureCaptures]
-qwq/SLCore/SLLaunchBridge.swift:342:17: warning: capture of 'completion' with non-Sendable type '(MinecraftLauncher?, Result<Int32, any Error>) -> Void' in a '@Sendable' closure [#SendableClosureCaptures]
+qwq/SLCore/SLLaunchBridge.swift:36: warning: capture of 'reportLaunchSuccess' with non-Sendable type '() -> ()' in a '@Sendable' closure [#SendableClosureCaptures]
+qwq/SLCore/SLLaunchBridge.swift:17: warning: capture of 'completion' with non-Sendable type '(MinecraftLauncher?, Result<Int32, any Error>) -> Void' in a '@Sendable' closure [#SendableClosureCaptures]
 ```
 
 改前：
@@ -678,14 +686,14 @@ public func slLaunch(
 ) { … }
 ```
 
-> 项目内已有正确范式可参照：`MinecraftLauncher.swift:117` 的 `callback: @MainActor @escaping (MinecraftLaunchOutcome) -> Void`、`MinecraftInstanceLaunchService.swift:71` 的 `typealias LogSink = @Sendable (UUID, String) -> Void`、`LaunchState.swift:14` 的 `LaunchProgressHandler = @Sendable (Double) -> Void`。
+> 项目内已有正确范式可参照：`MinecraftLauncher.swift` 的 `callback: @MainActor @escaping (MinecraftLaunchOutcome) -> Void`、`MinecraftInstanceLaunchService.swift` 的 `typealias LogSink = @Sendable (UUID, String) -> Void`、`LaunchState.swift` 的 `LaunchProgressHandler = @Sendable (Double) -> Void`。
 
 ### 2.12 【低】`ProcessPool.execute` 的信号量 + `Thread.sleep` 组合
 
-- 位置：`qwq/Features/Launch/ProcessPool.swift:52,72-82,110-131`
+- 位置：`qwq/Features/Launch/ProcessPool.swift`
 - 官方依据：WWDC21 10254（同 §2.2 第 2 条）。
-- 情况：`semaphore.wait()`（并发额度）与 `sem.wait(timeout:)`（进程退出）都是阻塞式；超时路径还有 `Thread.sleep(forTimeInterval: 0.5)`。当前所有调用点都在同步/GCD 上下文（`ProcessPoolGameProcessController.swift:123-131` 特意用 `DispatchQueue.global().async` 包住，注释亦说明「避免占用 Swift 并发协作线程」），**当前安全**。
-- 结论：**有风险（低）**，属「正确使用但极易被后续误用」的形态。`ProcessPoolGameProcessController.swift:121-132` 的包装方式已给出正确范式，建议在 `ProcessPool` 的公开方法上标 `@available(*, noasync)`，让编译器替未来的人挡住误用（官方 Attributes 文档明确该属性可用于此目的）。
+- 情况：`semaphore.wait()`（并发额度）与 `sem.wait(timeout:)`（进程退出）都是阻塞式；超时路径还有 `Thread.sleep(forTimeInterval: 0.5)`。当前所有调用点都在同步/GCD 上下文（`ProcessPoolGameProcessController.swift` 特意用 `DispatchQueue.global().async` 包住，注释亦说明「避免占用 Swift 并发协作线程」），**当前安全**。
+- 结论：**有风险（低）**，属「正确使用但极易被后续误用」的形态。`ProcessPoolGameProcessController.swift` 的包装方式已给出正确范式，建议在 `ProcessPool` 的公开方法上标 `@available(*, noasync)`，让编译器替未来的人挡住误用（官方 Attributes 文档明确该属性可用于此目的）。
 - 未找到官方依据，标记存疑：`Process.terminationStatus` 与 `terminationHandler` 之间是否存在内存可见性保证，官方文档未载明。
 
 ---
@@ -713,12 +721,12 @@ public func slLaunch(
 
 | 项 | 位置 | 说明 |
 |---|---|---|
-| `DispatchSemaphore` 是否提供 happens-before 保证 | `JavaResolverBridge.swift:31-49` | 官方 `DispatchSemaphore` 文档只描述计数信号量的增减语义，**未载明内存可见性/同步边缘**。因此不能以「用了信号量」论证此处无数据竞争 |
-| `makeMemoryPressureSource(queue: nil)` 的默认执行队列 | `AppContext.swift:76` | 官方文档未说明 `queue` 为 `nil` 时的落点。凭文档无法论证「事件处理器在哪个队列上跑」 |
-| `AsyncStream` 是否支持多订阅者 / 终态回放 | `NetDownloaderDownloadEngine.swift:22-51,101-122` | 官方文档将 `AsyncStream` 描述为单一迭代点模型，**未定义**多 continuation 广播与终结后回放的语义。属项目自建语义 |
-| `TerminationHandler` 在进程已退出后再设置是否仍会回调 | `GameProcessController.swift:44` | 官方只说明「系统在任务完成时调用该 block」，未承诺「后置设置仍然生效」。因此 §2.1 的竞态无法用文档排除 |
-| `nonisolated(unsafe)` 用于 `deinit` 中的状态访问 | `SpeedMeter.swift:54-56` | SE-0412 说明了属性语义，但未针对 `deinit`（非隔离）访问 `nonisolated(unsafe)` 存储给出专门规则 |
-| `Process.terminationStatus` 与 `terminationHandler` 之间的可见性 | `MinecraftLauncher.swift:162-165`、`ProcessPool.swift:73` | 官方未载明 |
+| `DispatchSemaphore` 是否提供 happens-before 保证 | `JavaResolverBridge.swift` | 官方 `DispatchSemaphore` 文档只描述计数信号量的增减语义，**未载明内存可见性/同步边缘**。因此不能以「用了信号量」论证此处无数据竞争 |
+| `makeMemoryPressureSource(queue: nil)` 的默认执行队列 | `AppContext.swift` | 官方文档未说明 `queue` 为 `nil` 时的落点。凭文档无法论证「事件处理器在哪个队列上跑」 |
+| `AsyncStream` 是否支持多订阅者 / 终态回放 | `NetDownloaderDownloadEngine.swift` | 官方文档将 `AsyncStream` 描述为单一迭代点模型，**未定义**多 continuation 广播与终结后回放的语义。属项目自建语义 |
+| `TerminationHandler` 在进程已退出后再设置是否仍会回调 | `GameProcessController.swift` | 官方只说明「系统在任务完成时调用该 block」，未承诺「后置设置仍然生效」。因此 §2.1 的竞态无法用文档排除 |
+| `nonisolated(unsafe)` 用于 `deinit` 中的状态访问 | `SpeedMeter.swift` | SE-0412 说明了属性语义，但未针对 `deinit`（非隔离）访问 `nonisolated(unsafe)` 存储给出专门规则 |
+| `Process.terminationStatus` 与 `terminationHandler` 之间的可见性 | `MinecraftLauncher.swift`、`ProcessPool.swift` | 官方未载明 |
 
 ---
 
@@ -844,7 +852,7 @@ extension Foundation.NSLocking {
 }
 ```
 
-结论：`LockCompat.swift:6-10` 的注释中「`NSLock.withLock` 需要 macOS 13」不成立；`OSAllocatedUnfairLock` 需要 macOS 13 成立。项目部署目标是 13.0，故 `withLockCompat` 是**冗余但无害**的兼容层（去掉它改用 `withLock` 可直接编译）。
+结论：`LockCompat.swift` 的注释中「`NSLock.withLock` 需要 macOS 13」不成立；`OSAllocatedUnfairLock` 需要 macOS 13 成立。项目部署目标是 13.0，故 `withLockCompat` 是**冗余但无害**的兼容层（去掉它改用 `withLock` 可直接编译）。
 
 ### 5.7 `ModuleContext` 值语义 vs 引用语义（实跑）
 
@@ -867,7 +875,7 @@ struct 版 resolve = nil
 class  版 resolve = Optional(42)
 ```
 
-结论：`SLModule.swift:29-33` 的注释「**必须是引用类型（class）**」**论证成立且可复现**。
+结论：`SLModule.swift` 的注释「**必须是引用类型（class）**」**论证成立且可复现**。
 
 ---
 
@@ -967,7 +975,7 @@ class  版 resolve = Optional(42)
 | §2.2 | `Features/Java/JavaResolverBridge.swift` | ① 类型与方法显式 `nonisolated`，消除默认 MainActor 推断；② 跨线程结果由裸 `var` 改为 `OSAllocatedUnfairLock<URL?>`（沿用 `Features/Launch/Adapters/` 的原语），写入/读取均入锁，由锁建立 happens-before；③ 新增主线程判断，主线程调用直接返回 `nil`（放弃同步解析，不阻塞、不留游离任务）；④ 保持对外语义：失败 / 超时 / 主线程放弃一律返回 `nil`，调用方回退旧链路。即 §2.2 文末「若整体改 async 代价过高，至少……」的方案 |
 | §2.1 | `Features/Launch/GameProcessController.swift` | 顺序倒置为「先挂 `terminationHandler` → 再补检 `isRunning`」，并引入一次性门控 `TerminationResumeGate`（本文件私有的 `NSLock` + 布尔标志，显式 `nonisolated`），保证任何路径**恰好 resume 一次** |
 
-> 与 §2.1 建议稿的差异：`LaunchResumeGate` 定义在 `MinecraftInstanceLaunchService.swift:252` 且为 `private`，
+> 与 §2.1 建议稿的差异：`LaunchResumeGate` 定义在 `MinecraftInstanceLaunchService.swift` 且为 `private`，
 > 跨文件复用需改动第三个文件、并将其提升为 `internal`。为把改动面收敛在授权范围内，
 > 此处按同一范式在 `GameProcessController.swift` 内私有复刻一份，语义与实现一致。
 
@@ -977,13 +985,13 @@ class  版 resolve = Optional(42)
 
 调用链依据（源码实读）：
 
-1. `Features/ModBrowser/CategoryContentView.swift:395` —— SwiftUI 启动按钮回调
+1. `Features/ModBrowser/CategoryContentView.swift` —— SwiftUI 启动按钮回调
    `private func startLaunch()` → `LaunchCoordinator.start(...)`（MainActor 上下文）；
-2. `Features/Launch/LaunchCoordinator.swift:47` → `slLaunch(...)`；
-3. `qwq/SLCore/SLLaunchBridge.swift:53-79` —— `slLaunch` 本身**不阻塞、立即返回**，
+2. `Features/Launch/LaunchCoordinator.swift` → `slLaunch(...)`；
+3. `qwq/SLCore/SLLaunchBridge.swift` —— `slLaunch` 本身**不阻塞、立即返回**，
    内部为 `DispatchQueue.global(qos: .userInitiated).async { slLaunchInternal(...) }`；
-4. `slLaunch` 全项目仅两个调用方：`LaunchCoordinator.swift:47` 与
-   `Features/Launch/Adapters/MinecraftInstanceLaunchService.swift:98`，二者都只能经由上述 GCD 跳转。
+4. `slLaunch` 全项目仅两个调用方：`LaunchCoordinator.swift` 与
+   `Features/Launch/Adapters/MinecraftInstanceLaunchService.swift`，二者都只能经由上述 GCD 跳转。
 
 因此 `slLaunchInternal`（及其内部的 `JavaResolverBridge.resolveSynchronously`）恒运行在
 GCD 全局并发队列的工作线程上：`Thread.isMainThread` 为假，桥接**继续走阻塞式同步解析路径**，

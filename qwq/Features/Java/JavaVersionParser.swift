@@ -58,13 +58,18 @@ enum JavaVersionParser {
             try? task.run()
 
             let sem = DispatchSemaphore(value: 0)
+            let drain = DispatchSemaphore(value: 0)
             task.terminationHandler = { _ in sem.signal() }
             var data = Data()
-            DispatchQueue.global().async { data = pipe.fileHandleForReading.readDataToEndOfFile() }
+            DispatchQueue.global().async {
+                data = pipe.fileHandleForReading.readDataToEndOfFile()
+                drain.signal()
+            }
             if sem.wait(timeout: .now() + 10) == .timedOut {
                 task.terminate()
                 return nil
             }
+            drain.wait()  // 进程已退出 ⇒ 读必完成，再安全使用 data
             guard let output = String(data: data, encoding: .utf8) else { return nil }
 
             let versionPattern = #"version "(\d+)"#
@@ -97,15 +102,20 @@ enum JavaVersionParser {
             fileTask.standardOutput = filePipe
             try? fileTask.run()
             let fileSem = DispatchSemaphore(value: 0)
+            let fileDrain = DispatchSemaphore(value: 0)
             fileTask.terminationHandler = { _ in fileSem.signal() }
             var fileData = Data()
-            DispatchQueue.global().async { fileData = filePipe.fileHandleForReading.readDataToEndOfFile() }
-            if fileSem.wait(timeout: .now() + 10) == .timedOut {
-                fileTask.terminate()
+            DispatchQueue.global().async {
+                fileData = filePipe.fileHandleForReading.readDataToEndOfFile()
+                fileDrain.signal()
             }
-            let fileOutput = String(data: fileData, encoding: .utf8) ?? ""
-            if fileOutput.contains("arm64") { arch = "arm64" }
-            else if fileOutput.contains("x86_64") { arch = "x86_64" }
+            // 超时视为探测失败：不使用 fileData，arch 保持 unknown 回落（原实现超时后仍继续用空数据）
+            if fileSem.wait(timeout: .now() + 10) != .timedOut {
+                fileDrain.wait()
+                let fileOutput = String(data: fileData, encoding: .utf8) ?? ""
+                if fileOutput.contains("arm64") { arch = "arm64" }
+                else if fileOutput.contains("x86_64") { arch = "x86_64" }
+            }
         }
 
         let normalizedArch = arch == "x86_64" ? "x64" : (arch == "arm64" ? "aarch64" : arch)

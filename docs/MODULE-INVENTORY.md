@@ -1,26 +1,27 @@
 # 模块化盘点与优化清单
 
 日期：2026-09-21
-统计口径：`qwq/` 下 198 个 Swift 文件、23,801 行
+统计日期：2026-09-23（`qwq/` 下 Swift 文件数与行数由 `find qwq -name '*.swift'` 实测，会随每次改动漂移，以实测为准）
+统计口径（2026-09-23 实测）：`qwq/` 下 241 个 Swift 文件、26,610 行。文件数 / 行数会随每次改动漂移，复核请用 `find qwq -name '*.swift' | wc -l` 与 `find qwq -name '*.swift' -exec cat {} + | wc -l`，以实测为准。
 
 ## 一、模块清单与状态（14 个模块）
 
-| # | 模块 | 代码量 | 骨架 | 接线 | 说明 |
+| # | 模块 | 状态 / 职责 | 骨架 | 接线 | 说明 |
 |---|---|---|---|---|---|
-| 1 | Settings | 412 行 / 3 文件 | ✅ | ✅ | `AppSettingsStore` 为唯一存储点，旧 `ThemeManager` 收窄为只读转发 |
-| 2 | Java | 1555 行 / 13 文件 | ✅ | ✅ | 唯一 `JavaResolver`；启动链已改走它 |
-| 3 | Download | 3033 行 / 30 文件 | ✅ | 🔶 部分 | 抽象层 + 适配器完成；调用方已切 7 处，批量路径判定"切换会改变进度表现"未切 |
-| 4 | Launch | 2332 行 / 20 文件 | ✅ | ✅ | `LaunchCoordinator` 已改走 `LaunchService`；桥接层退化为参数转换 |
-| 5 | ModBrowser | 3083 行 / 24 文件 | ✅ | 🔶 部分 | 详情查询已接；检索调用点在 `Features/Game`（未模块化），暂无法接 |
-| 6 | Minecraft | 318 行 / 3 文件 | ✅ | ❌ | 只读抽象已建；仓储根目录与实际使用目录不一致，接上即行为变化，故未接 |
-| 7 | Skin | 882 行 / 10 文件 | ✅ | 🔶 部分 | 已接 4 处 |
-| 8 | Theme | 121 行 / 4 文件 | ✅ | ❌ | `ThemeManager` 与 `AppSettingsStore` 曾双写同一 key（已收敛），但服务层是 async 取值、界面是订阅式，接入会读到过期色 |
-| 9 | **Game** | 2372 行 / 18 文件 | ✅ | ❌ | 原 **0 个模块件**；`GameViews` 591 行、`GameCards` 286 行、`VersionSelectionSection` 227 行。收口进展：新增 `Module/` 模块内核 4 文件 + `README-Game.md`，`GameViews` 591→303 行（业务决策收口到 `ViewModels/DownloadCategoryViewModel`），`GameModule` 注册能力 `game.versionCatalog` / `game.versionFilter`，`GameVersionFilter` 改为 `VersionFilterUseCase` 适配器；`AppModuleBootstrap` 沿用未登记状态，故接线仍为未接 |
-| 10 | **Translation** | 537 行 / 7 文件 | ❌ | ❌ | `TranslationService` 144 行、`CardTranslationModel` 140 行 |
-| 11 | **Account / 兼容层** | 7526 行 / 41 文件 | ❌ | ❌ | `SLCore` 全域；含 **11 个单例** |
-| 12 | **UI** | 1423 行 | 🔶 部分 | — | `Notices`、`Shell`、`Modifiers` 为新建；`ViewComponents` 182 行仍未归口 |
-| 13 | **App** | 1052 行 | 🔶 部分 | — | `ContentView` 297 → 132 行，已抽 4 个 ViewModel |
-| 14 | **Infra** | 391 行 | ❌ | ❌ | `Services`（CacheManager 303 行）、`Models`、`SLCore/Utils` 未归口 |
+| 1 | Settings | 全局设置存储与主题只读转发；`AppSettingsStore` 为唯一存储点 | ✅ | ✅ | `AppSettingsStore` 为唯一存储点，旧 `ThemeManager` 收窄为只读转发 |
+| 2 | Java | 统一 Java 选择入口 `JavaResolver`；启动链已改走它 | ✅ | ✅ | 唯一 `JavaResolver`；启动链已改走它 |
+| 3 | Download | 下载抽象层 + 适配器；调用方已切 7 处 | ✅ | 🔶 部分 | 抽象层 + 适配器完成；调用方已切 7 处，批量路径判定"切换会改变进度表现"未切 |
+| 4 | Launch | 启动用例层 + 桥接参数转换 | ✅ | ✅ | `LaunchCoordinator` 已改走 `LaunchService`；桥接层退化为参数转换 |
+| 5 | ModBrowser | 模组浏览与检索；详情查询已接 | ✅ | 🔶 部分 | 详情查询已接；检索调用点在 `Features/Game`（未模块化），暂无法接 |
+| 6 | Minecraft | 只读实例抽象（`Core/Minecraft/Module/`）；仓储根目录与实际使用目录不一致，接上即行为变化，故未接 | ✅ | ❌ | 只读抽象已建；仓储根目录与实际使用目录不一致，接上即行为变化，故未接 |
+| 7 | Skin | 离线皮肤资源包方案；已接 4 处 | ✅ | 🔶 部分 | 已接 4 处 |
+| 8 | Theme | 主题读取（async 取值 / 订阅式），接入会读到过期色 | ✅ | ❌ | `ThemeManager` 与 `AppSettingsStore` 曾双写同一 key（已收敛），但服务层是 async 取值、界面是订阅式，接入会读到过期色 |
+| 9 | **Game** | 版本浏览与选择模块内核（`Module/`）+ 视图收口到 `ViewModels/DownloadCategoryViewModel` | ✅ | ❌ | 新增 `Module/` 模块内核 4 文件 + `README-Game.md`，`GameModule` 注册能力 `game.versionCatalog` / `game.versionFilter`，`GameVersionFilter` 改为 `VersionFilterUseCase` 适配器；`AppModuleBootstrap` 沿用未登记状态，故接线仍为未接 |
+| 10 | **Translation** | 翻译服务（`TranslationService`）与卡片翻译模型 | ❌ | ❌ | `TranslationService` 与 `CardTranslationModel` 尚未建模块 |
+| 11 | **Account / 兼容层** | `SLCore` 全域兼容层；含 **11 个单例** | ❌ | ❌ | `SLCore` 全域；含 **11 个单例** |
+| 12 | **UI** | 新建 `Notices` / `Shell` / `Modifiers`；`ViewComponents` 仍未归口 | 🔶 部分 | — | `Notices`、`Shell`、`Modifiers` 为新建；`ViewComponents` 仍未归口 |
+| 13 | **App** | 窗口壳与布局；已抽 4 个 ViewModel | 🔶 部分 | — | `ContentView` 已从大文件收口，已抽 4 个 ViewModel |
+| 14 | **Infra** | `Services` / `Models` / `SLCore/Utils` 未归口 | ❌ | ❌ | `Services`、`Models`、`SLCore/Utils` 未归口 |
 
 ## 二、完成度量化
 
@@ -29,7 +30,7 @@
 | 模块总数 | 14 |
 | 已有骨架 | **8 / 14 = 57%** |
 | 已完成接线 | **3 / 14 = 21%**（Java、Launch 完整；Download 部分） |
-| 按代码量覆盖 | 约 **10,991 / 23,801 = 46%** |
+| 按代码量覆盖 | 约一半（基于 2026-09-23 实测总行数，会随改动漂移） |
 | 完全未动 | **6 个模块**（Game、Translation、Account/兼容层、Infra，以及 UI/App 的剩余部分） |
 
 ## 三、优化完成情况
@@ -48,39 +49,39 @@
 
 ## 四、剩余模块扫描结果（按优先级）
 
-### P0：`SLCore`（7526 行、41 文件、11 个单例）—— 最大的未模块化区
-| 文件 | 行数 | 问题 |
-|---|---|---|
-| `Download/NetDownloader.swift` | **889** | 单文件承担预检、多源、分片、重试、黑名单、测速、合并、校验、调度、取消；抽象层已建，但批量路径未切 |
-| `Minecraft/Mod/Loader/LoaderSupportChecker.swift` | **609** | 加载器兼容性判定，无测试、无边界定义 |
-| `Minecraft/Download/MinecraftInstaller.swift` | **526** | 安装编排与下载混杂 |
-| `Minecraft/Download/InstallTask.swift` | **513** | 安装任务状态机 |
-| `Minecraft/MinecraftInstance.swift` | **505** | 启动核心，只读抽象已建未接 |
+### P0：`SLCore` —— 最大的未模块化区（11 个单例）
+| 文件 | 职责 / 现状 |
+|---|---|
+| `Download/NetDownloader.swift` | 原单文件承担预检、多源、分片、重试、黑名单、测速、合并、校验、调度、取消；现已按职责拆为 `Core/Download/` 下的多个分片文件（下载引擎、分片存储、合并、校验、调度等），抽象层已建，但批量路径未切 |
+| `Minecraft/Mod/Loader/LoaderSupportChecker.swift` | 加载器兼容性判定，无测试、无边界定义 |
+| `Minecraft/Download/MinecraftInstaller.swift` | 安装编排与下载混杂 |
+| `Minecraft/Download/InstallTask.swift` | 安装任务状态机 |
+| `Minecraft/MinecraftInstance.swift` | 启动核心，只读抽象已建（见 `Core/Minecraft/Module/`）未接 |
 
 **该做什么**：把 11 个单例逐个收口（谁持有、谁能改、单元测试怎么替身），优先 `NetDownloader`（风险最高）与 `MinecraftInstance`（启动核心）。
 
-### P1：`Features/Game`（2372 行、18 文件、0 模块件）—— 最大的未模块化功能域
-| 文件 | 行数 |
+### P1：`Features/Game` —— 最大的未模块化功能域（0 模块件）
+| 文件 | 职责 / 现状 |
 |---|---|
-| `GameViews.swift` | **591** |
-| `GameCards.swift` | **286** |
-| `VersionSelectionSection.swift` | **227** |
-| `VersionUtils.swift` | 193 |
-| `GameCategoryView.swift` | 184 |
+| `GameViews.swift` | 下载分类页主视图，已将决策逻辑收口到 `ViewModels/DownloadCategoryViewModel` |
+| `GameCards.swift` | 版本卡片网格 |
+| `VersionSelectionSection.swift` | 详情页版本选择 |
+| `VersionUtils.swift` | 版本工具 |
+| `GameCategoryView.swift` | 分类页容器视图 |
 
 **该做什么**：`GameViews` 用与 `ContentView` 相同的方式收口（业务决策移入 ViewModel）；建立 `GameModule`（版本清单、安装状态、版本过滤三个能力）。
 
 ### P2：基础设施
-- `Services/CacheManager.swift`（303 行）：去隔离（见 待优化 1）
-- `Features/Translation`（537 行）：建立 `TranslationModule`，把 `translateText` 的主线程阻塞问题一并解决
-- `UI/ViewComponents.swift`（182 行）：拆为按用途分组的组件文件
+- `Services/CacheManager.swift`：`diskGet` 等只读路径去隔离（见 待优化 1）
+- `Features/Translation`：建立 `TranslationModule`，把 `translateText` 的主线程阻塞问题一并解决
+- `UI/ViewComponents.swift`：拆为按用途分组的组件文件
 
 ### P3：UI / App 剩余部分
-- `UI/Notices/NoticeCenter.swift`（202 行）：功能已可用，暂不需动
-- `App/ContentView.swift`（132 行）：已从 297 行收口，剩余为窗口壳与布局，可接受
+- `UI/Notices/NoticeCenter.swift`：提示通道，功能已可用，暂不需动
+- `App/ContentView.swift`：窗口壳与布局，已从大文件收口，剩余为窗口壳与布局，可接受
 
 ## 五、结论
 
-- **模块化进度：骨架 8/14，接线 3/14，代码覆盖约 46%**
-- **最大缺口：`SLCore`（7526 行、11 单例）与 `Features/Game`（2372 行）**
+- **模块化进度：骨架 8/14，接线 3/14，代码覆盖约一半**
+- **最大缺口：`SLCore`（11 单例）与 `Features/Game`**
 - **优化：已完成 3 处性能 + 20+ 项缺陷；已知待做 3 处**

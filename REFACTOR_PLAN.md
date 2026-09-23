@@ -17,7 +17,7 @@
 | 2 真实 | `./scripts/verify-build.sh` | 真实 `xcodebuild build`，最终判定 | **每拆一个文件就跑一次** |
 | 3 测试 | `./scripts/verify-test.sh [run]` | 编译（→ 运行）单元测试 | 改动公共逻辑后 |
 
-判定标准：`typecheck` 两口径 0 error 且告警数不超过基线（口径一 44 / 口径二 58）；
+判定标准：`typecheck` 两口径 0 error 且告警数不超过基线（口径一 44 / 口径二 56）；
 `verify-build.sh` 出现 `BUILD SUCCEEDED` 且 `error:` 计数为 0。
 并行任务各自用 `SL_DERIVED=/tmp/SL-DD-<任务名>` 指定独立派生目录，避免互相破坏中间产物。
 
@@ -39,10 +39,10 @@
 | 9 | **提示通道修复** | `f2a73fc` | `NoticeCenter` + `NoticeOverlay`，修复 3 处"用户看不到提示" | 中 |
 | 10 | 工程配置清理 | `5e410aa` | 删除 iOS/visionOS 残留，`SUPPORTED_PLATFORMS = macosx` | 低 |
 | 11 | UI 收口（第一批） | `0c0fd53` | `ContentView` 297 → 216 行，抽出 3 个 ViewModel | 中 |
-| 12 | 测试体系 | `35d9a61` | 65 个单元测试（Java 选择 / 下载校验 / 分片合并 / 状态边界） | 低 |
-| 13 | **大文件按职责拆分** | `48ad4f4` `c7c3250` `a5f639b` `a6c0bed` | SLCore 七个大文件与两个 UI 大文件按职责拆分（纯搬迁）。最大文件 889 → 487 行。**拆分后真机编译 BUILD SUCCEEDED** | 中 |
+| 12 | 测试体系 | `35d9a61` | 181 个单元测试（Java 选择 / 下载校验 / 分片合并 / 状态边界） | 低 |
+| 13 | **大文件按职责拆分** | `48ad4f4` `c7c3250` `a5f639b` `a6c0bed` | SLCore 七个大文件与两个 UI 大文件按职责拆分为多个分片文件（纯搬迁），单文件不再同时承担多类职责。**拆分后真机编译 BUILD SUCCEEDED** | 中 |
 | 14 | **真实编译打通** | `d95064c` | 修掉拆分引入的 5 个编译错误，`verify-build.sh` 可用 | — |
-| 15 | **qwqTests 接入工程** | `8172dbf` | 测试 target + scheme + `verify-test.sh`；**TEST BUILD SUCCEEDED**，14 文件 180 用例可编译 | 中 |
+| 15 | **qwqTests 接入工程** | `8172dbf` | 测试 target + scheme + `verify-test.sh`；**TEST BUILD SUCCEEDED**，14 文件 181 用例可编译 | 中 |
 | 16 | 一批确认缺陷修复 | `6d0541f` `ade90b3` `ab02506` `2364ea4` `3c028fb` | 下载核心 3 条、加载器 4 条、清单 2 条、UI 2 条；弹入动画接线 | 中 |
 | 17 | **全量扫描 + 30 条缺陷修复** | `9a2ea40` `6623247` `819904e` `9ef8032` | 按下载/安装、Mod 与清单、UI 与服务、启动四条链路逐文件通读，修 8+8+6+8 条已确认缺陷（含 `NetSliceFetcher` 分片计数泄漏、`createCompleteTask` 资源补全假成功、Forge 处理器非零退出码被吞、`mods.toml` 依赖块永不匹配、`NoticeCenter` 单槽覆盖、natives 架构取证等）。每条均真实编译 0 error | 中 |
 | 18 | **D1 落地 + 真机启动验证** | `708b3f9` `af9c1ed` | 客户端 JAR 校验前移到补全之前（缺文件秒级拦截）；**真机跑通 `26.2-Fabric`（LWJGL 3.4.1 加载成功、窗口出现、无 `UnsatisfiedLinkError`）**，并构造缺 JAR 目录复现拦截 | 中 |
@@ -81,7 +81,7 @@
 | D9 | `hint()` 只写日志，下载完成/失败提示不可见 | **已修** |
 
 > **D1–D9 九条已确认缺陷全部修复完毕**，无遗留：D1 → `708b3f9`（缺客户端文件秒级拦截 + 弹窗）；D2–D6 → `cb93219`（启动链路 5 处）；D7/D8 → `03820d9`（进程终止失效、启动失败被吞）；D9 见上。
-> 校验：`cb93219` 全量类型检查 0 error；两口径告警数与基线一致（口径一 44 / 口径二 ≤58）。
+> 校验：`cb93219` 全量类型检查 0 error；两口径告警数与基线一致（口径一 44 / 口径二 56）。
 
 ---
 

@@ -16,7 +16,7 @@ func sha1(_ data: Data) -> String {
 
 func download(range: Range<Int>?, to dest: URL, tag: String) throws {
     var request = URLRequest(url: url)
-    request.setValue("PCL.Mac/slice_merge_test", forHTTPHeaderField: "User-Agent")
+    request.setValue("SL/slice_merge_test", forHTTPHeaderField: "User-Agent")
     request.setValue("identity", forHTTPHeaderField: "Accept-Encoding") // 禁用 gzip，保证 Range 生效（与 NetManager 修复一致）
     if let range {
         request.setValue("bytes=\(range.lowerBound)-\(range.upperBound - 1)", forHTTPHeaderField: "Range")

@@ -61,7 +61,7 @@
 | `ViewModels/DownloadCategoryViewModel.swift` | 侧边栏选中态、列表数据、搜索决策树（防抖 400ms，四个分支）、分页、请求归属令牌、详情页选中态、清单 → 列表项转换 |
 | 保留在视图 | 布局计算（列宽 / 卡片宽）、滚动网格、全部 `withAnimation` 与动画参数、侧栏高亮 y 偏移（`SidebarHighlight.offsets`）、子项弹入透明度、内容淡入淡出、`CardTranslationModel` 的持有与订阅 |
 
-行数：`GameViews.swift` 591 → 303 行。
+视图收口：`GameViews.swift` 的 `DownloadCategoryView` 决策逻辑已移入 `ViewModels/DownloadCategoryViewModel`，视图仅保留布局、动画与订阅职责（行数随改动漂移，不在此固定）。
 
 `CardTranslationModel` 仍由视图以 `@StateObject` 持有，视图模型只按方法参数接收其引用以调度预取，
 不接管其生命周期与订阅（保持原有失效粒度）。
@@ -104,4 +104,4 @@ xcrun swiftc -typecheck -target arm64-apple-macosx13.0 -I /tmp/deps \
   -module-name qwq -default-isolation MainActor $(find qwq -name "*.swift")
 ```
 
-两口径均为 0 error，告警集合与收口前逐条一致（口径一 44、口径二 58）。
+两口径均为 0 error，告警集合与收口前逐条一致（口径一 44、口径二 56）。

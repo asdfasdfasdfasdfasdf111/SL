@@ -19,18 +19,18 @@
 ### 旧引擎的真实对外入口
 
 ```swift
-// NetDownloader.swift:253
+// NetManager.download(_:progress:)
 NetManager.shared.download(_ file: SLNetFile, progress: ((Double) -> Void)? = nil) async throws
-// NetDownloader.swift:286
+// NetManager.downloadAll(_:overallProgress:onFileCompleted:)
 NetManager.shared.downloadAll(_ files: [SLNetFile], overallProgress: ((Double, Int) -> Void)?, onFileCompleted: (() -> Void)?) async throws
 ```
 
 关键事实：
 
 - 进度是 **0…1 的比例**（不是字节），且在「已存在且校验通过 → 跳过」分支同样回调 `1.0`；
-- 进度回调由 `NetManager` 自行切到 `@MainActor`（`NetDownloader.swift:256`、`439`）；
-- **取消以 Swift Task 取消表达**：`waitForCompletion` 内 `Task.checkCancellation()`（`NetDownloader.swift:831`）
-  会在取消时抛出，`download` 的 `catch` 随即取消全部分片任务并清理临时文件（`NetDownloader.swift:274`）；
+- 进度回调由 `NetManager` 自行切到 `@MainActor`（`NetDownloader.swift`）；
+- **取消以 Swift Task 取消表达**：`waitForCompletion` 内 `Task.checkCancellation()`（`NetDownloader.swift`）
+  会在取消时抛出，`download` 的 `catch` 随即取消全部分片任务并清理临时文件（`NetDownloader.swift`）；
 - 输入类型 `SLNetFile(urls:destination:checker:replaceMethod:)`，覆盖率策略（`.skip` / `.replace` / `.throw`）与
   校验参数（`FileChecker`），`DownloadRequest` 中都没有对应字段。
 
@@ -55,26 +55,26 @@ NetManager.shared.downloadAll(_ files: [SLNetFile], overallProgress: ((Double, I
 
 直接触达 `NetManager` 的只有两个薄封装，其余调用方全部经由它们：
 
-- `qwq/SLCore/Download/SingleFileDownloader.swift:45` → `NetManager.shared.download(file) { p in ... }`
-- `qwq/SLCore/Download/MultiFileDownloader.swift:106` → `NetManager.shared.downloadAll(...)`
+- `qwq/SLCore/Download/SingleFileDownloader.swift` → `NetManager.shared.download(file) { p in ... }`
+- `qwq/SLCore/Download/MultiFileDownloader.swift` → `NetManager.shared.downloadAll(...)`
 
 上层调用方（行号为实际调用点）：
 
 | # | 调用方 | 形态 | 切换需要改什么 |
 | --- | --- | --- | --- |
-| 1 | `Features/Download/ModFileDownloadTask.swift:43` | 单文件 `SingleFileDownloader.download(task:url:destination:replaceMethod:.replace)` | 只换提交方式；进度写入 `currentStagePercentage`、成功 `completeOneFile()/complete()`、失败 `failureReason` 需分别由 `observe` 流与 `DownloadHandle` 承担（**已切换**） |
-| 2 | `SLCore/Minecraft/Download/MinecraftInstaller.swift:46` | 单文件（客户端清单），`.replace` | 同上；`.replace` 必须显式传 `replaceMethod:`（**已切换**） |
-| 3 | `MinecraftInstaller.swift:73` | 单文件（客户端 jar），`expectedSHA1` + `stage: .clientJar` | `expectedSHA1` → `request.sha1`；`stage` 的 `beginParallelStage/finishParallelStage` 需在流的终态处配对，否则并行阶段计数不归零（**已切换**） |
-| 4 | `MinecraftInstaller.swift:108` | 单文件（资源索引），`expectedSHA1` | 同上（**已切换**） |
-| 5 | `MinecraftInstaller.swift:145 / 177 / 214` | 批量 `MultiFileDownloader(task:items:stage:)`（散列资源 / 依赖库 / natives） | 需把批次拆成每文件一个 `submit`，批进度与 `onFileCompleted` 由各任务状态聚合；这一组与 `InstallTask` 的总文件数/剩余文件数耦合最深 |
-| 6 | `SLCore/Minecraft/Launch/LaunchFix.swift:79 / 100` | 批量 `MultiFileDownloader(items:concurrentLimit:32)` | 同 5，且并发上限 32 在旧链路由 `NetManager.config.maxSlices` 统一兜底，新链路需确认调度器等价 |
-| 7 | `SLCore/Minecraft/Mod/Loader/Forge/ForgeInstaller.swift:134 / 172` | 单文件（mappings / installer） | 同 2、3；`:172` 的进度回调按 `progress * 0.2` 折算，需在状态流上做同样折算（**已切换**） |
-| 8 | `ForgeInstaller.swift:236` | 批量 `MultiFileDownloader(urls:destinations:replaceMethod:.skip)` | 同 5；`.skip` 为缺省值，可不传 |
-| 9 | `SLCore/Minecraft/Mod/Loader/Fabric/FabricInstaller.swift:28` | 单文件，`.replace` | 同 2（**已切换**） |
-| 10 | `SLCore/Minecraft/Launch/MinecraftLauncher.swift:327` | 单文件（authlib-injector） | 同 2；`:332` 的 `FileChecker(sha256).check` 预检**保持原样**（移入请求会改变校验时机与文案，**已切换**） |
-| 11 | `SLCore/Minecraft/Download/InstallTask.swift:412` | 单文件 + 进度 | 同 1（**已切换**） |
-| 12 | `SLCore/Download/DownloadSourceManager.swift:108` | 测速自用（内部 `SingleFileDownloader`） | **保持旧链路**。若改为 `DownloadEngine`，resolver 委托 `DownloadSourceManager` 会形成「测速 → 下载 → 解析源 → 测速」递归 |
-| 13 | `Features/Download/ModpackDownloader.swift:106`、`Features/ModBrowser/ModDownloader.swift:159` | 绕过引擎直接用 `URLSession.download` + `FileChecker` 校验 | 未纳入本轮适配面；若统一，需补 `expectedSize` + `sha1` 请求，并保留「校验失败删除已落盘文件」的行为 |
+| 1 | `Features/Download/ModFileDownloadTask.swift` | 单文件 `SingleFileDownloader.download(task:url:destination:replaceMethod:.replace)` | 只换提交方式；进度写入 `currentStagePercentage`、成功 `completeOneFile()/complete()`、失败 `failureReason` 需分别由 `observe` 流与 `DownloadHandle` 承担（**已切换**） |
+| 2 | `SLCore/Minecraft/Download/MinecraftInstaller.swift` | 单文件（客户端清单），`.replace` | 同上；`.replace` 必须显式传 `replaceMethod:`（**已切换**） |
+| 3 | `MinecraftInstaller.swift` | 单文件（客户端 jar），`expectedSHA1` + `stage: .clientJar` | `expectedSHA1` → `request.sha1`；`stage` 的 `beginParallelStage/finishParallelStage` 需在流的终态处配对，否则并行阶段计数不归零（**已切换**） |
+| 4 | `MinecraftInstaller.swift` | 单文件（资源索引），`expectedSHA1` | 同上（**已切换**） |
+| 5 | `MinecraftInstaller.swift` | 批量 `MultiFileDownloader(task:items:stage:)`（散列资源 / 依赖库 / natives） | 需把批次拆成每文件一个 `submit`，批进度与 `onFileCompleted` 由各任务状态聚合；这一组与 `InstallTask` 的总文件数/剩余文件数耦合最深 |
+| 6 | `SLCore/Minecraft/Launch/LaunchFix.swift` | 批量 `MultiFileDownloader(items:concurrentLimit:32)` | 同 5，且并发上限 32 在旧链路由 `NetManager.config.maxSlices` 统一兜底，新链路需确认调度器等价 |
+| 7 | `SLCore/Minecraft/Mod/Loader/Forge/ForgeInstaller.swift` | 单文件（mappings / installer） | 同 2、3；`ForgeInstaller.swift` 的进度回调按 `progress * 0.2` 折算，需在状态流上做同样折算（**已切换**） |
+| 8 | `ForgeInstaller.swift` | 批量 `MultiFileDownloader(urls:destinations:replaceMethod:.skip)` | 同 5；`.skip` 为缺省值，可不传 |
+| 9 | `SLCore/Minecraft/Mod/Loader/Fabric/FabricInstaller.swift` | 单文件，`.replace` | 同 2（**已切换**） |
+| 10 | `SLCore/Minecraft/Launch/MinecraftLauncher.swift` | 单文件（authlib-injector） | 同 2；`MinecraftLauncher.swift` 的 `FileChecker(sha256).check` 预检**保持原样**（移入请求会改变校验时机与文案，**已切换**） |
+| 11 | `SLCore/Minecraft/Download/InstallTask.swift` | 单文件 + 进度 | 同 1（**已切换**） |
+| 12 | `SLCore/Download/DownloadSourceManager.swift` | 测速自用（内部 `SingleFileDownloader`） | **保持旧链路**。若改为 `DownloadEngine`，resolver 委托 `DownloadSourceManager` 会形成「测速 → 下载 → 解析源 → 测速」递归 |
+| 13 | `Features/Download/ModpackDownloader.swift`、`Features/ModBrowser/ModDownloader.swift` | 绕过引擎直接用 `URLSession.download` + `FileChecker` 校验 | 未纳入本轮适配面；若统一，需补 `expectedSize` + `sha1` 请求，并保留「校验失败删除已落盘文件」的行为 |
 
 间接编排（无直接下载调用，仅需跟随上游改动）：
 `Features/Game/GameVersionDownloadStarter.swift`、`Features/Download/ModFileDownloadStarter.swift`。
@@ -101,10 +101,10 @@ NetManager.shared.downloadAll(_ files: [SLNetFile], overallProgress: ((Double, I
 
 以下每一条被破坏，都会表现为「下载看起来成功但文件是坏的」或「原本能成功现在失败」：
 
-1. **校验失败必须删除目标文件再抛错**。旧 `merge` 在校验不过时先 `removeItem` 再抛（`NetDownloader.swift:795`）。
+1. **校验失败必须删除目标文件再抛错**。旧 `merge` 在校验不过时先 `removeItem` 再抛（`NetDownloader.swift`）。
    若只抛不删，文件残留后下次 `.skip` 预检会命中并跳过（无 checker 时永远跳过），坏文件被永久固化。
 2. **哈希算法按长度自动判定且大小写不敏感**：`<35` 用 MD5、`==64` 用 SHA256、其余用 SHA1，比较前统一小写
-   （`NetDownloader.swift:45-57`）。`CryptoKitDownloadVerifier` 只支持 SHA1/SHA256，32 位 MD5 场景若走协议方法
+   （`NetDownloader.swift`）。`CryptoKitDownloadVerifier` 只支持 SHA1/SHA256，32 位 MD5 场景若走协议方法
    （`sha1`/`sha256` 都传 nil）会**静默不做校验**。迁移阶段必须走 `DefaultDownloadVerifier.verify(fileAt:checker:)`，
    或先补 MD5 支持。
 3. **预检语义**：`.skip` + 文件存在 + 校验通过 → 跳过且不重下；存在但校验不过 → 删除重下；
@@ -112,19 +112,19 @@ NetManager.shared.downloadAll(_ files: [SLNetFile], overallProgress: ((Double, I
 4. **`expectedSize` 是「必须相等」，`minSize` 是「至少」**，两者语义不同不可互相取代。`DownloadRequest` 只有前者，
    旧链路带 `minSize` 的调用方在迁移前需先确认是否仍有此约束。
 5. **服务端忽略 Range 的降级路径必须保留**：分片请求返回 200 时判定该源不支持断点续传并拉黑（只准单线程）
-   （`NetDownloader.swift:587-591`）。丢失该判定会继续按 Range 语义拼接 200 的全量响应，文件长度错乱。
-6. **分片合并只拼「有数据」的分片且必须按 offset 升序**（`NetDownloader.swift:757-787`）；
-   传输提前断流仍有剩余时必须判失败走断点续传，不能当作完成（`NetDownloader.swift:692`）。
+   （`NetDownloader.swift`）。丢失该判定会继续按 Range 语义拼接 200 的全量响应，文件长度错乱。
+6. **分片合并只拼「有数据」的分片且必须按 offset 升序**（`NetDownloader.swift`）；
+   传输提前断流仍有剩余时必须判失败走断点续传，不能当作完成（`NetDownloader.swift`）。
 7. **资源保护参数**：全局分片上限 16、单文件 >4MB 才分片、>50MB 时做磁盘空间预检、
    慢速检测（间隔 >1s 且 <1KB/s）与分片 5 分钟总超时、单源失败 3 次阈值、连接层错误直接淘汰该源
-   （`NetDownloader.swift:139-148`、`633-640`、`707-736`）。这些决定「不会把磁盘写满 / 不会无限重试」。
-8. **取消与失败必须清理临时分片**（`SharedConstants.temperatureURL` 下的 `.tmp`，`NetDownloader.swift:807-813`），
+   （`NetDownloader.swift`）。这些决定「不会把磁盘写满 / 不会无限重试」。
+8. **取消与失败必须清理临时分片**（`SharedConstants.temperatureURL` 下的 `.tmp`，`NetDownloader.swift`），
    否则缓存目录持续膨胀。
 9. **进度口径是 0…1 比例而非字节**，且跳过分支回调 `1.0`；调用方依赖该回调完成计数（旧 `progress(1.0)` 在
-   `NetDownloader.swift:262`、`282`）。
-10. **`.both` 模式才追加互补源**，用户手动限定「仅官方 / 仅镜像」时不得跨源兜底（`DownloadSourceManager.swift:65-74`）；
+   `NetDownloader.swift`）。
+10. **`.both` 模式才追加互补源**，用户手动限定「仅官方 / 仅镜像」时不得跨源兜底（`DownloadSourceManager.swift`）；
     候选列表顺序以请求主源为第一位。
-11. **`MultiFileDownloader` 的批进度 `(Double, Int)` 已是全批 0…1**（`MultiFileDownloader.swift:122` 的注释），
+11. **`MultiFileDownloader` 的批进度 `(Double, Int)` 已是全批 0…1**（`MultiFileDownloader.swift` 的注释），
     聚合新链路进度时不得再次除以文件总数。
 
 ## 五、已知能力缺口（迁移前需补齐）
@@ -216,7 +216,7 @@ NetManager.shared.downloadAll(_ files: [SLNetFile], overallProgress: ((Double, I
 **下一个建议切换目标**
 
 - 按第三节顺序，第 2 步为 `FabricInstaller`（#9）与 `ForgeInstaller`（#7）的**单文件**下载：
-  同为「单文件 + `.replace`」形态，可直接复用本步模式，但需注意 `ForgeInstaller.swift:172`
+  同为「单文件 + `.replace`」形态，可直接复用本步模式，但需注意 `ForgeInstaller.swift`
   的进度回调按 `progress * 0.2` 折算，须在状态流上做同样折算。
 - `MinecraftInstaller` 的前置小文件（#2/#3/#4）顺延其后，原因是需与 `stage` 计数配对。
 
@@ -229,12 +229,12 @@ NetManager.shared.downloadAll(_ files: [SLNetFile], overallProgress: ((Double, I
 
 **本次排除的调用方**
 
-- `Features/Download/ModpackDownloader.swift:106`（`downloadLatest`）与
-  `Features/Download/ModpackInstaller.swift:152`（`downloadMod`）经确认**均不调用 `NetManager`**：
+- `Features/Download/ModpackDownloader.swift`（`downloadLatest`）与
+  `Features/Download/ModpackInstaller.swift`（`downloadMod`）经确认**均不调用 `NetManager`**：
   二者走 `URLSession.download`（`AppContext.shared.apiSession`），属第二节 #13 已登记的绕过路径。
   按「只切换确实直接调用 `NetManager` 的调用方」的约束，本轮不切换——改走 `DownloadEngine` 会由
   直连 URLSession 变为多源分片引擎，覆盖策略、错误文案与「校验失败删除已落盘文件」三点都无法保持等价。
-- 同文件内的批量依赖下载（第二节 #8，原 `:236` 的 `MultiFileDownloader`）仍走旧链路，不在「单文件」范围内。
+- 同文件内的批量依赖下载（第二节 #8，原 `ForgeInstaller.swift` 的 `MultiFileDownloader`）仍走旧链路，不在「单文件」范围内。
 
 **改动要点**
 
@@ -245,8 +245,8 @@ NetManager.shared.downloadAll(_ files: [SLNetFile], overallProgress: ((Double, I
    `DownloadRequest(url:destinationURL:)` → `engine.submit(_:replaceMethod:)` → `for await` 消费
    `observe(taskID:)`，`.downloading` → 进度回调、`.completed` → 回调 `1.0`、`.failed` / `.cancelled` → 抛错。
 3. 两个单文件调用点逐点替换：
-   - `patchMojangMappingsDownloadTask`（原 `:134`，mappings）：`.replace`，无进度回调；
-   - `downloadInstaller`（原 `:172`，installer）：`.skip`（沿用旧调用未显式传 `replaceMethod` 的缺省值）。
+   - `patchMojangMappingsDownloadTask`（原 `ForgeInstaller.swift`，mappings）：`.replace`，无进度回调；
+   - `downloadInstaller`（原 `ForgeInstaller.swift`，installer）：`.skip`（沿用旧调用未显式传 `replaceMethod` 的缺省值）。
 4. 引擎实例为方法内局部变量，其 `run` 仍调用 `NetManager.shared.download`，全局分片额度与调度状态不变。
 
 **行为一致性：已确认等价**
@@ -271,7 +271,7 @@ NetManager.shared.downloadAll(_ files: [SLNetFile], overallProgress: ((Double, I
 - **错误语义**：旧调用失败时向上抛 `NetDownloadError.fileFailed(reason)`，其 `localizedDescription` 为
   「下载失败：\(reason)」。新链路 `.failed` 分支抛 `MyLocalizedError(reason:)`，reason 取
   `engine.legacyFailureReason(taskID:)`（按第 1 步的实现，即同一原始描述，逐字一致），
-  `error.localizedDescription` 结果不变。唯一消费者 `LoaderInstallTask.install`（`InstallTask.swift:352-361`）
+  `error.localizedDescription` 结果不变。唯一消费者 `LoaderInstallTask.install`（`InstallTask.swift`）
   只读取 `error.localizedDescription` 用于弹窗与日志，不做错误类型匹配，故更换错误类型无行为差异。
 
 **行为一致性：无法完全确认**
@@ -280,7 +280,7 @@ NetManager.shared.downloadAll(_ files: [SLNetFile], overallProgress: ((Double, I
   新链路多经一次 `AsyncStream` 转发（无界缓冲、FIFO，不丢事件、不乱序），采样点与顺序不变，
   但未做运行时逐点比对。
 - 取消路径不可达：`ForgeInstaller.install` 由 `LoaderInstallTask.install` 直接 `await`，全链路无取消入口
-  （`InstallTask.swift:188` 的 `cancel()` 作用于 Combine `cancellables`，与 Task 取消无关），
+  （`InstallTask.swift` 的 `cancel()` 作用于 Combine `cancellables`，与 Task 取消无关），
   故 `.cancelled` → `CancellationError` 分支仅为兜底，缺少旧链路对照。
 
 **验证**
@@ -295,7 +295,7 @@ NetManager.shared.downloadAll(_ files: [SLNetFile], overallProgress: ((Double, I
 - 第 3 步仍按第三节顺序：`FabricInstaller`（#9）与本次形态完全一致（单文件 + `.replace` + 单一 URL），
   可直接复用 `downloadSingleFile` 的写法，建议与 `MinecraftInstaller` 的三个前置小文件（#2/#3/#4）合并为一批；
   后者带 `sha1`，需连同 `stage` 的 `beginParallelStage` / `finishParallelStage` 配对一起验证。
-- `ForgeInstaller` 的批量依赖（#8，现 `:279`）顺延至第一条批量路径（第 4 步）一并处理。
+- `ForgeInstaller` 的批量依赖（#8，现 `ForgeInstaller.swift`）顺延至第一条批量路径（第 4 步）一并处理。
 - 整合包两处 `URLSession` 直连（#13）仍是独立一步，需先补齐 `expectedSize` / `sha1` 与
   「校验失败删除已落盘文件」的语义才能保证等价。
 
@@ -313,7 +313,7 @@ NetManager.shared.downloadAll(_ files: [SLNetFile], overallProgress: ((Double, I
 **本次排除的调用方**
 
 - **批量路径（#5 / #6 / #8）**：`MinecraftInstaller.swift` 的散列资源 / 依赖库 / natives、
-  `LaunchFix.swift:79 / 100`、`ForgeInstaller.swift` 的批量依赖。全部经 `MultiFileDownloader` →
+  `LaunchFix.swift`、`ForgeInstaller.swift` 的批量依赖。全部经 `MultiFileDownloader` →
   `NetManager.downloadAll`。切换需要把批次拆成「每文件一次 `submit`」并自行复刻 `downloadAll` 的两项语义：
   (a) 批进度由 `overallProgressValue(for:)` 以 200ms 采样聚合，已是全批 0…1；
   (b) `onFileCompleted` 在 `precheck` 跳过分支也会被调用一次，用于 `completeOneFile()` 计数。
@@ -322,8 +322,8 @@ NetManager.shared.downloadAll(_ files: [SLNetFile], overallProgress: ((Double, I
   新链路需先确认调度等价。按第三节计划它们属第 4–6 步，应单独成批处理，本轮不切换。
 - **#12 `DownloadSourceManager.testSpeed`**：保持旧链路。resolver 委托 `DownloadSourceManager`，
   改走引擎会形成「测速 → 下载 → 解析源 → 测速」递归。
-- **绕过引擎的 `URLSession` 直连（#13 及同类）**：`ModpackDownloader.swift:106`、
-  `ModpackInstaller.swift:152`、`ModBrowser/ModDownloader.swift:159`、`JavaDownloader.swift:38 / 89`。
+- **绕过引擎的 `URLSession` 直连（#13 及同类）**：`ModpackDownloader.swift`、
+  `ModpackInstaller.swift`、`ModBrowser/ModDownloader.swift`、`JavaDownloader.swift`。
   这些调用点**不在 `NetManager` 调用图上**（不直接调用 `download` / `downloadAll`，也不经两个薄封装），
   按「只切换确实直接调用 `NetManager` 的调用方」的约束不切换：改走 `DownloadEngine` 会由直连 URLSession
   变为多源分片引擎，覆盖策略、错误文案与「校验失败删除已落盘文件」三点都无法保持等价。
@@ -377,7 +377,7 @@ NetManager.shared.downloadAll(_ files: [SLNetFile], overallProgress: ((Double, I
   `FabricInstallTask.install` 与 `MinecraftInstallTask.start()` 用于弹窗与 `failureReason`
   （仅读 `localizedDescription`，不做错误类型匹配）；`createCompleteTask` 只写日志；
   `CustomFileDownloadTask` 额外做 `replacingOccurrences(of: "\n", with: "")`，该处理原样保留；
-  `downloadAuthlibInjector` 的唯一调用方 `MinecraftInstance.swift:305` 以 `try?` 吞掉错误。
+  `downloadAuthlibInjector` 的唯一调用方 `MinecraftInstance.swift` 以 `try?` 吞掉错误。
 - **`#10` 不把 sha256 塞进请求**：旧链路是「先下载、再在调用方用 `FileChecker(hash: sha256)` 校验、
   失败则删除文件并抛 `authlib-injector 哈希校验失败：…`」。若把 sha256 交给引擎，
   校验会提前到引擎内部、删除与文案归属改变（变成 `NetDownloadError.fileFailed("文件哈希校验失败：…")`），
@@ -409,7 +409,7 @@ NetManager.shared.downloadAll(_ files: [SLNetFile], overallProgress: ((Double, I
 
 **下一个建议切换目标**
 
-- **批量路径的第一条**：#8 `ForgeInstaller` 的批量依赖（现 `:279`）。它是单 URL 组、批内文件数不大、
+- **批量路径的第一条**：#8 `ForgeInstaller` 的批量依赖（现 `ForgeInstaller.swift`）。它是单 URL 组、批内文件数不大、
   且 `replaceMethod: .skip` 为缺省值，最适合用来验证「多点提交 + 全局并发 + 批进度聚合 +
   跳过分支完成计数」这四件事在新链路上是否与 `downloadAll` 等价。
 - 其后按第三节顺序：#6 `LaunchFix`（批量 32 并发 + `FileChecker` 预检，数据量大，用来压测吞吐不回退），
@@ -420,8 +420,8 @@ NetManager.shared.downloadAll(_ files: [SLNetFile], overallProgress: ((Double, I
 
 **结论**
 
-三处批量调用点（`MinecraftInstaller.swift:221 / 253 / 290`、`LaunchFix.swift:79 / 100`、
-`ForgeInstaller.swift:279`）**全部保持旧链路**。本目录未新增 `BatchDownloadEngine.swift`，
+三处批量调用点（`MinecraftInstaller.swift`、`LaunchFix.swift`、
+`ForgeInstaller.swift`）**全部保持旧链路**。本目录未新增 `BatchDownloadEngine.swift`，
 也未在 `MultiFileDownloader.swift` 上加薄封装层——在没有等价聚合器的前提下加一层包装只会制造
 「批量路径已就绪」的假象，后续接手者会把「已实现」误读为「已验证」。
 
@@ -433,52 +433,52 @@ NetManager.shared.downloadAll(_ files: [SLNetFile], overallProgress: ((Double, I
 旧批进度是 `NetManager.downloadAll` 的**内部服务**，不是可被上层重算的量：
 
 1. **分母的值与集合都由引擎内部事件决定。** `overallProgressValue(for:)`
-   （`NetDownloader.swift:447-464`）的分母是 `Σ r.fileSize`，`r.fileSize` 来自**首片响应头**的
-   `expectedContentLength`（`NetDownloader.swift:594-601`），且只对
+   （`NetDownloader.swift`）的分母是 `Σ r.fileSize`，`r.fileSize` 来自**首片响应头**的
+   `expectedContentLength`（`NetDownloader.swift`），且只对
    `state != .done && fileSize > 0` 的记录求和；分子是同集合上的 `Σ slice.done`（采样瞬时值）。
    于是分母的集合是「首片响应头已到达、且尚未 `.done`」——一个纯引擎内部事件集。
 2. **适配器对外只有一条被节流、且信息有损的状态流。** `DownloadProgress` 在调用方未提供
-   `expectedSize` 时以 `syntheticTotalBytes = 1000` 合成（`NetDownloaderDownloadEngine.swift:233-242`），
-   拿不到每文件真实字节数；批量调用点的 `DownloadItem`（`MultiFileDownloader.swift:10-39`）
+   `expectedSize` 时以 `syntheticTotalBytes = 1000` 合成（`NetDownloaderDownloadEngine.swift`），
+   拿不到每文件真实字节数；批量调用点的 `DownloadItem`（`MultiFileDownloader.swift`）
    只有 `url / destination / sha1`，同样不携带 size。
 3. **用 `expectedSize` 运输权重会改变校验语义。** `expectedSize` 经
    `DefaultDownloadVerifier.checker(for:)` 变成 `FileChecker.actualSize`
-   （`DefaultDownloadVerifier.swift:56`），由此多出两处旧链路不存在的判定：
-   `establishFileSize` 的「文件大小不一致 → 直接失败」（`NetDownloader.swift:852-854`），
-   以及 `.skip` 预检由「仅哈希」变为「大小 + 哈希」（`NetDownloader.swift:355-362`）。
+   （`DefaultDownloadVerifier.swift`），由此多出两处旧链路不存在的判定：
+   `establishFileSize` 的「文件大小不一致 → 直接失败」（`NetDownloader.swift`），
+   以及 `.skip` 预检由「仅哈希」变为「大小 + 哈希」（`NetDownloader.swift`）。
 4. **不运输权重则口径直接退化。** 只能退回固定分母的**等权口径**（Σ 各文件 fraction ÷ 文件数），
    把旧的**字节加权**换成按文件平均；一个 50MB 的 jar 与一个 20KB 的 asset 权重相同，
-   数值序列与旧实现完全不同。这是 `MultiFileDownloader.swift:122` 注释与第四节第 11 条要防的反面。
+   数值序列与旧实现完全不同。这是 `MultiFileDownloader.swift` 注释与第四节第 11 条要防的反面。
 5. **即使权重由调用方另行提供（清单侧确有 size：`AssetIndex.Object.size`、
    `ClientManifest.DownloadInfo.size?`），分母集合仍无法对齐**：
    - 旧集合的纳入判据是「首片响应头到达」；新链路最近似的可观测量是「收到该文件的第一次
      200ms 节流上报」。`reportProgress` 每 5 个 tick 触发一次、间隔 40ms，即 200ms 一次，
-     且 `record.isTerminal` 后不再上报（`NetDownloader.swift:397-399`、`439-445`）。
+     且 `record.isTerminal` 后不再上报（`NetDownloader.swift`）。
      对每个文件存在最多一个节拍的不一致窗口；窗口内新链路的分子与分母**同时**都不含该文件，
      因此中间百分比序列既不相等、也不构成单调变换（方向不固定），无法逐点对齐。
    - `fileSize == -1`（服务端未给 Content-Length，例如分块响应）的文件旧链路**永久不计入分母**，
-     但仍计入 `doneCount`（`NetDownloader.swift:451-461`）；新链路无从区分该分支。
+     但仍计入 `doneCount`（`NetDownloader.swift`）；新链路无从区分该分支。
 6. **跳过分支在边界上不可分辨，完成计数的「集合」无法对齐。** 旧 `downloadAll` 在**开始任何下载前**
    对整批做一次 `precheck`：跳过项立即调用 `onFileCompleted` 且**不进入 pending**
-   （`NetDownloader.swift:292-304`），因此既不进分母、也不进返回的 `count`（`count` 只统计
+   （`NetDownloader.swift`），因此既不进分母、也不进返回的 `count`（`count` 只统计
    pending 中到达 `.done` 的文件）。新链路里「已存在且校验通过」与「实际下载完成」都只产生
-   `.completed`（`NetDownloaderDownloadEngine.swift:183-185` 已注明该不可分辨性）。
+   `.completed`（`NetDownloaderDownloadEngine.swift` 已注明该不可分辨性）。
    要在调用方复刻 `precheck` 才能分离两者，但旧 `precheck` 是 actor 内的原子步骤、并且会在
-   「存在但校验不过」时**删除目标文件**（`NetDownloader.swift:355-362`），搬到调用方会改变
+   「存在但校验不过」时**删除目标文件**（`NetDownloader.swift`），搬到调用方会改变
    它与并发下载的交错顺序，边界上仍不逐点一致。
 7. **进度非单调，复刻时不能"顺手修正"。** `MultiFileDownloader` 在 `downloadAll` 返回后会再回放一次
-   最后采样值（`MultiFileDownloader.swift:121-129`），该值可能因采样窗口而陈旧；且全部文件 `.done`
-   时 `totalSize == 0`，聚合式直接返回 `0`（`NetDownloader.swift:462`），末次上报可能为 0。
+   最后采样值（`MultiFileDownloader.swift`），该值可能因采样窗口而陈旧；且全部文件 `.done`
+   时 `totalSize == 0`，聚合式直接返回 `0`（`NetDownloader.swift`），末次上报可能为 0。
    这类"跳动"属于既有表现，任何自建聚合器都必须原样复现，而它恰恰依赖第 5 条的集合语义。
 
 **为什么必须按逐字一致的门槛判定：批进度在三处调用点都是用户可见量**
 
 - `MinecraftInstaller` 的三组经 `updateParallelStage` 写入 `parallelStageProgress`，
-  由 `DownloadDetailView.swift:82` 以 `progressForStage(stage) * 100` 渲染成百分比；
+  由 `DownloadDetailView.swift` 以 `progressForStage(stage) * 100` 渲染成百分比；
   `stage == nil`（`createCompleteTask` 路径）时写 `currentStagePercentage`。
-- `LaunchFix.swift:79 / 100` 直接把批进度交给 `onProgress(progress)`（与前面按文件数算出的
+- `LaunchFix.swift` 直接把批进度交给 `onProgress(progress)`（与前面按文件数算出的
   0…0.5 预扫描进度混用同一回调）。
-- `ForgeInstaller.swift:283-287` 映射为 `setProgress(0.3 + progress * 0.3)`。
+- `ForgeInstaller.swift` 映射为 `setProgress(0.3 + progress * 0.3)`。
 
 即三处都会把批进度的**数值序列**直接呈现在界面上，属于「不要改变安装进度表现」的保护范围。
 按本轮约定（宁可少切也不要改变进度表现），不切换。
@@ -486,25 +486,25 @@ NetManager.shared.downloadAll(_ files: [SLNetFile], overallProgress: ((Double, I
 **已核实、可保留的结论（供后续实现直接复用）**
 
 - `MultiFileDownloader.concurrentLimit` 是**死参数**：仅赋值、无任何读取
-  （`MultiFileDownloader.swift:44`、`81`）。旧链路真实并发由 `NetManager.config.maxSlices = 16`
-  的全局分片池兜底（`NetDownloader.swift:140`、`419-436`，且按 tick 逐文件开首片，
+  （`MultiFileDownloader.swift`）。旧链路真实并发由 `NetManager.config.maxSlices = 16`
+  的全局分片池兜底（`NetDownloader.swift`，且按 tick 逐文件开首片，
   两次开片之间 `sleep 40ms`）。故 `LaunchFix` 的 `concurrentLimit: 32` **不是**需要复刻的语义；
   「每文件一次 `submit`」仍然共用同一 `NetManager` 全局分片池，并发上限本身会自动保持一致。
 - `count`（`overallProgress` 的第二个参数）在三处调用点均被丢弃
   （`LaunchFix` / `ForgeInstaller` 写 `{ progress, _ in }`；`MinecraftInstaller` 走
   `MultiFileDownloader` 的 `onFileCompleted` 而非 `count`）。用户可见的文件计数来自
-  `onFileCompleted → completeOneFile()`（`InstallTask.swift:128-133`）与
-  `getProgress()` 读 `remainingFiles / totalFiles`（`InstallTask.swift:99-105`），
+  `onFileCompleted → completeOneFile()`（`InstallTask.swift`）与
+  `getProgress()` 读 `remainingFiles / totalFiles`（`InstallTask.swift`），
   与批进度 `p` 是两条独立通道，**切换批进度不影响总进度条**——只影响阶段内百分比。
   这一条缩小了后续切换的风险面，但不能消解上面的卡点。
 - 三处调用点均**无对外取消入口**：`MinecraftInstallTask.start()` 创建 `Task {}` 后不持有句柄
-  （`InstallTask.swift:234-255`）、`LaunchFix.perform` 由启动链直接 `await`、
+  （`InstallTask.swift`）、`LaunchFix.perform` 由启动链直接 `await`、
   `ForgeInstaller.downloadDependencies` 由 `LoaderInstallTask.install` 直接 `await`
-  （`InstallTask.swift:352`）。故「取消穿透」在本轮**无触发路径可供验证**，
+  （`InstallTask.swift`）。故「取消穿透」在本轮**无触发路径可供验证**，
   即使实现也必须以静态路径推断为准，不能声称已运行时验证。
 - 旧链路另有两处仅因调用方未触发而不可达的边界，实现时需对齐：`.throw` 覆盖策略
-  （`NetDownloader.swift:350-351`，三处调用点均未使用，实际为 `.skip`），以及
-  `precheck` 抛错路径不回滚已 append 的 `records`（`NetDownloader.swift:292-304` 的 `defer`
+  （`NetDownloader.swift`，三处调用点均未使用，实际为 `.skip`），以及
+  `precheck` 抛错路径不回滚已 append 的 `records`（`NetDownloader.swift` 的 `defer`
   注册在循环之后）。
 
 **解除卡点的前置条件（建议下一步先做，再回来切批量）**
@@ -530,8 +530,8 @@ NetManager.shared.downloadAll(_ files: [SLNetFile], overallProgress: ((Double, I
 
 - 先完成本节「解除卡点的前置条件」第 1、2 项（引擎侧批进度与跳过标记），再切批量。
 - 若必须在本轮继续推进下载模块，可切换的对象只剩 #13 两处 `URLSession` 直连
-  （`ModpackDownloader.swift:106`、`ModpackInstaller.swift:152`、`ModBrowser/ModDownloader.swift:159`、
-  `JavaDownloader.swift:38 / 89`），但同样需要先补齐 `expectedSize` / `sha1` 与
+  （`ModpackDownloader.swift`、`ModpackInstaller.swift`、`ModBrowser/ModDownloader.swift`、
+  `JavaDownloader.swift`），但同样需要先补齐 `expectedSize` / `sha1` 与
   「校验失败删除已落盘文件」的语义。
 - #12 `DownloadSourceManager.testSpeed` 保持不迁移。
 

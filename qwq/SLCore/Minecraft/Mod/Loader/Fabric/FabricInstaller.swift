@@ -10,7 +10,10 @@ import ZIPFoundation
 
 public class FabricInstaller {
     public static func installFabric(_ instance: MinecraftInstance, _ loaderVersion: String) async throws {
-        try await installFabric(version: instance.version!, minecraftDirectory: instance.minecraftDirectory, runningDirectory: instance.runningDirectory, loaderVersion)
+        guard let version = instance.version else {
+            throw MyLocalizedError(reason: "实例未关联版本，无法安装 Fabric")
+        }
+        try await installFabric(version: version, minecraftDirectory: instance.minecraftDirectory, runningDirectory: instance.runningDirectory, loaderVersion)
         
         instance.clientBrand = .fabric
         instance.saveConfig()
@@ -26,7 +29,7 @@ public class FabricInstaller {
         }
         
         try await downloadProfileJSON(
-            url: "https://meta.fabricmc.net/v2/versions/loader/\(version.displayName)/\(loaderVersion)/profile/json".url,
+            url: "https://meta.fabricmc.net/v2/versions/loader/\(version.displayName)/\(loaderVersion)/profile/json".url!,
             destination: manifestURL
         )
     }

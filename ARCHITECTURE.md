@@ -64,7 +64,7 @@ View → ViewModel → UseCase → Service → Infrastructure
 
 ## 六、下载模块
 
-问题：`NetDownloader.swift` 单文件 889 行，同时承担预检、多源、分片、重试、黑名单、测速、临时文件、合并、校验、调度、进度、取消清理。
+问题：`NetDownloader.swift` 原单文件同时承担预检、多源、分片、重试、黑名单、测速、合并、校验、调度、取消清理，现已按职责拆为 `Core/Download/` 下的多个分片文件（下载引擎、分片存储、合并、校验、调度等），单文件不再同时承担多类职责。
 
 新增（`qwq/Core/Download/`）：按职责拆分为 `DownloadRequest`、`DownloadProgress`、`DownloadState`、`DownloadError`、`DownloadTask`、`DownloadSourceResolver`、`DownloadSliceStore`、`DownloadMerger`、`DownloadVerifier`、`DownloadScheduler`、`DownloadEngine`。
 

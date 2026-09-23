@@ -266,7 +266,8 @@ enum LocalModCatalog {
         return input.withUnsafeBytes { (srcRaw: UnsafeRawBufferPointer) -> Data? in
             let src = srcRaw.bindMemory(to: UInt8.self)
             var stream = z_stream()
-            stream.next_in = UnsafeMutablePointer<UInt8>(mutating: src.baseAddress!)
+            guard let srcBase = src.baseAddress else { return nil }
+            stream.next_in = UnsafeMutablePointer<UInt8>(mutating: srcBase)
             stream.avail_in = uInt(input.count)
             guard inflateInit2_(&stream, 16 + 15, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size)) == Z_OK else { return nil }
             defer { inflateEnd(&stream) }
@@ -276,7 +277,8 @@ enum LocalModCatalog {
             while true {
                 var localBuffer = buffer
                 let produced = localBuffer.withUnsafeMutableBytes { (dstRaw: UnsafeMutableRawBufferPointer) -> Int in
-                    stream.next_out = dstRaw.bindMemory(to: UInt8.self).baseAddress!
+                    guard let dstBase = dstRaw.bindMemory(to: UInt8.self).baseAddress else { return -1 }
+                    stream.next_out = dstBase
                     stream.avail_out = uInt(buffer.count)
                     lastStatus = inflate(&stream, Z_NO_FLUSH)
                     if lastStatus == Z_OK || lastStatus == Z_STREAM_END {

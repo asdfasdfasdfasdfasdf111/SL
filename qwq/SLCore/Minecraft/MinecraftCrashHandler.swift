@@ -16,7 +16,11 @@ public class MinecraftCrashHandler {
         log("以下是 SL启动器 检测到的环境信息:")
         log("架构: \(Architecture.system)")
         log("分支: \(SharedConstants.shared.branch)")
-        log("Java 架构: \(Architecture.getArchOfFile(instance.config.javaURL!))")
+        if let javaURL = instance.config.javaURL {
+            log("Java 架构: \(Architecture.getArchOfFile(javaURL))")
+        } else {
+            log("Java 架构: 未知（未配置 Java 路径）")
+        }
         
         do {
             let contents = try FileManager.default.contentsOfDirectory(

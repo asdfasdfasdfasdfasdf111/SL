@@ -7,15 +7,15 @@ Minecraft 实例领域的**只读抽象**。当前阶段只做「建立结构」
 
 `qwq/SLCore/Minecraft/` 是启动链路的心脏，规模与耦合度如下：
 
-| 文件 | 行数 | 说明 |
-| --- | --- | --- |
-| `MinecraftInstance.swift` | 493 | 实例本体：加载清单、检测版本、选 Java、启动、存配置 |
-| `ClientManifest.swift` | 397 | 客户端清单解析（库、natives、参数、规则） |
-| `Download/MinecraftInstaller.swift` | 450 | 资源补全 |
-| `Download/InstallTask.swift` | 488 | 下载任务调度 |
-| `Launch/MinecraftLauncher.swift` | 338 | 进程拉起与参数组装 |
-| `Launch/LaunchFix.swift` | 116 | 客户端文件校验与修复（上帝对象） |
-| `MinecraftDirectory.swift` / `MinecraftVersion.swift` / `AssetIndex.swift` / `VersionManifest.swift` | 94 / 71 / 40 / 135 | 目录、版本、资源索引、版本清单 |
+| 文件 | 说明 |
+| --- | --- |
+| `MinecraftInstance.swift` | 实例本体：加载清单、检测版本、选 Java、启动、存配置 |
+| `ClientManifest.swift` | 客户端清单解析（库、natives、参数、规则） |
+| `Download/MinecraftInstaller.swift` | 资源补全 |
+| `Download/InstallTask.swift` | 下载任务调度 |
+| `Launch/MinecraftLauncher.swift` | 进程拉起与参数组装 |
+| `Launch/LaunchFix.swift` | 客户端文件校验与修复（上帝对象，已由 `LaunchPreflight` 四类校验器拆分，见下） |
+| `MinecraftDirectory.swift` / `MinecraftVersion.swift` / `AssetIndex.swift` / `VersionManifest.swift` | 目录、版本、资源索引、版本清单 |
 
 `MinecraftInstance` 的关键约束是**构造即副作用**：`create` → `setup` → `loadConfig` / `loadManifest`
 → `detectVersion` → `resolveAndApplyJava` → `saveConfig`（会自动挑 Java 并把结果写回 `.SL.json`）。
@@ -70,7 +70,7 @@ Minecraft 实例领域的**只读抽象**。当前阶段只做「建立结构」
 | 现状 | 迁移去向 |
 | --- | --- |
 | `MinecraftInstance.create` / `loadInnerInstances` 的**查询**调用点 | 改为 `MinecraftRepository.instances()` / `inspect(id:)` |
-| `MinecraftInstance` 的**构造与启动**（`launch`） | 保持不变，属启动模块职责，本阶段不动 |
+| `MinecraftInstance` 的**构造与启动**（`launch`） | 构造保留；`launch(_:)` 已于 2026-09 删除，启动统一走 `SLLaunchBridge.slLaunch` |
 | `MinecraftInstance.resolveMinJavaVersion` | 已由 `JavaRequirement(manifestJavaVersion:mcVersion:)` 覆盖，后续在启动模块内统一 |
 | `MinecraftInstance.findSuitableJava` / `resolveAndApplyJava` | 目标由 `JavaResolver`（`qwq/Features/Java/`）承担，启动链路接线时切换 |
 | `ClientManifest` / `AssetIndex` / `VersionManifest` | 保留。属清单与资源索引解析，不是「实例查询」 |
@@ -101,8 +101,8 @@ Minecraft 实例领域的**只读抽象**。当前阶段只做「建立结构」
 
 **本轮 0 处接线**。`DirectoryScanningMinecraftRepository` 与两个镜像枚举未改动，
 只做只读核对（`MinecraftLoaderKind` / `MinecraftVersionKind` 的取值与
-`ClientBrand`（`MinecraftInstance.swift:479-484`）、`VersionType`
-（`MinecraftVersion.swift:49-57`）逐字一致，无偏差）。
+`ClientBrand`（`qwq/SLCore/Minecraft/MinecraftInstanceConfig.swift`）、`VersionType`
+（`qwq/SLCore/Minecraft/MinecraftVersion.swift`）逐字一致，无偏差）。
 
 | 目标 | 调用点 | 状态 |
 | --- | --- | --- |

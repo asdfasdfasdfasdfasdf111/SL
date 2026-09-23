@@ -7,8 +7,7 @@
 //  - DefaultJavaResolver：候选集排序与过滤策略（经 `JavaRepository` 协议注入 fake）
 //  - JavaInstallation：由 `JavaInfo` / `JavaVirtualMachine` 转换的字段映射
 //
-//  不覆盖 JavaModule.swift：其依赖的 `SLModule` / `ModuleContext` / `ModuleCapabilityKey`
-//  在 Core/Module 层尚未落地，无法编译，需等 SLModule.swift 就位后补测。
+//  不覆盖 `JavaModule.register`：其内部硬编码 `DefaultJavaRepository()` → `JavaManager.shared`，无注入点，故不测。
 //
 
 import XCTest

@@ -8,16 +8,22 @@
 import Foundation
 import SwiftyJSON
 
+/// 可转成 URL 的类型。
+///
+/// 返回**可选值**是刻意的：`String` 未必是合法 URL（含空格、`#`、裸 `%` 等），
+/// 而 `URL(string:)!` 会让「任意字符串 → 崩溃」成为结构性隐患 —— 历史上启动器里
+/// 多处强解包 URL 都是由第三方清单字段、用户重命名的版本目录名触发的。
+/// 解析失败时返回 `nil`，由调用方走既有错误通道（`Response.error` / 跳过 / 保持原值）。
 public protocol URLConvertible {
-    var url: URL { get }
+    var url: URL? { get }
 }
 
 extension URL: URLConvertible {
-    public var url: URL { self }
+    public var url: URL? { self }
 }
 
 extension String: URLConvertible {
-    public var url: URL { URL(string: self)! }
+    public var url: URL? { URL(string: self) }
 }
 
 public enum EncodeMethod {
@@ -125,7 +131,10 @@ public class Requests {
         encodeMethod: EncodeMethod = .urlEncoded,
         ignoredFailureStatusCodes: [Int] = []
     ) async -> Response {
-        return await request(url: url.url, method: "GET", headers: headers, body: body, encodeMethod: encodeMethod, ignoredFailureStatusCodes: ignoredFailureStatusCodes)
+        guard let resolvedURL = url.url else {
+            return Response(data: nil, json: nil, error: NSError(domain: "无效的请求地址", code: -1))
+        }
+        return await request(url: resolvedURL, method: "GET", headers: headers, body: body, encodeMethod: encodeMethod, ignoredFailureStatusCodes: ignoredFailureStatusCodes)
     }
 
     public static func post(
@@ -135,6 +144,9 @@ public class Requests {
         encodeMethod: EncodeMethod = .json,
         ignoredFailureStatusCodes: [Int] = []
     ) async -> Response {
-        return await request(url: url.url, method: "POST", headers: headers, body: body, encodeMethod: encodeMethod, ignoredFailureStatusCodes: ignoredFailureStatusCodes)
+        guard let resolvedURL = url.url else {
+            return Response(data: nil, json: nil, error: NSError(domain: "无效的请求地址", code: -1))
+        }
+        return await request(url: resolvedURL, method: "POST", headers: headers, body: body, encodeMethod: encodeMethod, ignoredFailureStatusCodes: ignoredFailureStatusCodes)
     }
 }

@@ -120,7 +120,11 @@ public class DownloadSourceManager: DownloadSource {
         let data: Data
         do {
             let testPath = "/tmp/testspeed_\(UUID().uuidString)"
-            try await SingleFileDownloader.download(url: url.url, destination: URL(fileURLWithPath: testPath), replaceMethod: .replace)
+            guard let testURL = url.url else {
+                debug("测速地址无效，跳过测速")
+                return
+            }
+            try await SingleFileDownloader.download(url: testURL, destination: URL(fileURLWithPath: testPath), replaceMethod: .replace)
             data = try FileHandle(forReadingFrom: URL(fileURLWithPath: testPath)).readToEnd().unwrap()
             try? FileManager.default.removeItem(at: URL(fileURLWithPath: testPath))
         } catch {
@@ -133,7 +137,7 @@ public class DownloadSourceManager: DownloadSource {
         
         let timeUsed: Double = Date().timeIntervalSince(before)
         let speed = Double(data.count) / timeUsed / 1024 / 1024
-        debug(String(format: "\(url.url.lastPathComponent) 下载耗时 %.2fs (%.2f MB/s)", timeUsed, speed))
+        debug(String(format: "\(url.url?.lastPathComponent ?? "") 下载耗时 %.2fs (%.2f MB/s)", timeUsed, speed))
         fileDownloadSource = speed < 1 ? bmclapi : official
         if speed < 1 { // 1 MB
             debug("已切换至镜像源")

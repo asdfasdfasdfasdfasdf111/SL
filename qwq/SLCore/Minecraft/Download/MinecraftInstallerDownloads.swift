@@ -259,7 +259,7 @@ extension MinecraftInstaller {
                 }
                 
                 libraryNames.append(library.name)
-                items.append(.init(DownloadSourceManager.shared.getDownloadSource(), { $0.getLibraryURL(library)! }, destination: dest, sha1: artifact.sha1))
+                items.append(.init(DownloadSourceManager.shared.getDownloadSource(), { $0.getLibraryURL(library) ?? URL(string: "https://libraries.minecraft.net/\(Util.toPath(mavenCoordinate: library.name))")! }, destination: dest, sha1: artifact.sha1))
             }
         }
         
@@ -299,7 +299,7 @@ extension MinecraftInstaller {
             }
             
             libraryNames.append(library.name)
-            items.append(.init(DownloadSourceManager.shared.getDownloadSource(), { $0.getLibraryURL(library)! }, destination: dest, sha1: artifact.sha1))
+            items.append(.init(DownloadSourceManager.shared.getDownloadSource(), { $0.getLibraryURL(library) ?? URL(string: "https://libraries.minecraft.net/\(Util.toPath(mavenCoordinate: library.name))")! }, destination: dest, sha1: artifact.sha1))
         }
         
         try? FileManager.default.createDirectory(at: task.versionURL.appendingPathComponent("natives"), withIntermediateDirectories: true)

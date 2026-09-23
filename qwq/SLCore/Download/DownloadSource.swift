@@ -28,7 +28,7 @@ public class OfficialDownloadSource: DownloadSource {
     public static let shared: OfficialDownloadSource = .init()
     
     public func getVersionManifestURL() -> URL {
-        "https://piston-meta.mojang.com/mc/game/version_manifest.json".url
+        "https://piston-meta.mojang.com/mc/game/version_manifest.json".url!
     }
     
     public func getClientManifestURL(_ version: MinecraftVersion) -> URL? {
@@ -64,11 +64,11 @@ public class BMCLAPIDownloadSource: DownloadSource {
     public static let shared: BMCLAPIDownloadSource = .init()
     
     public func getVersionManifestURL() -> URL {
-        "https://piston-meta.mojang.com/mc/game/version_manifest.json".url
+        "https://piston-meta.mojang.com/mc/game/version_manifest.json".url!
     }
     
     public func getClientManifestURL(_ version: MinecraftVersion) -> URL? {
-        return URL(string: "https://bmclapi2.bangbang93.com/version/\(version.displayName)/json")!
+        return URL(string: "https://bmclapi2.bangbang93.com/version/\(version.displayName)/json")
     }
     
     public func getAssetIndexURL(_ version: MinecraftVersion, _ manifest: ClientManifest) -> URL? {
@@ -80,7 +80,7 @@ public class BMCLAPIDownloadSource: DownloadSource {
     }
     
     public func getClientJARURL(_ version: MinecraftVersion, _ manifest: ClientManifest) -> URL? {
-        return URL(string: "https://bmclapi2.bangbang93.com/version/\(version.displayName)/client")!
+        return URL(string: "https://bmclapi2.bangbang93.com/version/\(version.displayName)/client")
     }
     
     public func getLibraryURL(_ library: ClientManifest.Library) -> URL? {

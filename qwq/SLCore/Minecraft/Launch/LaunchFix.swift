@@ -88,12 +88,16 @@ public enum LaunchFix {
                 onProgress(0.5 + Double(i + 1) / Double(assetTotal) * 0.5)
                 continue
             }
-            items.append(.init(
-                DownloadSourceManager.shared.getDownloadSource(),
-                { $0.getAssetURL(hash: object.hash) ?? URL(string: "https://resources.download.minecraft.net/\(object.hash.prefix(2))/\(object.hash)")! },
-                destination: dest,
-                sha1: object.hash
-            ))
+            // 原实现：`getAssetURL(hash:) ?? URL(string: 官方CDN)!`，hash 含空格/`#`/裸 `%` 时
+            // `getAssetURL` 返回 nil 且兜底 `URL(string:)!` 崩。两者都解析不出则记 err 并计入
+            // unrepairable（与 :67 资源索引 URL 非法同口径）。
+            if let resolvedAssetURL = DownloadSourceManager.shared.getDownloadSource().getAssetURL(hash: object.hash)
+                      ?? assetURL(hash: object.hash) {
+                items.append(.init(resolvedAssetURL, dest, sha1: object.hash))
+            } else {
+                err("启动前补全：资源 \(object.hash) 的下载地址非法，已跳过")
+                unrepairable.append("资源 \(object.hash)")
+            }
         }
         
         // 4) 下载缺失项（NetManager 引擎：多源回退 + 分片 + 重试 + 校验）
@@ -111,12 +115,15 @@ public enum LaunchFix {
                     for object in index.objects {
                         let dest = object.appendTo(dir.assetsURL.appendingPathComponent("objects"))
                         if fileIsValid(dest, hash: object.hash) { continue }
-                        assetItems.append(.init(
-                            DownloadSourceManager.shared.getDownloadSource(),
-                            { $0.getAssetURL(hash: object.hash) ?? URL(string: "https://resources.download.minecraft.net/\(object.hash.prefix(2))/\(object.hash)")! },
-                            destination: dest,
-                            sha1: object.hash
-                        ))
+                        // 与原 :91 资源分析同口径：hash 含空格/`#`/裸 `%` 时 getAssetURL 与兜底都解析
+                        // 不出，记 err 并计入 unrepairable，而非 `URL(string:)!` 崩。
+                        if let resolvedAssetURL = DownloadSourceManager.shared.getDownloadSource().getAssetURL(hash: object.hash)
+                                  ?? assetURL(hash: object.hash) {
+                            assetItems.append(.init(resolvedAssetURL, dest, sha1: object.hash))
+                        } else {
+                            err("启动前补全：资源 \(object.hash) 的下载地址非法，已跳过")
+                            unrepairable.append("资源 \(object.hash)")
+                        }
                     }
                     if !assetItems.isEmpty {
                         let total = Double(assetItems.count)
@@ -150,6 +157,14 @@ public enum LaunchFix {
         }
     }
     
+    /// 资源文件（assets objects）兜底下载地址：官方 CDN。
+    /// 原实现用 `getAssetURL(hash:) ?? URL(string: 官方CDN)!`，当 hash 含空格/`#`/裸 `%` 时
+    /// `getAssetURL` 返回 nil 且兜底 `URL(string:)!` 崩。这里返回 `URL?`，解析不出则交回调用方
+    /// 走 err + unrepairable（与 :67 资源索引 URL 非法同口径）。
+    private static func assetURL(hash: String) -> URL? {
+        return URL(string: "https://resources.download.minecraft.net/\(String(hash.prefix(2)))/\(hash)")
+    }
+
     /// 文件存在且（有 hash 时）hash 匹配 → true
     private static func fileIsValid(_ url: URL, hash: String?) -> Bool {
         FileChecker(hash: hash).check(url) == nil

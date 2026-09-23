@@ -128,6 +128,10 @@ extension MinecraftInstaller {
         
         // 修改 GLFW
         if let glfw = manifest.getNeededLibraries().first(where: { $0.name.contains("lwjgl-glfw") }) {
+            guard let artifact = glfw.artifact else {
+                warn("lwjgl-glfw 无 artifact，跳过 patcher")
+                return
+            }
             guard let javaURL = JavaManager.resolveJavaExecutable() else {
                 err("未找到可用的 Java 运行时，无法运行 glfw-patcher")
                 return
@@ -136,7 +140,7 @@ extension MinecraftInstaller {
             process.executableURL = javaURL
             process.environment = ProcessInfo.processInfo.environment
             process.currentDirectoryURL = URL(fileURLWithPath: "/tmp")
-            process.arguments = ["-jar", SharedConstants.shared.applicationResourcesURL.appendingPathComponent("glfw-patcher.jar").path, task.minecraftDirectory.librariesURL.appendingPathComponent(glfw.artifact!.path).path]
+            process.arguments = ["-jar", SharedConstants.shared.applicationResourcesURL.appendingPathComponent("glfw-patcher.jar").path, task.minecraftDirectory.librariesURL.appendingPathComponent(artifact.path).path]
             do {
                 try Util.runProcessWithTimeout(process, timeout: 30)
                 log("已修改 lwjgl-glfw")

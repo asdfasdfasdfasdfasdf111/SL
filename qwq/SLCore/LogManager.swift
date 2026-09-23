@@ -34,27 +34,39 @@ final class LogStore {
     }
     
     func append(_ message: String, _ level: String, _ caller: String) {
-        appendRaw(
-            "\(dateFormatter.string(from: Date())) [\(level)] \(caller): \(message)",
-            LogLine("[\(level)] \(caller): \(message)")
-        )
+        // 时间戳的格式化必须在串行队列【内部】完成。
+        // DateFormatter 不是线程安全的，而本方法会被任意线程调用（后台下载线程、
+        // Process 的 terminationHandler、进程池等）。此前是在队列外先格式化再投递，
+        // 并发调用会同时读写同一个 formatter 实例（未定义行为）。
+        queue.async {
+            let stamp = self.dateFormatter.string(from: Date())
+            self.appendLocked(
+                "\(stamp) [\(level)] \(caller): \(message)",
+                LogLine("[\(level)] \(caller): \(message)")
+            )
+        }
     }
     
     func appendRaw(_ message: String, _ line: LogLine? = nil, write: Bool = true) {
         queue.async {
-            if self.logs.count >= self.maxCapacity {
-                self.logs.removeFirst(1000)
-            }
-            if self.logLines.count >= 200 {
-                self.logLines.removeFirst(100)
-            }
-            self.logs.append(message)
-            self.logLines.append(line ?? LogLine(message))
-            if self.writeImmediately && write {
-                self.appendToDisk(message + "\n")
-            }
-            print(message)
+            self.appendLocked(message, line, write: write)
         }
+    }
+    
+    /// 真正的写入实现。**只在 `queue` 上调用**（调用方须已在串行队列内），故无需再加锁。
+    private func appendLocked(_ message: String, _ line: LogLine?, write: Bool = true) {
+        if logs.count >= maxCapacity {
+            logs.removeFirst(1000)
+        }
+        if logLines.count >= 200 {
+            logLines.removeFirst(100)
+        }
+        logs.append(message)
+        logLines.append(line ?? LogLine(message))
+        if writeImmediately && write {
+            appendToDisk(message + "\n")
+        }
+        print(message)
     }
     
     func appendToDisk(_ content: String, _ callback: ((Bool) -> Void)? = nil) {
@@ -131,4 +143,3 @@ public func warn(_ message: Any, file: String = #file, line: Int = #line) { LogM
 public func err(_ message: Any, file: String = #file, line: Int = #line) { LogManager.err(message, file: file, line: line) }
 public func debug(_ message: Any, file: String = #file, line: Int = #line) { LogManager.debug(message, file: file, line: line) }
 public func raw(_ message: Any, file: String = #file, line: Int = #line) { LogManager.raw(message) }
-

@@ -15,7 +15,8 @@ import Foundation
 ///   按规则隐式非隔离）、`fileManager`（已显式非隔离的计算属性）与 `memorySet`（已非隔离），
 ///   不触碰任何主 actor 状态，故可安全脱离主 actor。
 /// - `setObject` / `memoryRemove` / `trimMemory` / `clearMemory` / `removeObject` /
-///   `cleanDiskCache` / `userDefaultsGet` 保持主 actor 隔离，避免扩大改动面。
+///   `userDefaultsGet` 保持主 actor 隔离，避免扩大改动面；`cleanDiskCache` 已改标 `nonisolated`
+///   （仅访问 `diskRoot` / `fileManager`，不碰隔离状态），以便启动时在后台线程执行目录枚举。
 /// 注：把 `setText` / `diskSet` 放宽为非隔离**不改变任何既有调用方的行为**——非隔离的同步函数
 /// 从主 actor 调用时仍在当前线程同步执行，不产生 actor 跳转；放宽只是让非隔离上下文（如
 /// `TranslationService.translateText`）也能直接调用，免去一次无谓的主线程往返。
@@ -33,7 +34,7 @@ import Foundation
 /// 官方链接：
 ///   https://github.com/swiftlang/swift-evolution/blob/main/proposals/0412-strict-concurrency-for-global-variables.md
 ///   https://www.swift.org/blog/swift-5.10-released/
-final class CacheManager {
+final class CacheManager: @unchecked Sendable {
     private let diskRoot: URL
     /// 声明为计算属性而非存储属性：`FileManager.default` 本身是非隔离的静态属性，
     /// 而存储属性会随类被推断为主 actor 隔离，只读路径标 `nonisolated` 后读它会触发
@@ -234,7 +235,9 @@ final class CacheManager {
     }
 
     /// 清理超过指定天数的磁盘缓存
-    func cleanDiskCache(olderThan days: Int = 7) {
+    /// `nonisolated`：函数体只访问 `diskRoot`（`let URL`）与 `fileManager`（非隔离计算属性），
+    /// 不碰任何 @Published / 主 actor 隔离状态，可安全在后台线程执行（见 AppContext 启动清理调用）。
+    nonisolated func cleanDiskCache(olderThan days: Int = 7) {
         guard let enumerator = fileManager.enumerator(at: diskRoot, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
         let cutoff = Date().addingTimeInterval(-Double(days) * 86400)
         for case let url as URL in enumerator {

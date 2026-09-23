@@ -28,6 +28,11 @@ public struct FileChecker {
     }
 
     /// 检查文件。通过返回 nil，失败返回错误描述文本。
+    ///
+    /// ⚠️ 并发约定：本方法是【同步重活】——`hash` 分支会用 `FileHandle` 循环读取 1MB 块做整文件
+    /// 哈希（MD5/SHA1/SHA256），在哪个线程调用就在哪个线程阻塞，可能耗时数百 ms～数秒。
+    /// **禁止在主线程调用**；现有唯一主调用点 `SLLaunchBridge.swift:146` 已在后台线程，安全。
+    /// 本方法标 `nonisolated` 仅表示「无 actor 隔离状态」，不代表「轻量」——调用方务必自行置于后台。
     public nonisolated func check(_ path: URL) -> String? {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: path.path),
               let size = (attrs[.size] as? NSNumber)?.int64Value else {

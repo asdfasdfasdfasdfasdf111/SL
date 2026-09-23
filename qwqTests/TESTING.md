@@ -3,23 +3,18 @@
 本目录是给 `qwq` 工程补的单元测试，覆盖 `Core/`（下载、模块内核）、`Features/Java/`、
 `Features/Launch/`、`App/ViewModels/`、`UI/Notices/` 与下载适配器层。
 
-**当前状态：工程里还没有 XCTest target，本目录下的文件也尚未加入任何 target，现在直接 Cmd+U 不会跑起来。** 需要先按下一节建 target 并手动把文件加进去。
+**当前状态：工程已包含 `qwqTests` unit-test target（`productType = com.apple.product-type.bundle.unit-test`）。`qwq.xcodeproj` 通过 `PBXFileSystemSynchronizedRootGroup` 自动同步整个 `qwqTests/` 目录，新增 / 删除测试文件无需手工加入 target；`qwq.xcscheme` 的 TestAction 已挂 `qwqTests.xctest`，直接 ⌘U 即可运行。详细进展见 `REFACTOR_PLAN.md`。**
 
-## 一、在 Xcode 中添加 XCTest target
+## 一、XCTest target（已完成，无需手工创建）
 
-1. 打开 `qwq.xcodeproj`，菜单 `File → New → Target…`
-2. 选 `macOS` 分页下的 `Unit Testing Bundle`，Next
-3. Product Name 填 **qwqTests**，语言 Swift，其余默认，Finish
-4. 选中新建的 `qwqTests` target → `General` → `Testing` 区域（或 `Build Phases` 上方的 Host Application）
-   把 **Host Application** 设为 **qwq**
-5. `Build Settings` 中确认：
-   - `SWIFT_VERSION` = 5.0（与 app target 一致）
-   - `MACOSX_DEPLOYMENT_TARGET` = 13.0（与 app target 一致）
-   - `ENABLE_TESTABILITY`（Debug）= Yes，否则 `@testable import qwq` 取不到 internal 类型
-6. 建好 target 后，把本目录的 13 个测试文件拖进 Xcode 的 `qwqTests` 目录，并在 `File Inspector` 的
-   Target Membership 中勾选 **qwqTests**（不要勾 qwq，否则测试代码会打进 app）
+工程已包含 `qwqTests` unit-test target（`productType = com.apple.product-type.bundle.unit-test`）。`qwq.xcodeproj` 通过 `PBXFileSystemSynchronizedRootGroup` 自动同步整个 `qwqTests/` 目录，新增 / 删除测试文件无需手工加入 target；`qwq.xcscheme` 的 TestAction 已挂 `qwqTests.xctest`，直接 ⌘U 即可运行。详细进展见 `REFACTOR_PLAN.md`。
 
-需要加入 target 的文件：
+- **target**：`qwqTests`，产物 `qwqTests.xctest`，类型 unit-test bundle。
+- **目录自动同步**：`qwqTests/` 作为 `PBXFileSystemSynchronizedRootGroup` 自动纳入编译，测试文件放在该目录下即生效，不需要拖进 Xcode 或在 File Inspector 里勾选 Target Membership。
+- **运行**：Xcode 中 ⌘U；或 Terminal 执行 `./scripts/verify-test.sh run`（宿主型 XCTest 依赖 testmanagerd 的 XPC，需在脱离 AI 沙箱的 Terminal 里跑，详见 `REFACTOR_PLAN.md` §六）。
+- **接线记录**：见 `REFACTOR_PLAN.md` 第 15 项（`8172dbf`，TEST BUILD SUCCEEDED，14 文件 181 用例可编译）。
+
+测试文件清单（共 14 个，目录自动同步，无需手工加入 target）：
 
 | 文件 | 被测对象 | 备注 |
 | --- | --- | --- |
@@ -36,14 +31,17 @@
 | `HomeInteractionStateTests.swift` | HomeInteractionState | 纯视图级状态容器 |
 | `DropInstallCoordinatorTests.swift` | DropInstallCoordinator | 只覆盖分流与失败分支；成功安装分支见缺口 §4.5 |
 | `DownloadAdapterTests.swift` | DownloadSourceResolver / DefaultDownloadSourceResolver / NetDownloaderDownloadEngine / DefaultDownloadVerifier.checker | 经构造参数注入 resolver，`precheck` 跳过路径无需网络 |
+| `RealLaunchIntegrationTests.swift` | （见 §4.14，默认跳过）真实启动链路集成用例 | 拉起真实 Minecraft 进程，靠 `/tmp/sl-real-launch.enabled` 开关默认跳过 |
 
 每个测试文件顶部都有 `@testable import qwq`，因为多数被测类型（`JavaInstallation`、
 `JavaRequirement`、`DefaultJavaResolver`、`SLModule`、`ModuleContext`、
 `NetDownloaderDownloadEngine` 等）是 internal 或依赖 internal 类型，不加这一行编译不过。
 
+> 旧文档曾指导手工建 target、把测试文件拖进 Xcode 并逐个勾选 membership——该步骤已不适用，现由文件夹同步组自动完成。
+
 ## 二、不建 target 也能做的类型检查
 
-没有 target 时可用下面的命令做编译期校验（只做 `-typecheck`，不链接、不运行）。
+也可以用下面的命令做纯编译期校验（只做 `-typecheck`，不链接、不运行；完整 test run 仍走 ⌘U 或 `verify-test.sh`）。
 
 > **注意：正文里给出的最简命令（`xcrun swiftc -typecheck -target arm64-apple-macosx13.0 -I /tmp/deps $(find qwq -name "*.swift") qwqTests/*.swift`）跑不通**，
 > 实测缺三个必要条件，见下面各条。可用命令如下：
@@ -79,7 +77,7 @@ xcrun swiftc -typecheck \
 全量 typecheck 在本轮开始前是**通不过**的，原因不在新增文件，而在既有测试文件：
 
 ```
-qwqTests/JavaResolverTests.swift:23:21: error: type 'FakeJavaRepository' does not conform to protocol 'JavaRepository'
+qwqTests/JavaResolverTests.swift：error: type 'FakeJavaRepository' does not conform to protocol 'JavaRepository'（缺 preScan()）
 ```
 
 `Features/Java/JavaRepository.swift` 后来给协议加了 `preScan()` 要求，
@@ -97,7 +95,7 @@ func preScan() {
 
 ### 2.2 实测结果
 
-- **退出码 0，0 个 error**（全部 13 个测试文件 + 全部生产源码）。
+- **退出码 0，0 个 error**（全部 14 个测试文件 + 全部生产源码）。
 - 48 条 warning，其中绝大多数是每个测试文件各一条
   `warning: file '...' is part of module 'qwq'; ignoring import`（单模块编译的预期产物）；
   其余是生产代码里既有的 warning（未使用的局部变量、Swift 6 并发警告等），与测试无关。
@@ -123,7 +121,7 @@ func preScan() {
   `DefaultDownloadSourceResolver.swift`、`DefaultDownloadVerifier.swift`、`NetDownloaderDownloadEngine.swift`、
   `SLCore/Download/NetDownloader.swift`、`MultiFileDownloader.swift`、`DownloadSourceManager.swift`
 - `JavaResolverTests.swift` → `Features/Java/` 下 `JavaResolver.swift`、`JavaInstallation.swift`、
-  `JavaRequirement.swift`、`JavaInfo.swift`，外加 `SLCore` 的 `Architecture.swift`、
+  `JavaRequirement.swift`、`JavaInfo.swift`，外加 `SLCore` 的
   `Java/JavaVirtualMachine.swift`、`Utils/MyLocalizedError.swift`、`Utils/PropertiesParser.swift`
 
 > `JavaResolverTests` 的命令行校验有个已知折中：被测主体（`JavaResolver` / `JavaInstallation` /
@@ -150,7 +148,8 @@ func preScan() {
 | `HomeInteractionStateTests.swift` | 5 | 真实断言 |
 | `DropInstallCoordinatorTests.swift` | 16 | 真实断言（失败/分流分支） |
 | `DownloadAdapterTests.swift` | 25 | 真实断言（注入 resolver + `precheck` 跳过路径） |
-| **合计** | **180** | |
+| `RealLaunchIntegrationTests.swift` | 1 | 默认跳过：真实拉起 Minecraft 进程验证启动链路健康（见 §4.14） |
+| **合计** | **181** | |
 
 关于「非纯真实断言」的两处，均为无法消除的环境约束，已在对应文件注释中写明：
 

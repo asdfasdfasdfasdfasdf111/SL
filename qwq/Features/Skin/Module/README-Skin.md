@@ -7,14 +7,14 @@
 
 `qwq/Features/Skin/` 现有 6 个文件，皮肤有**两条应用路径**并存：
 
-| 文件 | 行数 | 职责 |
-| --- | --- | --- |
-| `MinecraftSkinManager.swift` | 41 | 皮肤文件持久化（`~/Library/Application Support/SL启动器/Skins/<uuid>.png`） |
-| `SkinResourcePackApplier.swift` | 156 | 离线皮肤主路径：生成 `resourcepacks/SL 皮肤.zip` + 注入 options.txt |
-| `SkinAvatarCropper.swift` | 86 | 尺寸校验与头像裁剪（64×64 / 64×32 / 128×128） |
-| `SkinExtractor.swift` | 72 | 从游戏版本 JAR 提取默认皮肤 |
-| `OfflineSkinService.swift` | 192 | 交互入口：选择面板、默认皮肤恢复（依赖 `LauncherSettings` 单例） |
-| `OfflineUsernameValidator.swift` | 22 | 离线用户名提示文案 |
+| 文件 | 职责 |
+| --- | --- |
+| `MinecraftSkinManager.swift` | 皮肤文件持久化（`~/Library/Application Support/SL启动器/Skins/<uuid>.png`） |
+| `SkinResourcePackApplier.swift` | 离线皮肤主路径：生成 `resourcepacks/SL 皮肤.zip` + 注入 options.txt |
+| `SkinAvatarCropper.swift` | 尺寸校验与头像裁剪（64×64 / 64×32 / 128×128） |
+| `SkinExtractor.swift` | 从游戏版本 JAR 提取默认皮肤 |
+| `OfflineSkinService.swift` | 交互入口：选择面板、默认皮肤恢复（依赖 `LauncherSettings` 单例） |
+| `OfflineUsernameValidator.swift` | 离线用户名提示文案 |
 
 注：历史遗留的 authlib-injector / JAR 改写路径已在前序批次删除，注释保留在
 `MinecraftSkinManager.swift` 头部，离线皮肤统一走资源包方案。

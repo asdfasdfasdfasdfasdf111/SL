@@ -144,7 +144,8 @@ public class Util {
     
     public static func replaceRoot(url: any URLConvertible, root: String, target: String) -> any URLConvertible {
         // 替换后字符串可能非法（URL 特殊字符），强解包会崩；失败时返回原始 URL
-        let replaced = url.url.absoluteString.replacingOccurrences(of: root, with: target)
+        guard let resolved = url.url else { return url }
+        let replaced = resolved.absoluteString.replacingOccurrences(of: root, with: target)
         return URL(string: replaced) ?? url
     }
 

@@ -105,10 +105,14 @@ public class ForgeInstaller {
         
         // 下载 mappings
         let url = clientMappingsDownload.url
+        guard let mappingsURL = url.url else {
+            debug("client mappings 下载地址非法，跳过")
+            return false
+        }
         let destination = URL(fileURLWithPath: replaceWithValue(processor.args[index + 1]))
         
         try? FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try await downloadSingleFile(from: url.url, to: destination, replaceMethod: .replace)
+        try await downloadSingleFile(from: mappingsURL, to: destination, replaceMethod: .replace)
         debug("已修改 DOWNLOAD_MOJMAPS 任务")
         
         return true

@@ -193,7 +193,7 @@ extension MinecraftLauncher {
         let userType = "msa"
         let values: [String: String] = [
             "auth_player_name": options.playerName,
-            "version_name": instance.version!.displayName,
+            "version_name": instance.version?.displayName ?? "",
             "game_directory": instance.runningDirectory.path,
             "assets_root": instance.minecraftDirectory.assetsURL.path,
             "assets_index_name": instance.manifest.assetIndex?.id ?? "",

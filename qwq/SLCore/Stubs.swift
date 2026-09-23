@@ -20,8 +20,7 @@ import Combine
 ///  - `SLCore/SLLaunchBridge.swift`——未实现账号告警（`.critical`）；
 ///  - `SLCore/Minecraft/Launch/MinecraftLauncherArguments.swift`——内存上限非法并回退（`.critical`）；
 ///  - `SLCore/Minecraft/Launch/LaunchFix.swift`——启动前补全存在无法修复的缺项（`.critical`）；
-///  - `SLCore/Minecraft/Launch/MinecraftLauncher.swift`——游戏日志文件不可写（`.critical`）；
-///  - `SLCore/Minecraft/Download/CustomFileDownloadTask.swift`——下载失败（`.critical`）与下载完成（`.finish`）。
+///  - `SLCore/Minecraft/Launch/MinecraftLauncher.swift`——游戏日志文件不可写（`.critical`）。
 public func hint(_ message: String, _ type: HintType = .info) {
     log("[Hint] \(message)")
     let level = NoticeLevel(type)

@@ -92,7 +92,11 @@ enum GameVersionDownloadStarter {
                 await MainActor.run {
                     manager.start(tasks)
                 }
-                tasks.tasks["minecraft"]!.start()
+                if let minecraftTask = tasks.tasks["minecraft"] {
+                    minecraftTask.start()
+                } else {
+                    LaunchPanelState.shared.presentError("下载任务组缺少 minecraft 任务，无法启动下载")
+                }
             } catch {
                 await MainActor.run {
                     // 只操作全局单例与 settings（引用类型，生命周期与视图解耦）

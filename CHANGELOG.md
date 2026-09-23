@@ -2,6 +2,20 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 文档与代码对齐（2026-09-23）
+
+**背景**：模块化重构（拆巨型文件、删死代码、全库去 PCL 品牌命名）已全部落地，但部分文档仍停留在重构前或自相矛盾。本轮只改文档（除 `qwqTests/JavaResolverTests.swift` 一处过期头注释外不碰任何 Swift 代码），逐条核对后对齐：
+
+- **`qwqTests/TESTING.md`**：原「一、添加 XCTest target」整节已过期（工程早已存在 `qwqTests` unit-test target，并借 `PBXFileSystemSynchronizedRootGroup` 自动同步整个 `qwqTests/` 目录，`qwq.xcscheme` 的 TestAction 已挂 `qwqTests.xctest`）。改为「已完成」现状说明；统一测试文件数（14）与用例数（181），补全被漏掉的文件表行（`RealLaunchIntegrationTests.swift`）
+- **告警基线统一为 44 / 56**：`scripts/typecheck.sh` 头注释已明确「以 44 / 56 为准」（有 `git archive HEAD` 逐条 diff 复核），`REFACTOR_PLAN.md` / `README-Game.md` 中残留的「口径二 58」一并改为 56；判定标准保持「告警集合与基线一致，不是只看数量」
+- **行数统计去漂移**：`docs/MODULE-INVENTORY.md`、`ARCHITECTURE.md`、`README-Minecraft.md`、`README-Game.md`、`README-Skin.md` 中随拆分而失真的「N 行」表述改为职责描述，并在 `MODULE-INVENTORY.md` 顶部加统计日期；`REFACTOR_PLAN.md` 中「最大文件 889 → 487 行」改为职责描述
+- **`README.md` 目录树**：补 `qwq/Core/`、`Features/` 下的 `Theme`、根目录的 `qwqTests/`、`docs/`
+- **`README-Minecraft.md`**：`MinecraftInstance` 的「构造与启动（`launch`）保持不变」与代码相反——`launch(_:)` 已于 2026-09 删除，启动统一走 `SLLaunchBridge.slLaunch`，已更正
+- **品牌残留核对**：全库仅剩 1 处漏改品牌命名（`scripts/slice_merge.swift`，由另一任务处理）；`README.md` / `CHANGELOG.md` 中的 PCL/PCL2 提及均属「算法出处引用」正当保留，无该改未改之处
+- **`qwqTests/JavaResolverTests.swift` 头注释**：原称 `JavaModule` 依赖的 `SLModule`/`ModuleContext`/`ModuleCapabilityKey` 未落地、无法编译——实际 `Core/Module/SLModule.swift` 与 `ModuleRegistry.swift` 均已就位，改为说明不覆盖 `JavaModule.register` 的真实原因（内部硬编码 `DefaultJavaRepository()` → `JavaManager.shared`，无注入点）
+
+- **验证**：本轮仅文档与一处注释，无编译影响；告警基线口径以 `scripts/typecheck.sh` 为准（44 / 56）
+
 ## 死代码清理 + 命名统一（2026-09-23）
 
 **背景**：工程源自上游两个开源项目，历史上累积了一批「类型上存在、运行期不可达」的假功能与兼容层遗留。本轮在**只删可证明不可达的代码**这一前提下集中清理，并把全库命名统一为自有命名。
