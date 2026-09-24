@@ -33,12 +33,7 @@ public class InstallTask: ObservableObject, Identifiable, Hashable, Equatable {
     /// 幂等完成标志：complete() 被调用多次时只真正清理一次。
     /// 根治「重复 complete → 重复清理 / 重复 dismiss / 重复 resume continuation」类 UAF 前兆。
     private var didComplete = false
-    /// 所属任务组（weak 防循环引用；由 InstallTasks.addTask/init 时设置）。
-    /// complete() 清全局 inprogressInstallTasks 前用它做归属校验：
-    /// 只有「全局仍是自己所属那一组」才清理，否则说明新任务已接管，绝不能动全局引用
-    /// —— 旧任务迟到回调清掉新任务引用 → 新任务失去强持有 → 下载中 UAF（崩溃 #4 根因）。
-    internal weak var containerTasks: InstallTasks?
-    
+
     public static func == (lhs: InstallTask, rhs: InstallTask) -> Bool {
         lhs.id == rhs.id
     }
@@ -177,11 +172,14 @@ public class InstallTasks: ObservableObject, Identifiable, Hashable, Equatable {
         // 「nan %」。下载详情页的总进度就是这么显示出 NaN 的。
         // 空集合的语义是「无进度」→ 0，与单任务版 getProgress() 的守卫保持同一口径。
         guard !tasks.isEmpty else { return 0 }
-        var progress: Double = 0
-        for task in tasks.values {
-            progress += task.getProgress()
-        }
-        return progress / Double(tasks.count)
+        // 仅对有真实文件账本的任务（totalFiles > 0）取均值。各加载器子任务
+        // （Fabric / Forge / NeoForge）不设置 totalFiles（默认 -1），其 getProgress() 恒为 0；
+        // 若纳入算术平均会把整组进度人为压低（如 Minecraft 本体已 100% 时整组仍被拖到 50%）。
+        // 跳过这些任务后，总进度真实反映已建立账本任务（即 Minecraft 本体）的进度。
+        let ledgerTasks = tasks.values.filter { $0.totalFiles > 0 }
+        guard !ledgerTasks.isEmpty else { return 0 }
+        let progress = ledgerTasks.reduce(0.0) { $0 + $1.getProgress() }
+        return progress / Double(ledgerTasks.count)
     }
     
     public func getTasks() -> [InstallTask] {
@@ -191,13 +189,11 @@ public class InstallTasks: ObservableObject, Identifiable, Hashable, Equatable {
     
     public func addTask(key: String, task: InstallTask) {
         tasks[key] = task
-        task.containerTasks = self
         subscribeToTask(task)
     }
     
     init(_ tasks: [String : InstallTask]) {
         self.tasks = tasks
-        tasks.values.forEach { $0.containerTasks = self }
         subscribeToTasks()
     }
     

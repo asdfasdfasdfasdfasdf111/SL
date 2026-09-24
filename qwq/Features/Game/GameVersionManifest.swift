@@ -2,7 +2,7 @@
 //  GameVersionManifest.swift
 //  模块化拆分：Mojang 游戏版本清单（从 GameViews.swift 拆出）
 //  官方（主源失败回退 BMCLAPI 镜像）+ 未列出版本并发拉取合并
-//  三级缓存：内存 5 分钟 → 磁盘 7 天 TTL（弱网/离线兜底）→ 联网刷新
+//  三级缓存：内存 5 分钟 → 磁盘兜底（CacheManager 不按时间过期，联网全部失败时回退）→ 联网刷新
 //
 
 import Foundation
@@ -25,6 +25,20 @@ enum GameVersionManifest {
     /// 磁盘缓存 key（CacheManager 文本缓存，内容为 {"savedAt":…,"versions":[…]})
     private static let diskCacheKey = "game_version_manifest_merged"
 
+    /// 合并清单的内存缓存（官方 + 未列出版本）。
+    ///
+    /// ⚠️ 这里**刻意保持普通的 `private static var`**，不加 `nonisolated(unsafe)`、也不自建锁。
+    /// 工程启用 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`，本类型（含静态成员）因此被推断为
+    /// `@MainActor` 隔离 —— 这是**编译器可检查**的保护。全部访问点也确实都在主 actor 上：
+    /// `cachedMerged()` / `cachedClientManifestURL(for:)` / `clearCache()` / `fetchMerged(forceRefresh:)`
+    /// 均为静态方法（推断 MainActor），调用方是 `VersionCatalogService`（同为主 actor）、
+    /// `GameViews.clearStaticCaches()`（SwiftUI 视图侧）与 `OfficialDownloadSource`（主 actor 类）。
+    ///
+    /// 若改为 `nonisolated(unsafe)`，编译器就不再拦截越隔离访问：此时**必须**同步给每一次读写都套上
+    /// 一把 `nonisolated` 的锁，否则等于「名义上加锁、实际裸奔」——将来一旦出现非主 actor 调用点，
+    /// 就是一处静默数据竞争。本类型当前没有这种调用点，故不引入那把锁（也不留无用的锁声明）。
+    /// 对照：`LocalModCatalog` 之所以真的需要 `localCatalogLock`，是因为它的数据确实被
+    /// `Task.detached` 后台路径访问（见该文件 `localCatalogLock` 的注释）。
     private static var mergedManifestCache: [[String: Any]]?
     private static var mergedManifestFetchDate: Date?
 

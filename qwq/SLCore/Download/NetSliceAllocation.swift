@@ -26,8 +26,23 @@ extension NetManager {
             return true
         }
 
-        // 首线程失败且未取到文件大小（无有效数据）→ 重建首线程
-        if record.fileSize == -2 {
+        // 未获取 / 未知文件大小（fileSize == -2 尚未取得大小，或 -1 未知大小）：首线程可能失败。
+        // -1 且失败分片已下到数据 → 按 failed.start + failed.done 断点续传；
+        // 首线程零进度（含 -2 未取得大小）则从 0 重建首线程（重取大小或重下整文件）。
+        // 保留原 -2 分支「零进度重建首线程」行为，不回退。
+        if record.fileSize <= 0 {
+            // `!superseded` 不可省：未知大小时 `undone` 恒为 -1，无法像已知大小那样靠 undone 归零
+            // 来表达「这片已被接管」，只能靠标记。否则每个 tick 都会为同一失败片再建一条续传片。
+            if let failed = record.slices.first(where: { $0.state == .failed && !$0.superseded && $0.done > 0 }) {
+                let slice = Slice(start: failed.start + failed.done, sourceIndex: sourceIndex)
+                slice.state = .resumed
+                // 先标记接管、再建片：本片保留已下数据供合并时拼接，但不再参与后续「待续传」判定
+                failed.superseded = true
+                record.slices.append(slice)
+                record.slices.sort { $0.start < $1.start }
+                startSliceTask(record, slice)
+                return true
+            }
             record.slices.removeAll { $0.state == .failed && $0.done == 0 }
             if record.slices.isEmpty {
                 let slice = Slice(start: 0, sourceIndex: sourceIndex)
@@ -38,10 +53,12 @@ extension NetManager {
         }
 
         // ② 失败分片断点续传（参照上游 PCL2：从 DownloadStart + DownloadDone 继续）
-        if let failed = record.slices.first(where: { $0.state == .failed && $0.undone(of: record) > 0 }) {
+        if let failed = record.slices.first(where: { $0.state == .failed && !$0.superseded && $0.undone(of: record) > 0 }) {
             let slice = Slice(start: failed.start + failed.done, sourceIndex: sourceIndex)
             slice.state = .resumed
-            // 旧失败分片保留其已下数据（merge 时拼接），其 undone 因新分片插入自动归零
+            // 旧失败分片保留其已下数据（merge 时拼接）；此处同样显式标记接管，
+            // 与 undone 归零形成双重保险（并让「已接管」这一语义在两种大小口径下一致）
+            failed.superseded = true
             record.slices.append(slice)
             record.slices.sort { $0.start < $1.start }
             startSliceTask(record, slice)

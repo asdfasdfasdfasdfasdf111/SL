@@ -29,8 +29,9 @@ public struct FileChecker {
     /// ⚠️ 本类型只**存储**这个开关，判定逻辑在
     /// SLCore/Download/NetFilePreflight.swift —— 那里在决定复用前会先过一遍 `check`。
     public var canUseExistsFile: Bool = true
-    /// 是否额外要求内容是可解析的 JSON。用于清单类文件 ——
-    /// 只查大小/哈希是查不出「文件被截断成半份、但仍是合法 JSON 前缀」这类损坏的。
+    /// 是否额外要求内容是可解析的 JSON。仅当调用方显式传入 `isJson: true` 才生效（当前引擎内无调用方）。
+    /// 它只能查出「完全无法解析成 JSON」的损坏（例如下载到 HTML 错误页、被截成非合法 JSON）；
+    /// 若截断后仍是一个合法 JSON 前缀，则不会被此开关发现 —— 那种情况需靠 size / hash 校验兜底。
     public var isJson: Bool = false
 
     /// 全部参数都有默认值，`FileChecker()` 即「不做任何校验」。

@@ -37,7 +37,8 @@ extension NetManager {
     }
 
     func hasActiveWork() -> Bool {
-        records.contains { $0.state == .waiting || $0.state == .loading || $0.state == .merging }
+        // 合并是 actor 内同步操作（NetMerger），不存在独立的 .merging 态，故只判 waiting / loading。
+        records.contains { $0.state == .waiting || $0.state == .loading }
     }
 
     func tickOnce() async {
@@ -55,7 +56,15 @@ extension NetManager {
 
         // 触发条件：速度低于下限，或存在等待中的文件，或存在待续传的失败分片（参照上游 PCL2：Speed < NetTaskSpeedLimitLow OrElse FileRemain > NetTaskThreadLimit）
         let hasFailedSlice = records.contains { record in
-            record.slices.contains { $0.state == .failed && $0.undone(of: record) > 0 }
+            record.slices.contains { slice in
+                // 已被续传新片接管的失败片不再计入，否则调度器会反复为同一片建新片
+                // （未知大小时 undone 恒为 -1，无法靠 undone 归零，只能靠 superseded 标记）。
+                guard slice.state == .failed, !slice.superseded else { return false }
+                // 未知文件大小（fileSize == -1）时 undone 恒为 -1，需特判为「可重试」，
+                // 否则调度器不会为断流的首线程补片（对应 NetSliceAllocation 的 fileSize <= 0 分支）。
+                if record.fileSize == -1 { return true }
+                return slice.undone(of: record) > 0
+            }
         }
         let needMore = recentSpeed < Double(config.speedLimitLow)
             || records.contains { $0.state == .waiting }

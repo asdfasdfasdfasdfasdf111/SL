@@ -52,8 +52,12 @@ enum SkinPatchState {
     case checking(pixelSize: String)
 
     /// **可安装** —— 卡片高光 + 右下角「下载」按钮
+    ///
+    /// ⚠️ `versionID` 是**查询那一刻**的版本 id（含加载器后缀）：补丁是按它拆出的
+    /// gameVersion/loader 去 Modrinth 核验的。`install()` 落盘前会再比一次当前版本，
+    /// 不一致就拒绝——否则用户切了版本后再点下载，会把按旧加载器核验的 jar 装进新版本目录。
     case available(patch: SkinPatchCatalog.Patch, pixelSize: String,
-                   gameVersion: String, loader: ModLoader?)
+                   gameVersion: String, loader: ModLoader?, versionID: String)
 
     /// 有加载器，但上游没有适配当前游戏版本的补丁（典型：每周快照，上游只发正式版）
     case noPatch(pixelSize: String, gameVersion: String, loader: ModLoader?)
@@ -95,7 +99,7 @@ enum SkinPatchState {
         switch self {
         case .hidden:                       return "hidden"
         case .checking:                     return "checking"
-        case .available(_, _, _, let l):    return "available-\(l?.rawValue ?? "none")"
+        case .available(let patch, _, _, let l, _):    return "available-\(l?.rawValue ?? "none")-\(patch.versionNumber)"
         case .noPatch:                      return "noPatch"
         case .noLoader:                     return "noLoader"
         case .noVersion:                    return "noVersion"
@@ -106,21 +110,8 @@ enum SkinPatchState {
         }
     }
 
-    /// 展示用尺寸文案（各分支都带，收敛成一个读取口，免得视图里写 switch）。
-    var pixelSize: String {
-        switch self {
-        case .hidden:                                   return ""
-        case .checking(let s):                          return s
-        case .available(_, let s, _, _):                return s
-        case .noPatch(let s, _, _):                     return s
-        case .noLoader(let s, _):                       return s
-        case .noVersion(let s):                         return s
-        case .failed(let s, _):                         return s
-        case .installing(let s, _):                     return s
-        case .installed(let s, _):                      return s
-        case .installFailed(let s, _):                  return s
-        }
-    }
+    /// 展示用尺寸文案：各分支都带尺寸，视图侧用模式匹配自行解构（见 `SkinPatchCardView.bodyText`），
+    /// 故此处不额外提供统一读取口。
 }
 
 // MARK: - 编排者
@@ -129,7 +120,7 @@ enum SkinPatchState {
 ///
 /// 生命周期：由 `CategoryContentView` 以 `@StateObject` 持有（与同页的
 /// `LaunchAvatarSkinViewModel` 一致 —— 自己创建、绑在视图上），视图经
-/// `.onReceive(NotificationCenter…skinNeedsPatch)` 驱动 `beginCheck(pixelSize:)`。
+/// `.onReceive(NotificationCenter…skinSizeClassified)` 驱动 `beginCheck(pixelSize:)`。
 @MainActor
 final class SkinPatchCoordinator: ObservableObject {
 
@@ -181,7 +172,8 @@ final class SkinPatchCoordinator: ObservableObject {
                 let patch = try await SkinPatchCatalog.latest(gameVersion: gameVersion, loader: loader)
                 guard let self, !Task.isCancelled else { return }
                 self.state = .available(patch: patch, pixelSize: pixelSize,
-                                        gameVersion: gameVersion, loader: loader)
+                                        gameVersion: gameVersion, loader: loader,
+                                        versionID: versionID)
             } catch {
                 guard let self, !Task.isCancelled else { return }
                 // 「没有适配版本」是可预期的业务结果（快照版就是没有），单独成一态给出可行动建议；
@@ -202,9 +194,16 @@ final class SkinPatchCoordinator: ObservableObject {
     /// 仅在 `.available` 态有意义（其余状态是空操作）—— 卡片只在该态渲染下载按钮，
     /// 这里的守卫是防御性的：万一被别处误调，也不会拿 nil 去下载。
     func install() {
-        guard case .available(let patch, let pixelSize, _, _) = state else { return }
+        guard case .available(let patch, let pixelSize, _, _, let queriedVersionID) = state else { return }
 
         let versionID = settings.selectedMinecraftVersion
+        // 版本漂移防护：补丁是按查询当时的版本 id（含加载器后缀）核验的。
+        // 若用户在弹卡后切了版本（含换成不同加载器），当前版本已不等于核验时那个，
+        // 落盘前再拦一道——否则按旧加载器核验的 jar 会被装进新版本的 mods 目录导致游戏起不来。
+        guard versionID == queriedVersionID else {
+            state = .installFailed(pixelSize: pixelSize, reason: "游戏版本已切换，请重新选择皮肤")
+            return
+        }
         let gameRoot = resolvedGameRoot
         guard !versionID.isEmpty else {
             state = .installFailed(pixelSize: pixelSize, reason: "未选择游戏版本")

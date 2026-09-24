@@ -179,12 +179,9 @@ extension NetManager {
         // 服务器提前断流仍有剩余 → 视为失败，走断点续传（PCL2 1173 行）
         if record.fileSize != -1 && slice.undone(of: record) > 0 {
             slice.state = .failed
-            record.failCount += 1
-            // 断流与 sliceFailed 走同一套源失败记账：原实现只累加 failCount（该字段无人读取），
-            // 既不拉黑源也不触发换源，同一源可以被无限续传重试，用户侧表现为「进度停住、
-            // 既不失败也不换源」。计入 sourceFails 后：自适应超时随之增长（runSlice 的 6s×(1+失败数)），
-            // 同一源失败 maxFailPerSource 次即被 pickSource 跳过，全部源耗尽则由下面的
-            // isAllSourcesFailed 置为失败并清理临时分片。
+            // 断流与 sliceFailed 走同一套源失败记账：计入 sourceFails 后，自适应超时随之增长
+            // （runSlice 的 6s×(1+失败数)），同一源失败 maxFailPerSource 次即被 pickSource 跳过，
+            // 全部源耗尽则由下面的 isAllSourcesFailed 置为失败并清理临时分片。
             record.sourceFails[slice.sourceIndex, default: 0] += 1
             record.failReason = "连接中断，分片未下载完整"
             if record.isAllSourcesFailed(config.maxFailPerSource) {
@@ -203,7 +200,6 @@ extension NetManager {
         guard let record = find(fileID), let slice = record.slice(sliceID) else { return }
         record.sliceTasks[sliceID] = nil
         slice.state = .failed
-        record.failCount += 1
         record.sourceFails[slice.sourceIndex, default: 0] += 1
         // 连接层错误（SSL 握手失败 / 无法连接 / DNS / 连接中断）说明该源当前不可达，
         // 同源重试只会浪费时间（实测 SecureConnectionFailed 每源重试 3 次共耗 45s），

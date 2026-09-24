@@ -24,16 +24,20 @@ extension NetManager {
         case .replace:
             return .download
         case .skip:
-            if let checker = record.file.checker, checker.canUseExistsFile {
-                if checker.check(record.file.destination) == nil {
-                    return .skip
-                }
-                // 存在但校验不过（如哈希不匹配）→ 删除重下
-                try? FileManager.default.removeItem(at: record.file.destination)
+            guard let checker = record.file.checker else {
+                // 无校验要求：存在即跳过（PCL2 FileChecker.CanUseExistsFile 默认 true；无 checker 视为通过）
+                return .skip
+            }
+            guard checker.canUseExistsFile else {
+                // 显式禁止复用已有文件（canUseExistsFile == false）：即使本地已存在也必须重新下载
                 return .download
             }
-            // 无校验要求：存在即跳过（PCL2 FileChecker.CanUseExistsFile 默认 true；无 checker 视为通过）
-            return .skip
+            if checker.check(record.file.destination) == nil {
+                return .skip
+            }
+            // 存在但校验不过（如哈希不匹配）→ 删除重下
+            try? FileManager.default.removeItem(at: record.file.destination)
+            return .download
         }
     }
 }

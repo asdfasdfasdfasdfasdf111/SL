@@ -149,7 +149,10 @@ public class Util {
                 }
                 let destinationFileURL = destination.appendingPathComponent(normalizedPath)
                 // replace = false 时保留已有文件；true 时先删掉再解，确保拿到的是归档里的版本。
-                if FileManager.default.fileExists(atPath: destinationFileURL.path) && replace {
+                // ⚠️ 目录条目（path 形如 "dir/"，standardizing 后去掉尾斜杠变 "dir"）必须先跳过：
+                // 否则会 `removeItem` 掉刚解压出来的整棵子树，且函数仍返回 true，造成「静默缺失子文件」。
+                if entry.type != .directory,
+                   FileManager.default.fileExists(atPath: destinationFileURL.path) && replace {
                     try FileManager.default.removeItem(at: destinationFileURL)
                     debug("已删除重复文件 \(destinationFileURL.lastPathComponent)")
                 }

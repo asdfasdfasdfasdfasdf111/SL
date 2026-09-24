@@ -9,24 +9,6 @@ import CoreGraphics
 /// `UI/ViewComponents.swift` 里 `SkinLayerView.cropped` 走 CoreImage 的实现是**两套独立代码**：
 /// 这里产出「头 + 帽已合成好的整张头像」，那里产出「单独一层」。改其一别以为改了另一处。
 enum SkinAvatarCropper {
-    /// 头像取景方向（皮肤展开图坐标）。
-    /// ⚠️ 六个方向里四个只改 x（y 恒为 8），只有顶 / 底把 y 换成 0 ——
-    /// 这是按 **64×64 新版布局**写死的，32×32 旧布局的贴图区并不相同。
-    enum HeadDirection {
-        case front, back, left, right, top, bottom
-        /// 该方向对应的裁剪起点。返回元组而非 CGRect：宽高恒为 8×8，没必要重复表达。
-        var offset: (x: Int, y: Int) {
-            switch self {
-            case .front: return (8, 8)
-            case .back:  return (24, 8)
-            case .left:  return (0, 8)
-            case .right: return (16, 8)
-            case .top:   return (8, 0)
-            case .bottom:return (16, 0)
-            }
-        }
-    }
-
     /// 校验皮肤图是否可接受：**只校验尺寸**，不检查内容（全黑图也会通过）。
     /// 只接受两种尺寸：64×64（1.8+ 新版，含帽子图层）、64×32（1.8 之前的旧版，只有一层）。
     ///
@@ -80,7 +62,9 @@ enum SkinAvatarCropper {
             return try zoomImage(layer1, to: targetSize)
         }
         // 帽层（layer2）在贴图右侧 x=40 处 —— 与头层同 y，只有 x 不同。
-        // ⚠️ 这个坐标属于「图层体系」，与上面 HeadDirection 的「取景方向体系」不是一回事。
+        // ⚠️ 这个坐标属于「图层体系」（头层 x=8、帽层 x=40，y 同为 8），
+        // 与 `qwq/UI/ViewComponents.swift` 中 `SkinLayerView.cropped` 的「取景方向体系」
+        // （yOffset 按 h==32/64 取 0/32）不是一回事 —— 两处各自独立实现，改其一别以为改了另一处。
         let layer2Rect = CGRect(x: 40, y: 8, width: 8, height: 8)
         guard let layer2 = cgImage.cropping(to: layer2Rect) else {
             return try zoomImage(layer1, to: targetSize)

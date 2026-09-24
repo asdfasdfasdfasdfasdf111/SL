@@ -65,8 +65,14 @@ public class MinecraftLauncher {
         process.arguments!.append(instance.manifest.mainClass)
         process.arguments!.append(contentsOf: buildGameArguments(options))
         let executablePath = process.executableURL?.path ?? "<未指定 Java 路径>"
-        let command = executablePath + " " + (process.arguments ?? []).joined(separator: " ")
-            .replacingOccurrences(of: #"--accessToken\s+\S+"#, with: "--accessToken 🎉", options: .regularExpression)
+        // 令牌遮蔽：accessToken 既以 `--accessToken <token>`（JVM 参数）形式出现，
+        // 也以 `auth_access_token:<token>` / `auth_session:<token>`（游戏参数，见 MinecraftLauncherArguments.swift:201-202）
+        // 形式出现。仅按参数名遮蔽会漏掉后两者 → 统一对令牌值本身做替换。
+        // 空令牌不替换，避免 `replacingOccurrences(of: "")` 退化为全串插入。
+        var command = executablePath + " " + (process.arguments ?? []).joined(separator: " ")
+        if !options.accessToken.isEmpty {
+            command = command.replacingOccurrences(of: options.accessToken, with: "🎉")
+        }
         debug(command)
         MinecraftCrashHandler.lastLaunchCommand = command
         process.currentDirectoryURL = instance.runningDirectory
@@ -131,11 +137,11 @@ public class MinecraftLauncher {
                 log("启动期间已收到终止请求，立即终止刚拉起的进程")
                 process.terminate()
             }
-            Task { // 轮询判断窗口是否出现
+            Task { // 轮询判断窗口是否出现（仅用于日志提示，错误不影响主流程）
                 while process.isRunning {
-                    let options = CGWindowListOption(arrayLiteral: .excludeDesktopElements, .optionOnScreenOnly)
-                    guard let windowInfoList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-                        throw NSError()
+                    let windowOptions = CGWindowListOption(arrayLiteral: .excludeDesktopElements, .optionOnScreenOnly)
+                    guard let windowInfoList = CGWindowListCopyWindowInfo(windowOptions, kCGNullWindowID) as? [[String: Any]] else {
+                        return
                     }
 
                     for info in windowInfoList {
@@ -145,7 +151,12 @@ public class MinecraftLauncher {
                             return
                         }
                     }
-                    try await Task.sleep(for: .seconds(1))
+                    do {
+                        try await Task.sleep(for: .seconds(1))
+                    } catch {
+                        // 被取消或睡眠被打断：停止轮询，避免无人接收的抛错。
+                        return
+                    }
                 }
             }
 

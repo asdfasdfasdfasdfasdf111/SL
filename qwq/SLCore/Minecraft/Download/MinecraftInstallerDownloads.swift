@@ -212,10 +212,15 @@ extension MinecraftInstaller {
             let dest = object.appendTo(task.minecraftDirectory.assetsURL.appendingPathComponent("objects"))
             // 多源构造（主源 + 互补备用源）：官方失败自动切镜像，镜像失败自动切官方。
             // 旧实现硬编码官方 CDN（resources.download.minecraft.net），官方不可用时全部失败。
-            // getAssetURL 仅在 hash 不足 2 字符时返回 nil，asset hash 恒为 40 位十六进制，! 安全
+            // 兜底地址：hash 含空格/`#`/裸 `%` 时 `getAssetURL` 与 `URL(string:)` 都解析不出，
+            // 原实现 `URL(string:)!` 强解会崩（同 LaunchFix.swift:91-100 口径）。两者都解析不出则抛错而非崩溃。
+            guard let assetURL = DownloadSourceManager.shared.getDownloadSource().getAssetURL(hash: object.hash)
+                  ?? URL(string: "https://resources.download.minecraft.net/\(object.hash.prefix(2))/\(object.hash)") else {
+                throw MyLocalizedError(reason: "资源 \(object.hash) 的下载地址非法，无法继续安装")
+            }
             items.append(.init(
                 DownloadSourceManager.shared.getDownloadSource(),
-                { $0.getAssetURL(hash: object.hash) ?? URL(string: "https://resources.download.minecraft.net/\(object.hash.prefix(2))/\(object.hash)")! },
+                { $0.getAssetURL(hash: object.hash) ?? assetURL },
                 destination: dest,
                 sha1: object.hash
             ))
@@ -259,7 +264,13 @@ extension MinecraftInstaller {
                 }
                 
                 libraryNames.append(library.name)
-                items.append(.init(DownloadSourceManager.shared.getDownloadSource(), { $0.getLibraryURL(library) ?? URL(string: "https://libraries.minecraft.net/\(Util.toPath(mavenCoordinate: library.name))")! }, destination: dest, sha1: artifact.sha1))
+                // maven 坐标经 Util.toPath 拼出的 CDN 地址理论上恒可解析；但与 LaunchFix.swift:91-100
+                // 同口径（非法地址抛错而非 `URL(string:)!` 强解崩），解析不出即抛 MyLocalizedError。
+                guard let libraryURL = DownloadSourceManager.shared.getDownloadSource().getLibraryURL(library)
+                      ?? URL(string: "https://libraries.minecraft.net/\(Util.toPath(mavenCoordinate: library.name))") else {
+                    throw MyLocalizedError(reason: "依赖库 \(library.name) 的下载地址非法，无法继续安装")
+                }
+                items.append(.init(DownloadSourceManager.shared.getDownloadSource(), { $0.getLibraryURL(library) ?? libraryURL }, destination: dest, sha1: artifact.sha1))
             }
         }
         
@@ -299,7 +310,12 @@ extension MinecraftInstaller {
             }
             
             libraryNames.append(library.name)
-            items.append(.init(DownloadSourceManager.shared.getDownloadSource(), { $0.getLibraryURL(library) ?? URL(string: "https://libraries.minecraft.net/\(Util.toPath(mavenCoordinate: library.name))")! }, destination: dest, sha1: artifact.sha1))
+            // 与 downloadLibraries 同口径（LaunchFix.swift:91-100）：非法 CDN 地址抛错而非 `URL(string:)!` 强解崩。
+            guard let libraryURL = DownloadSourceManager.shared.getDownloadSource().getLibraryURL(library)
+                  ?? URL(string: "https://libraries.minecraft.net/\(Util.toPath(mavenCoordinate: library.name))") else {
+                throw MyLocalizedError(reason: "本地库 \(library.name) 的下载地址非法，无法继续安装")
+            }
+            items.append(.init(DownloadSourceManager.shared.getDownloadSource(), { $0.getLibraryURL(library) ?? libraryURL }, destination: dest, sha1: artifact.sha1))
         }
         
         try? FileManager.default.createDirectory(at: task.versionURL.appendingPathComponent("natives"), withIntermediateDirectories: true)

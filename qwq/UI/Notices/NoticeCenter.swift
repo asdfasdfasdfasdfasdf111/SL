@@ -146,7 +146,16 @@ public final class NoticeCenter: ObservableObject {
 
     /// 投递一条提示。**线程安全**：可在任意线程/任意 actor 调用。
     public nonisolated func post(_ notice: Notice) {
-        Task { @MainActor in self.deliver(notice) }
+        // 已在主线程上时**同步**投递：否则 `Task { @MainActor in }` 会把投递推迟到下一轮 runloop，
+        // 导致「先 post 后 presentAndWait」这类同线程调用出现投递顺序倒置——
+        // 后发的 `presentAndWait`（其 `deliver` 是同步的）反而先落到 `current` 上。
+        // `MainActor.assumeIsolated` 仅在确实位于主 actor 时执行闭包（主线程即主 actor），超时即崩溃；
+        // 后台线程走原 hop 路径，行为不变。
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { self.deliver(notice) }
+        } else {
+            Task { @MainActor in self.deliver(notice) }
+        }
     }
 
     @MainActor

@@ -12,11 +12,33 @@ import Darwin
 
 enum CrashReporter {
     private static var installed = false
-    private static let logPath = NSHomeDirectory() + "/Library/Logs/SL_crash.log"
+
+    /// 信号路径可用的 C 字符串路径缓冲：在 `install()`（普通线程）预分配并 `strcpy` 进去。
+    /// 信号上下文里只把它当 `UnsafePointer<CChar>` 传给 `open()`，不再有任何 Swift `String` 构造——
+    /// 原先 `static let logPath = NSHomeDirectory() + "..."` 是懒初始化，首次触碰恰在信号路径里，
+    /// `NSHomeDirectory()` + 字符串拼接 = 两次 malloc；若崩溃点落在堆内（堆损坏/越界写坏堆头），
+    /// 信号处理函数再调 malloc 会**自死锁**，崩溃日志静默写不出来。
+    private static var logPathC: UnsafeMutablePointer<CChar>?
+
+    /// `install()` 期预分配的 backtrace 缓冲（128 槽），信号上下文复用、不再分配。
+    private static var backtraceBuffer: UnsafeMutablePointer<UnsafeMutableRawPointer?>?
 
     static func install() {
         guard !installed else { return }
         installed = true
+
+        // 预计算路径（普通线程允许分配）：展开 ~ 并 strcpy 进 C 缓冲，供信号路径零分配使用。
+        let path = NSHomeDirectory() + "/Library/Logs/SL_crash.log"
+        path.withCString { src in
+            let len = Int(strlen(src))
+            let buf = UnsafeMutablePointer<CChar>.allocate(capacity: len + 1)
+            strcpy(buf, src)
+            logPathC = buf
+        }
+
+        // 预分配 backtrace 缓冲（普通线程允许分配），信号上下文复用、不再分配。
+        backtraceBuffer = UnsafeMutablePointer<UnsafeMutableRawPointer?>.allocate(capacity: 128)
+
         let sigs: [Int32] = [SIGSEGV, SIGBUS, SIGILL, SIGABRT, SIGTRAP]
         for sig in sigs {
             signal(sig, { s in
@@ -47,6 +69,7 @@ enum CrashReporter {
     /// 依据：POSIX.1-2008 async-signal-safe 函数清单（`write` / `strlen` / `time` /
     /// `gmtime_r` 在列，`malloc` / `ctime` 不在列）。
     static func writeCrashLog(signal: Int32, extra: String?) {
+        guard let logPath = logPathC else { return }
         let fd = open(logPath, O_WRONLY | O_CREAT | O_TRUNC, 0o644)
         guard fd >= 0 else { return }
         defer { close(fd) }
@@ -66,13 +89,9 @@ enum CrashReporter {
         }
         writeStr(fd, "\n--- backtrace ---\n")
 
-        var callstack = [UnsafeMutableRawPointer?](repeating: nil, count: 128)
-        let frames = callstack.withUnsafeMutableBufferPointer { buf in
-            backtrace(buf.baseAddress, 128)
-        }
-        callstack.withUnsafeMutableBufferPointer { buf in
-            backtrace_symbols_fd(buf.baseAddress, frames, fd)
-        }
+        guard let buf = backtraceBuffer else { return }
+        let frames = backtrace(buf, 128)
+        backtrace_symbols_fd(buf, frames, fd)
 
         if let extra {
             writeStr(fd, "\n--- extra ---\n")
@@ -93,54 +112,50 @@ enum CrashReporter {
         _ = write(fd, s, strlen(s))
     }
 
-    /// async-signal-safe 的十进制整数写出：手写 itoa，缓冲区在栈上。
+    /// async-signal-safe 的十进制整数写出：手写 itoa，缓冲区在栈上（零堆分配）。
     private static func writeInt(_ fd: Int32, _ value: Int) {
-        var digits = [CChar](repeating: 0, count: 24)
-        var v = value
-        let negative = v < 0
-        if negative { v = -v }
-        var cursor = digits.count
-        repeat {
-            cursor -= 1
-            digits[cursor] = CChar(48 + v % 10)
-            v /= 10
-        } while v > 0
-        if negative {
-            cursor -= 1
-            digits[cursor] = 45 // '-'
-        }
-        digits.withUnsafeBufferPointer { buf in
-            guard let base = buf.baseAddress else { return }
-            _ = write(fd, base + cursor, buf.count - cursor)
+        withUnsafeTemporaryAllocation(of: CChar.self, capacity: 24) { digits in
+            var v = value
+            let negative = v < 0
+            if negative { v = -v }
+            var cursor = digits.count
+            repeat {
+                cursor -= 1
+                digits[cursor] = CChar(48 + v % 10)
+                v /= 10
+            } while v > 0
+            if negative {
+                cursor -= 1
+                digits[cursor] = 45 // '-'
+            }
+            _ = write(fd, digits.baseAddress!.advanced(by: cursor), digits.count - cursor)
         }
     }
 
     /// 把 `tm` 写成 "YYYY-MM-DD HH:MM:SS"，全程操作栈缓冲，可重入且零分配。
     private static func writeTime(_ fd: Int32, _ broken: tm) {
-        var out = [CChar](repeating: 0, count: 19)
-        func put(_ value: Int, at position: Int, width: Int) {
-            var v = value
-            var p = position + width - 1
-            for _ in 0..<width {
-                out[p] = CChar(48 + v % 10)
-                v /= 10
-                p -= 1
+        withUnsafeTemporaryAllocation(of: CChar.self, capacity: 19) { out in
+            func put(_ value: Int, at position: Int, width: Int) {
+                var v = value
+                var p = position + width - 1
+                for _ in 0..<width {
+                    out[p] = CChar(48 + v % 10)
+                    v /= 10
+                    p -= 1
+                }
             }
-        }
-        put(Int(broken.tm_year) + 1900, at: 0, width: 4)
-        out[4] = 45  // '-'
-        put(Int(broken.tm_mon) + 1, at: 5, width: 2)
-        out[7] = 45  // '-'
-        put(Int(broken.tm_mday), at: 8, width: 2)
-        out[10] = 32 // ' '
-        put(Int(broken.tm_hour), at: 11, width: 2)
-        out[13] = 58 // ':'
-        put(Int(broken.tm_min), at: 14, width: 2)
-        out[16] = 58 // ':'
-        put(Int(broken.tm_sec), at: 17, width: 2)
-        out.withUnsafeBufferPointer { buf in
-            guard let base = buf.baseAddress else { return }
-            _ = write(fd, base, buf.count)
+            put(Int(broken.tm_year) + 1900, at: 0, width: 4)
+            out[4] = 45  // '-'
+            put(Int(broken.tm_mon) + 1, at: 5, width: 2)
+            out[7] = 45  // '-'
+            put(Int(broken.tm_mday), at: 8, width: 2)
+            out[10] = 32 // ' '
+            put(Int(broken.tm_hour), at: 11, width: 2)
+            out[13] = 58 // ':'
+            put(Int(broken.tm_min), at: 14, width: 2)
+            out[16] = 58 // ':'
+            put(Int(broken.tm_sec), at: 17, width: 2)
+            _ = write(fd, out.baseAddress!, out.count)
         }
     }
 }

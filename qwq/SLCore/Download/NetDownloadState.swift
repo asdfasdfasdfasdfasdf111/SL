@@ -34,6 +34,16 @@ extension NetManager {
         var done: Int64 = 0
         var sourceIndex: Int
         var state: SliceState = .downloading
+        /// 本失败片是否已被「自它的终点起续传」的新分片接管。
+        ///
+        /// 为什么必须有这个标记：判定「这片还需不需要续传」原本只靠 `undone(of:) > 0` ——
+        /// 已知大小时，新分片插进来后本片的 `end` 变成「新片起点 − 1」，`undone` 自动归零，
+        /// 于是调度器自然不再重复建片。但**未知大小（`fileSize == -1`）时 `undone` 恒返回 -1**，
+        /// 上面那套「自动归零」失效：若不显式标记，`tryBeginSlice` 的 `fileSize <= 0` 分支
+        /// 会在**每个 tick** 都对同一片失败分片再建一个「从同一偏移续传」的新片
+        /// → 同一字节区间被并发重复下载，合并时按 start 拼接出「尾部重复」的坏文件；
+        /// 且旧片永远停在 `.failed`，调度器 `needMore` 恒真，记录永不进入终止态。
+        var superseded = false
         /// 本片临时文件地址（断点续传要复用它）；nil 表示尚未分配。
         var tempURL: URL?
 
@@ -64,11 +74,12 @@ extension NetManager {
         }
     }
 
-    /// 单个文件的生命周期。`merging`（各分片已下完、正在拼成最终文件）**不是终止态** ——
-    /// 合并失败会回到 `failed`，所以收尾时必须等它走完。
-    /// 终止判定统一走 `FileRecord.isTerminal`，不要在别处硬写 `== .done`。
+    /// 单个文件的生命周期。合并是 NetManager actor 内的**同步**操作（见 NetMerger.tryMergeIfPossible），
+    /// 不会经过任何中间态 —— 分片全部到位后直接在 actor 上置 `.done` 或 `.failed`，
+    /// 因此本枚举没有、也不需要独立的 `.merging` 态。终止判定统一走 `FileRecord.isTerminal`，
+    /// 不要在别处硬写 `== .done`。
     enum FileState {
-        case waiting, loading, merging, done, failed
+        case waiting, loading, done, failed
     }
 
     /// 单个下载文件的全部状态：分片集合、每个源的失败记账、进度与完成回调。
@@ -85,11 +96,8 @@ extension NetManager {
         /// 记为「只能整份下、不能 Range 续传」的源下标（once = 一次到底）。
         /// 一旦某源被记进来，它就不再算作可用重试对象（见 isAllSourcesFailed）。
         var sourcesOnce: Set<Int> = []  // 不支持断点续传的源
-        /// 每个源（下标）累计的失败次数，用于判定**单个源**是否已判死。
+        /// 每个源（下标）累计的失败次数，用于判定**单个源**是否已判死（达到 maxFailPerSource 即判死）。
         var sourceFails: [Int: Int] = [:]
-        /// 整个文件的失败次数（跨源累计）。与 `sourceFails` 是不同粒度：
-        /// 这个决定「还要不要整体重试」，那个决定「某个源还能不能用」。
-        var failCount = 0
         /// 最后一次失败的原因文本，**会被直接展示给用户**，因此是面向用户的文案。
         var failReason = ""
         /// 进度回调（0~1）。仅在有新进展时调用；下载任务不在主线程上跑，
@@ -103,7 +111,7 @@ extension NetManager {
             self.file = file
         }
 
-        /// 是否已到终止态。`.merging` 刻意不算 —— 合并还在跑，取消时不能跳过它。
+        /// 是否已到终止态。合并是同步完成的（不占独立态），故终止态只有 `.done` / `.failed`。
         var isTerminal: Bool { state == .done || state == .failed }
         /// 正在跑的分片数（首次下载与续传都算）。每次访问都全表 filter，属高频路径上的开销。
         var activeSliceCount: Int { slices.filter { $0.state == .downloading || $0.state == .resumed }.count }

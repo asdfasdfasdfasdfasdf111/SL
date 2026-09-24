@@ -48,9 +48,6 @@ final class AppContext {
 
     let fileManager = FileManager.default
 
-    /// App Support 目录
-    let appSupportURL: URL
-
     // MARK: - 缓存管理（在 init 中初始化，避免循环依赖）
 
     let cacheManager: CacheManager
@@ -60,7 +57,6 @@ final class AppContext {
     private init() {
         let supportURL = URL.applicationSupportDirectory
             .appendingPathComponent("SL启动器")
-        appSupportURL = supportURL
         try? fileManager.createDirectory(at: supportURL, withIntermediateDirectories: true)
 
         // 传入缓存目录，避免 CacheManager 内部访问 AppContext.shared 造成递归锁
@@ -83,14 +79,19 @@ final class AppContext {
         }
 
         // 响应内存压力（macOS 上没有 NSApplication.didReceiveMemoryWarning，使用 DispatchSource）
-        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical])
+        //
+        // `queue: .main` 必加：本工程开启 SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor，
+        // setEventHandler 闭包默认继承主 actor 隔离；若不显式指定队列，DispatchSource 实际在
+        // 其内部队列触发回调，与主 actor 隔离"名义上一致、运行时不一致"，是对隔离的静默违背。
+        // 显式绑定 .main 后，回调才真正跑在主队列/主 actor 上，与隔离标注一致。
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
         source.setEventHandler { [weak self] in
             // 半清而非全清：保留最近使用的一半（LRU 裁剪），避免压力过后所有缓存
             // 重新从磁盘/网络回填；真正的临界压力由系统触发多次事件逐步收紧
             self?.cacheManager.trimMemory(toFraction: 0.5)
             DownloadCategoryView.clearStaticCaches()
         }
-        source.resume()
+        source.activate()
         memoryPressureSource = source
     }
 

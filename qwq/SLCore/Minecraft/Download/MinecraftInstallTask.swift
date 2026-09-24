@@ -42,24 +42,37 @@ public class MinecraftInstallTask: InstallTask {
     
     public override func start() {
         Task {
+            // 记录安装前版本目录是否已存在：覆盖安装（目录早已存在）失败时，绝不能删整个目录，
+            // 否则一次网络失败会把用户既有的实例（版本 jar 与 json）一起清掉；只有「本次新建」的
+            // 目录才是安装过程自己产出的半成品，失败清理才安全。
+            let versionDirExistedBefore = FileManager.default.fileExists(atPath: versionURL.path)
             do {
                 try await startTask(self)
                 complete()
             } catch {
                 await PopupManager.shared.show(.init(.error, "无法安装 Minecraft", "\(error.localizedDescription)\n若要反馈此问题，你可以进入设置 > 其它 > 打开日志，将选中的文件发给别人。", [.ok]))
                 err("无法安装 Minecraft: \(error.localizedDescription)")
+                let shouldRemoveVersion = removesVersionOnFailure && !versionDirExistedBefore
                 await MainActor.run {
                     currentState = .failed
                     failureReason = error.localizedDescription
-                    if removesVersionOnFailure {
-                        try? FileManager.default.removeItem(at: versionURL)
-                    }
                     // 失败也必须 complete()：触发 onComplete 回调 → 关闭下载详情页 + 弹失败提示。
                     // complete() 幂等（didComplete）+ 归属校验：失败回调迟到（晚于下一个下载的
                     // start()）时识别出全局任务组已被替换 → 拒绝清理，避免旧任务清掉新任务引用
                     // （跨任务交叉清理 UAF，崩溃 #4 根因）。旧实现这里只清全局不调 complete()，
                     // 导致详情页永远挂着、无失败回调。
                     self.complete()
+                }
+                // 递归删除较重，移出主线程；仅当该目录是本次安装新建（安装前不存在）才清理，
+                // 避免一次网络失败连用户的既有实例一起删掉。
+                if shouldRemoveVersion {
+                    // ⚠️ 必须**值捕获**要删的 URL：`Task.detached` 不继承 actor 隔离，若在闭包里写
+                    // `self.versionURL` 就是「从主 actor 之外访问主 actor 隔离属性」（Swift 6 下为错误，
+                    // 当前为告警）；`URL` 本身是 Sendable，先在这里读出来再传给后台任务即可。
+                    let versionURLToRemove = versionURL
+                    Task.detached(priority: .utility) {
+                        try? FileManager.default.removeItem(at: versionURLToRemove)
+                    }
                 }
             }
         }

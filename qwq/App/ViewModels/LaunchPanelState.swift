@@ -2,10 +2,10 @@
 //  LaunchPanelState.swift
 //  模块化收口：ContentView 的启动相关界面状态（Java 提示气泡、启动失败提示）。
 //
-//  数据源说明：这组状态（开关 + 文案）由 `LauncherSettings` 持有，且启动流程、下载流程
-//  等既有代码仍在写同一组字段。本次收口只把「根视图如何读取与驱动这组状态」搬到这里，
-//  数据源保持唯一的 `LauncherSettings`，不新建第二套提示状态——否则其他模块写入后
-//  根视图收不到，界面行为会变。
+//  数据源说明：这组状态（开关 + 文案）的唯一存储是 `LauncherSettings`，本类型是其唯一写入方
+//  （presentMessage / presentError / clearLaunchError / dismissError 经 settings 写回），
+//  启动流程、下载流程等其它模块不直接写这些字段，只通过本类型的方法投递。本次收口把
+//  「根视图如何读取与驱动这组状态」搬到这里，不新建第二套提示状态，保证写入路径单一。
 //
 //  与 NoticeCenter 的关系：NoticeCenter 由 NoticeOverlay 渲染为窗口顶部横幅；
 //  本组状态对应的是窗口内的浮动药丸（`UI/TaskPill.swift`，两套状态共用同一个组件、

@@ -119,7 +119,7 @@ struct SkinPatchCardView: View {
 
     /// 当前状态对应的正文段落。
     ///
-    /// ⚠️ 只有前三态（checking / available / noPatch / noLoader / noVersion / failed）走
+    /// ⚠️ 查询与无结果类状态（checking / available / noPatch / noLoader / noVersion / failed）走
     /// `SkinPatchCopy`；安装过程的三态（installing / installed / installFailed）是本视图的临时进度
     /// 反馈，没有独立的文案函数 —— 但仍然复用 `SkinPatchCopy.indent`，
     /// 免得这段文字与其它段落出现「有的缩进有的不缩进」的参差。
@@ -129,7 +129,7 @@ struct SkinPatchCardView: View {
             return ""
         case .checking:
             return SkinPatchCopy.checkingBody()
-        case .available(let patch, let pixelSize, let gameVersion, let loader):
+        case .available(let patch, let pixelSize, let gameVersion, let loader, _):
             return SkinPatchCopy.availableBody(pixelSize: pixelSize, patch: patch,
                                                gameVersion: gameVersion, loader: loader)
         case .noPatch(let pixelSize, let gameVersion, let loader):

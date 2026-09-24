@@ -151,6 +151,11 @@ public actor NetManager {
     }
 
     private func waitForCompletion(_ ids: [UUID]) async throws {
+        // 总时长上限（兜底）：正常流程下记录只会走向 .done / .failed（见 FileRecord.isTerminal），
+        // 本方法也只在 allTerminal 时返回或抛错。但若出现意外的状态死锁（如分片调度遗漏导致记录
+        // 永久停在 .loading），这里必须有超时，否则会无限轮询挂死。
+        let totalTimeoutSeconds: TimeInterval = 1800
+        let deadline = Date().addingTimeInterval(totalTimeoutSeconds)
         while true {
             var failedReason: String?
             var allTerminal = true
@@ -164,6 +169,9 @@ public actor NetManager {
                     throw NetDownloadError.fileFailed(failedReason)
                 }
                 return
+            }
+            if Date() > deadline {
+                throw NetDownloadError.fileFailed("下载等待超时（已超过 \(Int(totalTimeoutSeconds)) 秒仍未完成）")
             }
             try await Task.sleep(for: .milliseconds(100))
             try Task.checkCancellation()

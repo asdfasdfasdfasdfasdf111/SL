@@ -15,6 +15,14 @@ enum OfflineSkinService {
     private static var skinDir: URL { appSupportDir.appendingPathComponent("SL启动器/Skins") }
     private static var avatarDir: URL { appSupportDir.appendingPathComponent("SL启动器/Avatars") }
 
+    /// 删除可能残留的高清皮肤原图（selected_skin_hd.png）。
+    /// 仅在选了「原版尺寸 / 不支持尺寸」皮肤时调用：高清原图对这两种出路毫无意义，
+    /// 留着只会让下次进入游戏仍可能读到陈旧高清文件。选高清皮肤时该文件会被覆盖重写，无需清理。
+    private static func removeHDIfPresent() {
+        let hd = skinDir.appendingPathComponent("selected_skin_hd.png")
+        try? FileManager.default.removeItem(at: hd)
+    }
+
     /// 皮肤原图落盘（创建目录 + 写 default 文件名），返回目标 URL
     ///
     /// 空数据一律拒绝写入：`Data()` 经 `.atomic` 覆写会把**已保存的皮肤文件截断为 0 字节**，
@@ -90,8 +98,9 @@ enum OfflineSkinService {
         switch sizeClass {
         case .unsupported:
             // 之前的卡片不再适用（用户换了张更不靠谱的图）—— 先收起再抛错，免得弹窗后面
-            // 还压着一张描述旧尺寸的卡片。
+            // 还压着一张描述旧尺寸的卡片。高清原图对这条出路无意义，一并清掉残留。
             postSizeClassified(pixelSize: nil)
+            removeHDIfPresent()
             // 复用裁剪器已有的口径与文案（「Java 版皮肤必须是 64×64 或 64×32，当前为 …」）。
             // ⚠️ 但**不能**用它的文案去描述 128×128：那句「128×128 是基岩版格式，Java 版不支持」
             // 在有了补丁之后已经不成立（补丁正是为这类整倍数高清尺寸准备的），故高清尺寸走下面分支，
@@ -99,11 +108,17 @@ enum OfflineSkinService {
             try SkinAvatarCropper.validateSkin(at: url)
 
         case .vanillaSupported:
-            try applySkin(source: url, settings: settings)
-            // 换回原版尺寸 → 收回可能还开着的那张补丁卡片（否则它会继续用旧尺寸描述误导用户）
+            // 换回原版尺寸：先收回可能还开着的补丁卡片、清掉残留高清原图，
+            // 再做落盘（与下方 unsupported 分支同序：先收卡片后落盘，失败也不留半完成状态）。
             postSizeClassified(pixelSize: nil)
+            removeHDIfPresent()
+            try applySkin(source: url, settings: settings)
 
         case .needsPatch:
+            // 先收起可能还开着的旧卡片（用户先选了别张高清、又换回这张），避免卡片描述错乱；
+            // 与下方 vanillaSupported / unsupported 分支同序：先收卡片，后落盘，最后才弹新卡片。
+            postSizeClassified(pixelSize: nil)
+
             // 1) 降采样出原版尺寸副本，供**启动器自身**使用。
             //    理由：`SkinLayerView.cropped`（yOffset 只认 h==32/64）与
             //    `SkinAvatarCropper.cropAvatar` 的取景坐标都按 64×64 布局写死 ——

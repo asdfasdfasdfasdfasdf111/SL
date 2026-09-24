@@ -22,7 +22,10 @@ import SwiftUI
 struct ScrollBounceModifier: ViewModifier {
     func body(content: Content) -> some View {
         if #available(macOS 13.3, *) {
-            content.scrollBounceBehavior(.basedOnSize)
+            // 这些滚动区全是**横向**的，必须显式指定 `.horizontal`：
+            // `scrollBounceBehavior` 的 `axes` 参数默认是 `[.vertical]`，不写只对纵向滚动视图生效，
+            // 对横向滚动区等于「挂了但没生效」（这是此前静默失效的根因）。
+            content.scrollBounceBehavior(.basedOnSize, axes: .horizontal)
         } else {
             // macOS 13.0–13.2：API 不存在，保持系统默认回弹行为（不改变任何既有观感）
             content

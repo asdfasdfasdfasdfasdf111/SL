@@ -4,9 +4,9 @@
 //
 //  下载速度计量：把下载过程中逐块累计的字节数，按 1 秒窗口换算成「字节/秒」发布给 UI。
 //
-//  分工：字节累加在子 Actor（`CounterActor`）里做 —— `addByte` 会被多个并发下载任务
-//  高频调用，不能每次都回到主线程；1 秒循环则跑在 MainActor 上读取并清零。
-//  读写分离，避免「每字节一次跨隔离域同步」的开销。
+//  分工：字节累加在子 Actor（`CounterActor`）里做 —— 热路径 `addBytes(_:)` 被下载循环逐块调用，
+//  它只负责惰性启动 1 秒计量循环并把字节转发给 CounterActor，真正的跨任务累加在 CounterActor 内
+//  无锁完成；1 秒窗口的读取与清零跑在 MainActor 上。读写分离，避免「每字节一次跨隔离域同步」的开销。
 //
 //  Created by YiZhiMCQiu on 2025/8/24.
 //
@@ -55,12 +55,6 @@ final class SpeedMeter: ObservableObject {
                 }
             }
         }
-    }
-    
-    /// 记录 1 个字节（下载循环按块推进时调用）。属热路径，尽量别在这里加分配或日志。
-    public func addByte() async {
-        ensureTicker()
-        await counter.add(1)
     }
     
     /// 批量记录 n 个字节。

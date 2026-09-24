@@ -86,9 +86,12 @@ final class NavigationState: ObservableObject {
     }
 
     /// 切换分类时收起下载详情。
-    /// 仅当画布未处于拖拽位移中时才收起，保持既有行为不变。
+    /// 原 `dragOffset == 0` 守卫已移除：本方法仅由 `onChange(of: selectedCategory)` 触发，
+    /// 而 selectedCategory 的两种变更来源在触发时 dragOffset 都已是 0——点击导航本就无位移；
+    /// 拖拽换页在 `withAnimation` 块内与 `dragOffset = 0` 同批提交，onChange 处理时位移已归零。
+    /// 故该守卫恒真，属死条件，移除不改变任何行为。
     func handleSelectedCategoryChange() {
-        if downloadDetail.isPresented && dragOffset == 0 {
+        if downloadDetail.isPresented {
             downloadDetail.toggle()
         }
     }
