@@ -22,6 +22,14 @@
 //  默认跳过。本文件是它的**反向对照**：正向证「该启动的能启动」，反向证「该拦住的真被拦住」。
 //  按项目既有纪律，只有正向结果不足以说明问题，两边都要有。
 //
+//  MARK: - 全部用例都是 async（不是风格选择）
+//
+//  工程开了 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`，Xcode 26.2 上**同步用例**
+//  一旦创建并释放任何主 actor 隔离的类实例，测试宿主就 100% abort
+//  （`malloc: pointer being freed was not allocated`，XCTest 无限重启宿主、套件再也前进不了）。
+//  因此本文件所有用例一律 `async`，等待用 `await fulfillment(of:)` 而不是 `wait(for:)`。
+//  详见 `.workbuddy/memory/MEMORY.md`「测试用例必须写成 async」。
+//
 
 import XCTest
 import os
@@ -36,7 +44,7 @@ final class LaunchCancellationTests: XCTestCase {
     ///    这正是此处要钉住的行为差异；
     ///  - `onLauncherReady` / `progressHandler` / `phaseHandler` / `launchSuccess` 都挂上
     ///    `XCTFail`：它们的任何一次触发都意味着「取消后仍继续准备」，正是原缺陷的表现。
-    func testPreCancelledTokenAbortsBeforeAnyPreparation() {
+    func testPreCancelledTokenAbortsBeforeAnyPreparation() async {
         let token = LaunchCancellationToken()
         token.cancel()
 
@@ -68,7 +76,7 @@ final class LaunchCancellationTests: XCTestCase {
             }
         )
 
-        wait(for: [done], timeout: 30)
+        await fulfillment(of: [done], timeout: 30)
 
         XCTAssertFalse(
             launcherReadyFired.isSet,
@@ -95,7 +103,7 @@ final class LaunchCancellationTests: XCTestCase {
     ///
     /// 只断言「失败原因不是 `.cancelled`」：本用例没有游戏目录，放行之后必然在
     /// 「实例无法创建」处失败，这是预期内的。它证明的是入口判定**没有把正常路径一起拦掉**。
-    func testUncancelledTokenPassesEntryGate() {
+    func testUncancelledTokenPassesEntryGate() async {
         let token = LaunchCancellationToken()
         XCTAssertFalse(token.isCancelled, "新建令牌的初值必须是未取消")
 
@@ -120,7 +128,7 @@ final class LaunchCancellationTests: XCTestCase {
             }
         )
 
-        wait(for: [done], timeout: 30)
+        await fulfillment(of: [done], timeout: 30)
 
         guard let result = captured.withLock({ $0 }), case .failure(let error) = result else {
             return XCTFail("未收到失败回调（不存在的版本必然失败）")
@@ -160,7 +168,7 @@ final class LaunchCancellationTests: XCTestCase {
 
     /// 令牌自身的语义：可重复取消、状态单向。
     /// 重复取消必须无副作用 —— 电源按钮在「无启动进行中」时也会调一次 `cancel()`。
-    func testTokenCancelIsIdempotentAndMonotonic() {
+    func testTokenCancelIsIdempotentAndMonotonic() async {
         let token = LaunchCancellationToken()
         XCTAssertFalse(token.isCancelled)
 

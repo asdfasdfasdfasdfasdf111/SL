@@ -47,8 +47,15 @@
 
 **验证**：`./scripts/typecheck.sh` 两口径 **0 错误**（告警 42 / 24；口径一 +2 是新增测试文件
 带来的 `@testable import` 统计口径产物，非回归，已记入脚本头部）；
-`./scripts/verify-build.sh` → **BUILD SUCCEEDED**；`./scripts/verify-test.sh build` → 见下。
-`verify-test.sh run` **必须在用户 Terminal 里跑**（沙箱内测试宿主会 hang，见 TESTING.md）。
+`./scripts/verify-build.sh` → **BUILD SUCCEEDED**；`./scripts/verify-test.sh build` → **TEST BUILD SUCCEEDED**；
+`./scripts/verify-test.sh run` → 见提交正文（本批新增 4 条反向用例）。
+
+⚠️ 本批实测到一个**新的验证盲区**：`reportLaunchFailure` 闭包捕获了**后面才声明**的 `let cancellation`，
+`./scripts/typecheck.sh` 报 **0 错误**、`./scripts/verify-build.sh` 报 **1 个 error**
+（`closure captures 'cancellation' before it is declared`）。原因是该诊断属**明确初始化**类，
+由 **SILGen 阶段**发出，而 `swiftc -typecheck` 只跑到类型检查就停，结构上看不到它。
+即 typecheck 的失效模式不止「漏 import 成员」，还漏**整类初始化顺序错误** ——
+凡改动涉及「闭包/局部函数捕获同作用域的 `let`」，必须补跑真实编译。
 
 ## 两处隐蔽缺陷修复：写盘崩溃路径 + 日志旁路无上限（2026-09-25）
 
