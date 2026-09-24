@@ -48,7 +48,16 @@
 **验证**：`./scripts/typecheck.sh` 两口径 **0 错误**（告警 42 / 24；口径一 +2 是新增测试文件
 带来的 `@testable import` 统计口径产物，非回归，已记入脚本头部）；
 `./scripts/verify-build.sh` → **BUILD SUCCEEDED**；`./scripts/verify-test.sh build` → **TEST BUILD SUCCEEDED**；
-`./scripts/verify-test.sh run` → 见提交正文（本批新增 4 条反向用例）。
+`./scripts/verify-test.sh run` → **225 用例 0 失败、1 跳过**，`** TEST EXECUTE SUCCEEDED **`
+（崩溃标记 `pointer being freed` / `Restarting after unexpected exit` 均为 0）。
+
+**反向用例的「牙齿」是实测出来的，不是声明出来的**：把入口判定临时注释掉后重跑，
+两条用例立刻变红，且失败信息正好复现原缺陷机制 ——
+`XCTAssertEqual failed: ("nil") is not equal to ("Optional(LaunchError.cancelled)") -
+实际是 MyLocalizedError(reason: "无法创建实例: …")`，即**取消被完全忽略、流程一路走到创建实例**
+（现实中就是一路走到 `process.run()` 把游戏拉起来）；另一条报
+`instanceNotFound(...) is not equal to cancelled`，即取消没有被透传。
+恢复判定后工作区干净、`git status` 无残留。
 
 ⚠️ 本批实测到一个**新的验证盲区**：`reportLaunchFailure` 闭包捕获了**后面才声明**的 `let cancellation`，
 `./scripts/typecheck.sh` 报 **0 错误**、`./scripts/verify-build.sh` 报 **1 个 error**
