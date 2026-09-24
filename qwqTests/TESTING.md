@@ -96,7 +96,7 @@ func preScan() {
 
 ### 2.2 实测结果
 
-- **退出码 0，0 个 error**（全部 15 个测试文件 + 全部生产源码）。
+- **退出码 0，0 个 error**（全部 18 个测试文件 + 全部生产源码）。
 - 48 条 warning，其中绝大多数是每个测试文件各一条
   `warning: file '...' is part of module 'qwq'; ignoring import`（单模块编译的预期产物）；
   其余是生产代码里既有的 warning（未使用的局部变量、Swift 6 并发警告等），与测试无关。
@@ -149,8 +149,15 @@ func preScan() {
 | `HomeInteractionStateTests.swift` | 5 | 真实断言 |
 | `DropInstallCoordinatorTests.swift` | 16 | 真实断言（失败/分流分支） |
 | `DownloadAdapterTests.swift` | 25 | 真实断言（注入 resolver + `precheck` 跳过路径） |
+| `InstallTaskProgressTests.swift` | 5 | 真实断言（进度边界口径，含任务组空集合的 NaN 防护） |
+| `SkinDecoderTests.swift` | 9 | 真实断言（尺寸白名单与裁剪口径一致性） |
+| `SkinPatchSupportTests.swift` | 20 | 真实断言（尺寸分类 / 版本 id 拆分 / 加载器闸门） |
+| `GameScanGenerationTests.swift` | 3 | 真实断言（扫描代际；含「超时不作废结果」的回归守卫） |
 | `RealLaunchIntegrationTests.swift` | 1 | 默认跳过：真实拉起 Minecraft 进程验证启动链路健康（见 §4.14） |
-| **合计** | **181** | |
+| **合计** | **218** | 其中 1 条默认跳过 |
+
+> 上表为 2026-09-24 实测口径（`Executed 218 tests, with 1 test skipped and 0 failures`）。
+> 新增测试文件时请一并更新本表与总数，否则会像本次一样出现「表里只有 14 个文件、实际 18 个」的漂移。
 
 关于「非纯真实断言」的两处，均为无法消除的环境约束，已在对应文件注释中写明：
 
@@ -322,7 +329,8 @@ rm /tmp/sl-real-launch.enabled
 ## 五、必须遵守：用例一律写成 `async`（Xcode 26.2 隔离析构缺陷）
 
 **结论**：`qwqTests` 里**每个 `test…()` 方法都必须写成 `async`**。这不是为了等待什么，
-而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 15 个测试文件、186 个用例已全部统一。
+而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 18 个测试文件、218 个用例已全部统一
+（2026-09-24 实测：`Executed 218 tests, with 1 test skipped and 0 failures`）。
 
 ### 现象
 

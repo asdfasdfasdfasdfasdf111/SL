@@ -2,6 +2,18 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 崩溃日志信号安全 + 慢盘扫描不再丢结果（2026-09-24）
+
+**背景**：对照上游 PCL2 原版（`Meloong-Git/PCL`，VB.NET/WPF）逐项核过之后的两处落实 —— 一处是本地自造的崩溃捕获在**信号路径里做堆分配**，另一处是本地自造的 **10 秒扫描超时会把迟到结果整条丢掉**。逐项对照与「哪些其实不是本地改坏」记在 `../SL-原版PCL2对照.md`。
+
+- **`App/CrashReporter.swift`：信号路径改为真·零分配**。上一轮（`8dfebf8`）只去掉了字符串插值与 `ctime`，**没去干净**，信号路径里还剩 4 处堆分配：`open(logPath, …)` 的 String→C 串桥接、`[CChar](repeating: 0, count: 24)`（itoa 缓冲）、`[CChar](repeating: 0, count: 19)`（时间缓冲）、`[UnsafeMutableRawPointer?](repeating: nil, count: 128)`（取栈缓冲，约 1 KiB）。现改为：日志路径在安装期 `strdup` 一次，三个缓冲全部走 `withUnsafeTemporaryAllocation`（栈上），并补上 `errno` 保存/恢复。另 `strsignal` **不在** macOS 的 async-signal-safe 清单里（`man 2 sigaction` 的 Base / Realtime / ANSI C / Extension 四段均无），换成静态字面量表 —— 顺带消掉旧日志里 `signal: 11 (Segmentation fault: 11)` 的重复编号。**实测**（`malloc` 拦截器 + 真实 SIGSEGV）：信号路径内分配次数 **23 → 8**，而这 8 次在「纯 C 处理器只做 `signal`+`raise`」的对照里**一模一样**，即本文件自身的分配已为 **0**
+- **`Features/Game/GameCategoryView.swift` + `ViewModels/GameCategoryViewModel.swift`：扫描超时不再丢结果**。原判据 `guard !viewModel.scanTimedOut else { return }` 会在 10 秒超时后把**迟到但有效**的扫描结果整条丢弃 → 慢盘（机械盘/外接盘/同时在下解压）上界面永久停在「未找到游戏版本」，必须手动点一次全盘查找才恢复。改为**扫描代际号**：`resetScanState()` 递增并返回，视图对「超时回调」与「结果回调」都先核代际，**只丢已被新一代扫描取代的回调**。超时本身只负责提前把界面从「检索中」放出来，不再作废结果（超时退化仍只做一次）。这同时修掉一个同源缺陷：上一代的超时闭包会把刚开始的新扫描判成「已超时」
+- **新增回归守卫** `qwqTests/GameScanGenerationTests.swift`（3 个用例：代际递增并返回 / 超时后当前代际仍有效 / 迟到结果落地后展示状态翻回），用例一律写成 `async`（遵循 `qwqTests/TESTING.md` §五）
+- **核对后判定「不是本地改坏」的两处**：①「选 Java 时先等扫描、找不到就触发扫描再选」是 PCL2 原版行为（`ModJava.vb` 的 `SelectOrDownloadJava`，`WaitIfRunning()` + `Start()` + 重选）；② Java 需求判定「按版本号优先、只有非标准版本才退回发布时间」也是原版口径（`ModJava.vb` 的 `GetJavaRequirement`），本地上批已改到同一方向，无需再动
+- **本次未动（理由已核）**：`SLLaunchBridge` 的线程模型（原版同样把重活放后台线程、碰 UI 时显式 `Dispatcher.Invoke`；本地补这层等于把 60–70 行搬回 UI 层，属大范围，且该桥已列为待删除的过渡层）、`NetSliceAllocation` 未知文件大小时的挂起、`SkinPatchCoordinator` 跨版本装载
+
+- **验证**：`./scripts/typecheck.sh` 两口径 **0 错误**（告警 38 / 24；口径一 +2 是新增第 17 个测试文件的固定产物，`typecheck.sh` 头注释已记录）；`./scripts/verify-test.sh` → **TEST BUILD SUCCEEDED**；`./scripts/verify-build.sh` → **BUILD SUCCEEDED**。用例运行需在 Terminal 执行 `./scripts/verify-test.sh run`
+
 ## 文档与代码对齐（2026-09-23）
 
 **背景**：模块化重构（拆巨型文件、删死代码、全库去 PCL 品牌命名）已全部落地，但部分文档仍停留在重构前或自相矛盾。本轮只改文档（除 `qwqTests/JavaResolverTests.swift` 一处过期头注释外不碰任何 Swift 代码），逐条核对后对齐：

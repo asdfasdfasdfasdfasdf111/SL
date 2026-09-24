@@ -5,6 +5,8 @@
 //  收口范围（对标 GameViews → DownloadCategoryViewModel、ModDetailView → ModDetailViewModel）：
 //  - 游戏根目录扫描编排（已保存根目录优先 → 全盘兜底，规则在 GameScanService）；
 //  - 10 秒超时判定与超时退化决议（是否仍应退化、退化后的展示状态）；
+//  - 扫描代际号：视图对「超时回调」与「结果回调」都先核代际，跨代回调一律丢弃
+//    （超时本身**不**作废结果 —— 见 scanGeneration 的说明）；
 //  - 扫描结果决议：版本清单落库、游戏根目录切换、默认版本选择与「GameVersionSelected」通知投递；
 //  - 全盘查找游戏（数量提示 + 首个有效游戏落库；无结果时不改动任何状态）；
 //  - 手动选择目录的校验决策（versions 子目录是否存在 / 版本列表是否为空 / 对应错误文案）；
@@ -55,8 +57,18 @@ final class GameCategoryViewModel: ObservableObject {
     @Published private(set) var versions: [String] = []
     /// 是否已有可用版本（无结果与超时退化都会置假）
     @Published private(set) var hasVersions = false
-    /// 10 秒超时是否已生效（迟到的扫描结果据此丢弃）
+    /// 10 秒超时是否已生效。**只用于「超时退化只做一次」的去重**，不再据此丢弃迟到的结果
+    /// （见 `scanGeneration` 的说明：丢弃的判据是「是否已被新一代取代」，不是「超没超时」）。
     @Published private(set) var scanTimedOut = false
+
+    /// 扫描代际：每次 `resetScanState()` 递增一次。
+    ///
+    /// 为什么需要它：定时器闭包与 `await scanTask.value` 的续体都可能**跨代触发**（旧扫描的回调
+    /// 落在新扫描头上），而 `isLoading` / `scanTimedOut` 这类状态标记区分不出这一点，会串出两种错：
+    /// ① 新扫描刚开始就被上一代的超时闭包判成「已超时」；
+    /// ② 上一代的结果把新一代刚扫出来的清单覆盖掉。
+    /// 视图用它只丢「已被取代」的回调 —— 超时只是提前把界面从「检索中」放出来，不代表这次扫描作废。
+    private(set) var scanGeneration = 0
 
     // MARK: - 派生展示值
 
@@ -83,12 +95,21 @@ final class GameCategoryViewModel: ObservableObject {
 
     // MARK: - 扫描编排
 
-    /// 扫描前状态重置（收口前 startScanning 开头的四个写，逐字一致）
-    func resetScanState() {
+    /// 扫描前状态重置（收口前 startScanning 开头的四个写，逐字一致）。
+    /// 返回本次扫描的代际号，供视图判定回调是否仍属当前这一代。
+    @discardableResult
+    func resetScanState() -> Int {
+        scanGeneration += 1
         isLoading = true
         showCard = false
         hasVersions = false
         scanTimedOut = false
+        return scanGeneration
+    }
+
+    /// 该代际是否仍是当前扫描。`false` = 已被更新的扫描取代，对应回调应丢弃。
+    func isCurrentScan(_ generation: Int) -> Bool {
+        generation == scanGeneration
     }
 
     /// 启动根目录扫描：已保存根目录优先、全盘兜底（取数规则在 GameScanService）。

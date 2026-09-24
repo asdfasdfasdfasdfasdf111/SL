@@ -100,11 +100,12 @@ struct GameCategoryView: View {
     /// 扫描编排：重置、超时判定、结果决议与全部业务规则在 ViewModel；
     /// 本函数只保留既有动画事务（0.8s 超时退化 / 0.8s 卡片出现 / 0.4s 载入结束）与时序，
     /// 语句顺序与收口前逐字一致（重置 → 发起扫描 → 挂超时 → 等结果）。
+    /// 两处回调都先核代际号：定时器与 `Task` 续体都可能跨代触发（旧扫描的回调落在新扫描头上）。
     private func startScanning() {
-        viewModel.resetScanState()
+        let scanGeneration = viewModel.resetScanState()
         let scanTask = viewModel.beginScan()
         DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) {
-            guard viewModel.shouldApplyScanTimeout() else { return }
+            guard viewModel.isCurrentScan(scanGeneration), viewModel.shouldApplyScanTimeout() else { return }
             withAnimation(.easeOut(duration: 0.8)) {
                 viewModel.applyScanTimeoutPresentation()
             }
@@ -112,7 +113,10 @@ struct GameCategoryView: View {
         Task {
             let result = await scanTask.value
             await MainActor.run {
-                guard !viewModel.scanTimedOut else { return }
+                // 迟到的结果照常应用，只丢「已被新一代扫描取代」的回调：
+                // 超时只是提前把界面从「检索中」放出来，不代表这次扫描作废 ——
+                // 丢掉它，界面就永久停在「未找到游戏版本」，必须手动点一次全盘查找才恢复。
+                guard viewModel.isCurrentScan(scanGeneration) else { return }
                 viewModel.applyScanResult(result)
                 withAnimation(.easeOut(duration: 0.8)) {
                     viewModel.presentScanCard()
