@@ -2,6 +2,51 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 分片总超时不再一刀切：慢但健康的下载不再被判失败（2026-09-25）
+
+**症状**：进度明明在走，某个分片 5 分钟后被判超时；反复几次之后，**已下好的临时分片被删掉**，
+界面报下载失败。换个网络或重试才有机会成功 —— 看起来像「源不稳定」。
+
+**根因**：`SLCore/Download/NetSliceFetcher.swift` 的分片总超时写死 300s，与分片大小、网速
+**都无关**。而超时的后果不是「晚点到」而是「失败」，链条是：
+每次超时给该源记一次 `sourceFails`（阈值 `maxFailPerSource = 3`，`NetDownloader.swift:38`）
+→ 满 3 次该源被 `pickSource` 永久跳过 → 全部源满 3 次则 `isAllSourcesFailed` 把文件置为
+failed 并 `cleanupTemps` **删掉已下好的分片临时文件**（进度归零）。
+
+触发面并不窄，两条路都通：
+- 分片是「切已下区间的尾部 40%」逐步裂开的（`NetSliceAllocation.swift:64`），
+  分片池（`maxSlices = 16`）被占满时，大文件仍是一个大分片；
+- github / gitcode 这类被 `NetSliceAllocation.swift:53` 判为「禁多线程」的源**从不分片**，
+  整个文件就是一个分片 —— 300s 直接罩住全文件。
+
+**改法**：预算改为 `clamp(剩余字节 / 最慢实测速度 × 2, 300s, 1200s)`。
+- 速度取本分片**观测到的最慢值**（刻意保守：预算只增不减），避免开头一个速度尖峰把预算算小；
+- **下界 300s 不动** → 快连接 / 小分片的判定与改动前逐秒一致，正常路径没有被顺手放宽；
+- 上界 1200s → 病态涓流仍会被截断，只是从 5 分钟放宽到 20 分钟；
+- 大小未知（`sliceUndone` 返回 -1，服务端无 Content-Length）时**无法估算，退回 300s** ——
+  这是**有意保留**的旧口径，不是漏改（没有总长度，任何估算都是编的）；
+- 「慢速优先于总超时抛出」的原有判定顺序未改（预算在判定**之后**用本窗口速度重算）。
+公式抽成纯函数 `nonisolated static func sliceBudget(remainingBytes:bytesPerSecond:)`：
+调用点藏在需要真实网络栈的字节循环里，不抽出来就没法钉住它。
+
+**新增用例 `qwqTests/DownloadSliceBudgetTests.swift`（6 条）**：下界不许放松 / 慢而健康的连接
+预算必须大于预计耗时（用例自带「这确实是旧口径受害者」的证明）/ 上界必须生效 /
+剩余量不可知退回旧口径 / 速度不可用不许算出 NaN / 剩余越多预算不许变小。
+
+**验证**：`./scripts/typecheck.sh` 两口径 **0 错误**（告警 44 / 24；口径一 +2 为新增测试文件的
+统计口径产物，已记入脚本头部）；`./scripts/verify-build.sh` → **BUILD SUCCEEDED**；
+`./scripts/verify-test.sh run` → **231 用例 0 失败、1 跳过**，`** TEST EXECUTE SUCCEEDED **`。
+
+**反证（用例的「牙齿」实测）**：把 `sliceBudget` 还原成旧的固定 300s 后重跑该测试类，
+**恰好是暴露本缺陷的那两条变红**，其余 4 条仍绿（它们在旧口径下本就成立，符合设计）：
+```
+testSlowButHealthyConnectionIsNoLongerKilled failed:
+  XCTAssertGreaterThan failed: ("300.0") is not greater than ("341.3333333333333")
+testPathologicalTrickleIsCappedAtCeiling failed:
+  XCTAssertEqual failed: ("300.0") is not equal to ("1200.0")
+```
+`341.33s` 就是 100MB @ 300KB/s 的真实耗时 —— 旧口径比它短 41s，所以**必然**误杀。
+
 ## 「取消」变成真的取消：准备期不再偷偷把游戏拉起来（2026-09-25）
 
 **症状（用户视角）**：下载/校验阶段点右下角电源键，界面确实复位了，但过了几十秒**游戏自己弹出来**。
@@ -93,10 +138,10 @@
   注意：本改动只制止堆积，**不改变**「会话存在期间日志照常落地」的行为。
 
 **判定暂不动（需先确认）**：上一节提到的「准备期点取消、游戏照常启动」一项已在本轮修复
-（见文首「取消变成真的取消」）。另两条同属「下载成败判定」类，仍先不动：
-`NetDownloadState` 的 `sourcesOnce` 把「服务器忽略 Range、不支持断点续传」等同于「该源已死」，
-会导致本可单线程下完的文件被判失败并删掉健康数据；`NetSliceFetcher.swift:114` 的 5 分钟分片总超时
-不随剩余量与实测速度缩放，大文件 + 慢网会被误判失败。
+（见文首「取消变成真的取消」）；「分片 5 分钟总超时不随速度缩放」也已在下一节修复。
+**仍不动的只剩一条**：`NetDownloadState` 的 `sourcesOnce` 把「服务器忽略 Range、不支持断点续传」
+等同于「该源已死」，会导致本可单线程下完的文件被判失败并删掉健康数据 ——
+修它要把「判死」改成「降级为单线程整份下」，动的是下载调度状态机，**留给单独一轮**。
 
 **验证**：`./scripts/typecheck.sh` 两口径 **0 错误**（告警 40 / 24，与基线一致，新增 0、消掉 0）；
 `./scripts/verify-build.sh` → **BUILD SUCCEEDED**；`./scripts/verify-test.sh` →

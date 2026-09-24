@@ -4,8 +4,8 @@
 //
 //  NetManager 的分片执行与状态回调（对标 PCL2 NetThread）：
 //  - startSliceTask：把分片交给 detached 任务执行，成功/失败回调 actor；
-//  - runSlice：Range 请求、identity 编码、自适应超时、断流与慢速检测、5 分钟总超时、
-//    256KB 缓冲落盘、按 undone 截断写入；
+//  - runSlice：Range 请求、identity 编码、自适应超时、断流与慢速检测、
+//    随剩余量/速度缩放的总超时、256KB 缓冲落盘、按 undone 截断写入；
 //  - sliceSucceeded / sliceFailed：分片终态归位（断流未下满视为失败走续传、源失败记账、连接层错误直接淘汰该源）；
 //  - 末尾「分片执行器内部接口」是 detached 任务读写 actor 状态的原子边界（文件大小确立、分片临时文件与进度记账）。
 //  自 NetDownloader.swift 按职责物理拆出，原第 537-737、835-889 行。
@@ -18,6 +18,18 @@
 //
 
 import Foundation
+
+/// 分片「总超时」的下界（秒）。
+/// 取原实现写死的 300s：小分片 / 快连接的口径与改动前**逐秒一致**，不引入任何放宽。
+///
+/// 显式 `nonisolated`：工程默认隔离是 MainActor，未标注的文件级 `let` 会被推断成主 actor 隔离，
+/// 而 `runSlice` 是 `static func`（不受 actor 隔离）—— 从那里读它就会报
+/// 「main actor-isolated let … cannot be accessed from outside of the actor」，
+/// 而且是**静默的**：`-typecheck` 只在开了 `-default-isolation MainActor` 时才看得见。
+private nonisolated let sliceBudgetFloor: TimeInterval = 300
+
+/// 分片「总超时」的上界（秒）。慢连接也不该被无限拖住：20 分钟仍未下完，按网络异常处理。
+private nonisolated let sliceBudgetCeiling: TimeInterval = 1200
 
 extension NetManager {
     // MARK: - 分片执行（PCL2 NetThread）
@@ -40,6 +52,24 @@ extension NetManager {
             }
         }
         record.sliceTasks[sliceID] = task
+    }
+
+    /// 由「本分片剩余字节数」与「实测速度」算出下一轮的总超时预算（秒）。
+    ///
+    /// 抽成 `nonisolated static` 纯函数是为了**可测**：调用点藏在 `runSlice` 的字节循环里，
+    /// 需要真实网络栈才能跑到，而这里的公式才是本次修复的全部内容 —— 放在循环里就等于没法钉住它。
+    /// 判定与边界（测试见 `qwqTests/DownloadSliceBudgetTests.swift`）：
+    ///  - 剩余量或速度不可用（`remainingBytes <= 0`、速度非正或非有限）→ 取下界，即原口径 300s；
+    ///  - 其余情况 `clamp(剩余 / 速度 × 2, 下界, 上界)`。
+    ///    × 2 是给速度波动留一倍余量；下界保证「快连接 / 小分片」判定与改动前逐秒一致（不放松），
+    ///    上界保证病态涓流仍会被截断。
+    nonisolated static func sliceBudget(remainingBytes: Int64, bytesPerSecond: Double) -> TimeInterval {
+        guard remainingBytes > 0, bytesPerSecond > 0, bytesPerSecond.isFinite else {
+            return sliceBudgetFloor
+        }
+        let estimate = Double(remainingBytes) / bytesPerSecond
+        guard estimate.isFinite else { return sliceBudgetCeiling }
+        return min(sliceBudgetCeiling, max(sliceBudgetFloor, estimate * 2))
     }
 
     static func runSlice(manager: NetManager, fileID: UUID, sliceID: UUID, sourceIndex: Int, urls: [URL], start: Int64, isFirst: Bool) async throws {
@@ -99,6 +129,11 @@ extension NetManager {
         var bytesSinceCheck: Int64 = 0
         var lastCheckTime = Date()
         let sliceStartTime = Date()
+        /// 本分片当前的总超时预算（秒）。随实测速度与剩余量放大，见下方判定块。
+        var sliceBudget: TimeInterval = sliceBudgetFloor
+        /// 本分片**观测到的最慢**速度（字节/秒）。用最慢值估算剩余耗时是刻意保守的：
+        /// 预算只会变大不会变小，避免「开头一个速度尖峰把预算算小、之后被误杀」。
+        var slowestSpeed: Double = .infinity
 
         for try await byte in stream {
             try Task.checkCancellation()
@@ -110,10 +145,32 @@ extension NetManager {
             if counter >= 1024 {
                 counter = 0
                 let now = Date()
-                // 总超时：分片下载超过 5 分钟视为网络异常（TCP 半开连接间歇传少量数据可绕过慢速检测）
-                if now.timeIntervalSince(sliceStartTime) > 300 {
-                    throw NetDownloadError.fileFailed("分片下载超时（5 分钟）")
+
+                // 总超时（分片）：**随剩余量与实测速度缩放**，不再是固定 5 分钟。
+                //
+                // 原实现写死 300s，与分片大小、网速都无关 —— 对「连接健康且持续推进、只是慢」
+                // 的下载是一把无差别的一刀切，而后果不是「晚点到」而是**失败**：
+                //   ① 每次超时给该源记一次 `sourceFails`（下方 sliceFailed），
+                //      阈值 `maxFailPerSource = 3`，满 3 次该源被 pickSource 永久跳过；
+                //   ② 全部源满 3 次 → `isAllSourcesFailed` 把文件置为 failed 并
+                //      `cleanupTemps` **删掉已下好的分片临时文件** —— 进度归零。
+                // 触发面并不窄：分片是「切尾部 40%」逐步裂开的，16 个分片池被占满时大文件仍是一个大分片；
+                // 而 github / gitcode 这类被 ③ 分支判为「禁多线程」的源**从不分片**，
+                // 整个文件就是一个分片，300s 直接罩住全文件（100MB @ 300KB/s ≈ 341s 就中招）。
+                //
+                // 新口径：预算 = clamp(预计剩余耗时 × 2, 300s, 1200s)。
+                //   - 预计耗时的速度取**本分片最慢观测值**（保守，见 slowestSpeed 的说明）；
+                //   - 下界仍是 300s → 快连接 / 小分片的判定与改动前完全一致，不放松；
+                //   - 上界 1200s → 真正病态的「涓流」仍会被截断，只是从 5 分钟放宽到 20 分钟；
+                //   - 大小未知（`sliceUndone` 返回 -1，服务端无 Content-Length）时无法估算，
+                //     预算保持 300s —— 这是本次**有意保留**的旧口径，见 CHANGELOG 的说明。
+                let used = now.timeIntervalSince(sliceStartTime)
+                if used > sliceBudget {
+                    throw NetDownloadError.fileFailed(
+                        "分片下载超时（已用 \(Int(used))s，本次预算 \(Int(sliceBudget))s）"
+                    )
                 }
+
                 let dt = now.timeIntervalSince(lastCheckTime)
                 if dt > 1.0 {
                     let speed = Double(bytesSinceCheck) / dt
@@ -121,6 +178,12 @@ extension NetManager {
                         throw NetDownloadError.slowSpeed
                     }
                     bytesSinceCheck = 0
+
+                    // 用本窗口的实测速度重算**下一轮**的预算（本轮已用旧预算判过，
+                    // 因此「慢速优先于总超时抛出」的原有顺序没有改变）。
+                    slowestSpeed = min(slowestSpeed, speed)
+                    let remaining = await manager.sliceUndone(fileID: fileID, sliceID: sliceID)
+                    sliceBudget = Self.sliceBudget(remainingBytes: remaining, bytesPerSecond: slowestSpeed)
                 }
                 lastCheckTime = now
             }
