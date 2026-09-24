@@ -61,6 +61,15 @@ enum LaunchCoordinator {
             : settings.selectedGameRoot
         var boundLauncher: MinecraftLauncher?
 
+        // 准备阶段的取消令牌（缺陷：准备期点取消、游戏仍会自己弹出来）。
+        // 从这一刻到进程真正拉起之间没有 launcher 可供终止，`handlePowerTap` 的取消分支
+        // 原先只复位了界面，后台准备链完全感知不到。本次启动新建一个令牌并挂到会话管理器上，
+        // 电源按钮取消时置位，桥接层在四个判定点读取（见 SLLaunchBridge 的 LaunchCancellationToken）。
+        // ⚠️ 每次 start 都新建（不复用旧令牌）：否则上一次取消的置位状态会立刻废掉下一次启动。
+        // 声明位置必须在 `reportLaunchFailure` 之前（它要捕获本常量）。
+        let cancellation = LaunchCancellationToken()
+        sessionManager.launchCancellationToken = cancellation
+
         // 启动失败上报门控：`.failed` 事件（进程未拉起，桥接层经 completion 回传）与
         // `launch(_:)` 的抛出（用例层在进入桥接之前失败，如离线用户名非法）是同一失败的
         // 两条回传通道，共用一次性门控保证同一次启动只提示一次。
@@ -80,11 +89,20 @@ enum LaunchCoordinator {
                     sessionManager.launchPhase = .idle
                     if sessionManager.sessions.isEmpty { sessionManager.showLogView = false }
                 }
+                // 「用户主动取消」不是失败：进度与相位复位后**不再弹错误框**。
+                // 判据读令牌本身而不是错误文案，这样无论错误从哪条通道回来
+                // （`.failed` 事件携带的桥接层原始错误，或 `launch(_:)` 抛出的契约错误）
+                // 都能被正确识别 —— 用户点了取消却看到「启动失败」弹窗是明显的错误反馈。
+                guard !cancellation.isCancelled else { return }
                 LaunchPanelState.shared.presentError(error.localizedDescription)
             }
         }
 
         let startGame = {
+            // 用户可能在上面「皮肤资源包 / 语言注入」那段后台准备期间就点了取消：
+            // 令牌已置位时直接不再发起启动，省掉一次完整的桥接流程（含最长 600s 的补全链路）。
+            // 界面复位由 handlePowerTap 的取消分支负责，这里无需再动 UI。
+            guard !cancellation.isCancelled else { return }
             let request = LaunchRequest(
                 version: version,
                 gameRoot: URL(fileURLWithPath: resolvedGameDirPath),
@@ -155,6 +173,15 @@ enum LaunchCoordinator {
                         }
                     }
                 case .launcherReady(let launcher):
+                    // 残余窗口兜底：桥接层最后一次取消判定（判定点 ④）与 `launch()` 之间仍有
+                    // 极短间隙（主线程的取消可能恰好插在这里）。此时进程可能已被拉起，
+                    // 所以**不能建会话**——否则界面会留下一个没有进程、也无法终止的幽灵日志卡。
+                    // 直接终止刚拉起的进程（`terminate()` 对 currentProcess == nil 是安全的幂等操作），
+                    // 并跳过 `boundLauncher` 绑定，让后续 `.log` / `.finished` 事件自然丢弃。
+                    guard !cancellation.isCancelled else {
+                        DispatchQueue.main.async { launcher.terminate() }
+                        return
+                    }
                     // 绑定同步完成（与旧实现一致）：后续 log 事件依赖该引用，晚绑定会丢日志；
                     // 面板动画与 session 插入仍在主线程执行
                     boundLauncher = launcher
@@ -228,7 +255,7 @@ enum LaunchCoordinator {
             // 旧实现的 `try?` 会把它连同 UI 提示一并丢弃；此处捕获后走同一上报通道。
             Task {
                 do {
-                    _ = try await service.launch(request)
+                    _ = try await service.launch(request, cancellation: cancellation)
                 } catch {
                     reportLaunchFailure(error)
                 }
@@ -316,6 +343,12 @@ enum LaunchCoordinator {
                 sessionManager.launchPhase = .idle
             }
         } else {
+            // 没有活进程 = 可能是「准备阶段进行中」（皮肤准备 / 补全下载 / Java 选择）。
+            // 这时唯一能停掉的东西是**还没拉起的这次启动**：置位取消令牌，
+            // 后台准备链会在下一个判定点收手，不会再冒出一个游戏进程
+            //（缺陷：原先这里只复位界面，几十秒后游戏仍会自己弹出来）。
+            // 无启动进行中时这是空操作/幂等操作，无副作用。
+            sessionManager.launchCancellationToken?.cancel()
             sessionManager.resetProgress()
             withAnimation(.easeOut(duration: 0.3)) {
                 sessionManager.launchPhase = .idle

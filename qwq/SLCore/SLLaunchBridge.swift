@@ -57,6 +57,44 @@ extension MinecraftLauncher {
 /// 注意：本函数不阻塞，立即返回；启动过程通过回调通知 UI
 /// 前置条件：`username` 必须已通过用例层校验（trim 后非空、无英文引号、≤16 UTF-16 code unit，
 /// 空值调用方需自行兜底为 "Player"），本函数不再重复校验。
+/// 一次启动「准备阶段」的取消令牌。
+///
+/// **为什么需要它**：`GameSession.launcher.terminate()` 只能终止**已经起来**的进程。而从点「启动」
+/// 到进程真正 `run()` 之间，还要走「启动前补全」（内部 600s 超时，可能下载数百 MB）与 Java 选择，
+/// 这段时间里**根本还没有 launcher 对象可供终止**。于是用户在这段时间点取消，原先只是复位界面，
+/// 后台准备链完全感知不到，会一路跑完并把游戏拉起来 —— **点了取消，几十秒后游戏自己弹出来**。
+///
+/// **与 `isUserTerminated` 的分工**：后者语义是「进程已经起了、用户要终止它」；本令牌语义是
+/// 「进程还没起、别再起了」。两者不能互相替代，因为准备阶段取不到 launcher。
+///
+/// **消费方**：`slLaunchInternal` 在五个判定点读它（函数入口 / 补全前 / 补全等待期间 200ms 分片轮询 /
+/// Java 选择前 / 拉起进程前），任何一个命中都以 `LaunchError.cancelled` 收口，
+/// 且**不会再把游戏拉起来**。令牌由 `LaunchCoordinator.start` 每次启动新建一个，
+/// 挂在 `LaunchSessionManager` 上供电源按钮取消。
+///
+/// 显式 `nonisolated`：创建在主线程，读取在准备链的后台线程，必须脱离默认的 MainActor 推断
+/// （与 `LaunchFailureNoticeGate` 的治理方式一致）。锁内只做内存操作，不跨 `await` 持有。
+public nonisolated final class LaunchCancellationToken: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    public init() {}
+
+    /// 置位取消。可重复调用（重复取消无副作用）。
+    public func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+    }
+
+    /// 是否已被取消。准备链在每个**不可逆动作**之前读一次。
+    public var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+}
+
 public func slLaunch(
     version: String,
     username: String,
@@ -66,6 +104,7 @@ public func slLaunch(
     logHandler: @escaping (String) -> Void,
     launchSuccess: @escaping () -> Void,
     onLauncherReady: @escaping (MinecraftLauncher) -> Void,
+    cancellation: LaunchCancellationToken? = nil,
     completion: @escaping (MinecraftLauncher?, Result<Int32, Error>) -> Void
 ) {
     // 启动前的重活（Java 扫描等待、manifest 解析、参数过滤）在后台线程执行，
@@ -80,6 +119,7 @@ public func slLaunch(
             logHandler: logHandler,
             launchSuccess: launchSuccess,
             onLauncherReady: onLauncherReady,
+            cancellation: cancellation,
             completion: completion
         )
     }
@@ -94,8 +134,36 @@ private func slLaunchInternal(
     logHandler: @escaping (String) -> Void,
     launchSuccess: @escaping () -> Void,
     onLauncherReady: @escaping (MinecraftLauncher) -> Void,
+    cancellation: LaunchCancellationToken?,
     completion: @escaping (MinecraftLauncher?, Result<Int32, Error>) -> Void
 ) {
+    // MARK: 取消判定点（缺陷：「准备期点取消，游戏仍会自己弹出来」）
+    // `GameSession.launcher.terminate()` 只能终止**已经起来**的进程；而从点「启动」到进程
+    // 真正 `run()` 之间取不到 launcher，用户的取消原先只复位了界面，后台准备链完全感知不到，
+    // 会一路跑完并把游戏拉起来 —— 点了取消，几十秒后游戏自己弹出来。
+    // 因此准备阶段每个「昂贵 / 不可逆」动作之前都过一次本判定：
+    //   ① 函数入口（最早一处；也让「已取消 ⇒ 不启动」能在无实例、无目录的测试环境里确定性验证）
+    //   ② 进入启动前补全之前（最贵：600s 超时、可能下载数百 MB）
+    //   ③ 补全等待期间（改成 200ms 分片轮询，取消后 ≤0.2s 返回，不再白等最多 10 分钟）
+    //   ④ Java 选择之前（可能触发一次全盘 Java 扫描）
+    //   ⑤ 拉起进程之前（唯一的不可逆动作）
+    // 取消一律以 `LaunchError.cancelled` 收口；UI 侧按同一令牌把它判为「用户主动取消」
+    // 而非失败（不弹错误框，见 `LaunchCoordinator.reportLaunchFailure`）。
+    func abortIfCancelled(_ stage: String) -> Bool {
+        guard cancellation?.isCancelled == true else { return false }
+        log("启动已被用户取消：\(stage)")
+        completion(nil, .failure(LaunchError.cancelled))
+        return true
+    }
+
+    // 取消判定点 ①：函数入口。放在最前面有两层用处：
+    //  - 语义上，「已取消」优先于其它一切失败 —— 没必要为一次注定不启动的请求去解析目录、
+    //    构造实例、读客户端 JAR（也就不会把「客户端 JAR 缺失」这种可修复提示盖在取消之上）；
+    //  - 可测性上，本判定只依赖令牌本身，因此「令牌已置位 ⇒ 必然回调 .cancelled 且绝不
+    //    触发 onLauncherReady」这条断言可以在没有游戏目录、没有实例的单元测试里稳定跑出来
+    //    （反向用例，见 qwqTests/LaunchCancellationTests.swift）。
+    if abortIfCancelled("不再继续准备") { return }
+
     let resolvedGameDir = gameDir ?? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "")
 
     // 离线用户名校验已上移至用例层（`MinecraftInstanceLaunchService.validatedUsername`，
@@ -168,6 +236,11 @@ private func slLaunchInternal(
         return
     }
 
+    // 取消判定点 ②：进入「启动前补全」之前。
+    // 这是准备阶段最贵的一步（600s 超时、可能下载数百 MB），用户既然已经取消，
+    // 就不该再开这笔流量与磁盘写。
+    if abortIfCancelled("跳过启动前补全") { return }
+
     // MARK: 启动前补全（PCL2 DlClientFix 移植）：分析缺失/损坏的库与资源 → 仅下载缺失项
     // 补全期间 UI 显示 downloading 进度条；完成后才进入 launching（避免相位回退）
     // 补全失败则终止启动（与 PCL2 一致），避免缺文件启动后崩溃
@@ -179,8 +252,8 @@ private func slLaunchInternal(
     let fixTask = Task {
         do {
             try await LaunchFix.perform(instance: instance) { p in
-                // 超时后不再回调 UI：UI 已按「补全超时」复位到 idle 并弹出错误，
-                // 若继续回调进度，用户会看到「错误提示 + 进度条继续走」的并存状态。
+                // 补全已被放弃（超时或被用户取消）后不再回调 UI：两种情况 UI 都已复位到 idle
+                //（超时会弹错误提示），若继续回调进度，用户会看到「已复位 + 进度条继续走」的并存状态。
                 guard !fixAbandoned.isSet else { return }
                 progressHandler(p)
             }
@@ -191,7 +264,33 @@ private func slLaunchInternal(
         }
         fixSemaphore.signal()
     }
-    if fixSemaphore.wait(timeout: .now() + 600) == .timedOut {
+    // 等待补全完成 —— **可被取消打断**。
+    // 原实现是一次性 `wait(timeout: .now() + 600)`：用户在这段时间里点取消，最早也要等补全
+    // 整个跑完才可能被察觉（最多白等 10 分钟、白下载数百 MB），而请求发出后不久游戏仍会被拉起。
+    // 改成 200ms 分片轮询后，可感知的等待从「最多 600s」降到「≤0.2s」。
+    // 分片数即超时上限：3000 × 0.2s = 600s（与原先一致，不用时钟，免得受系统时间调整影响）。
+    var fixSignalled = false
+    for _ in 0..<3000 {
+        if fixSemaphore.wait(timeout: .now() + 0.2) == .success { fixSignalled = true; break }
+        if cancellation?.isCancelled == true { break }
+    }
+    // 3000 片耗尽仍未 signal：区分「用户取消」与「真超时」——前者优先
+    let fixWaitOutcome: FixWaitOutcome = fixSignalled
+        ? .finished
+        : (cancellation?.isCancelled == true ? .cancelled : .timedOut)
+
+    switch fixWaitOutcome {
+    case .cancelled:
+        // 取消判定点 ③：补全等待期间被取消。
+        // 与超时分支同样处理：置 `fixAbandoned` 闸断 UI 回调，`fixTask.cancel()` 尽力而为。
+        // 注意这里**不能**等补全真结束才返回 —— 用户的诉求是「立刻停」，不是「等它跑完」。
+        fixAbandoned.set()
+        fixTask.cancel()
+        log("启动已被用户取消：中止启动前补全")
+        completion(nil, .failure(LaunchError.cancelled))
+        return
+
+    case .timedOut:
         // MARK: 超时处理（缺陷：超时后任务仍继续跑且无取消路径）
         // 原实现只 `completion(.failure)` 就 return：补全 Task 仍在后台下载并持续回调
         // `progressHandler`，UI 报错之后又被进度回调推着继续走，且没有任何取消入口。
@@ -208,6 +307,9 @@ private func slLaunchInternal(
         fixTask.cancel()
         completion(nil, .failure(MyLocalizedError(reason: "启动前补全超时（10 分钟），请检查网络连接")))
         return
+
+    case .finished:
+        break
     }
 
     if let fixError = fixResultBox.error {
@@ -217,6 +319,9 @@ private func slLaunchInternal(
 
     // MARK: 客户端 JAR 校验已前移到本函数开头（补全之前）——见该处注释。
     // 补全后不再重复判定：同一路径同一次启动内不可能由补全产生（LaunchFix 不写客户端本体）。
+
+    // 取消判定点 ④：Java 选择之前。取消后不再触发全盘 Java 扫描，也不改写实例配置。
+    if abortIfCancelled("跳过 Java 选择") { return }
 
     phaseHandler("launching")
 
@@ -326,6 +431,11 @@ private func slLaunchInternal(
         }
     }
 
+    // 取消判定点 ⑤：最后的闸门，紧挨着唯一的不可逆动作（拉起进程）之前。
+    // 放在这里而不是更早，是为了覆盖耗时最长的「Java 选择」窗口：用户可能在扫描/解析
+    // 期间才点取消，此时前面三个判定点都还没轮到。
+    if abortIfCancelled("不再拉起游戏进程") { return }
+
     // 立即回传 launcher 引用，让 UI 能调 terminate()
     onLauncherReady(launcher)
 
@@ -422,6 +532,17 @@ private func slLaunchInternal(
 /// 跨线程传递启动前补全的错误结果（后台线程用信号量同步等待 Task 完成）
 private final class FixResultBox {
     var error: Error?
+}
+
+/// 「启动前补全」等待的三种收尾方式。原先只有二元判定（超时 / 未超时），
+/// 加入取消后需要区分：取消要立刻返回且**不报错**（用户主动取消不是失败）。
+private enum FixWaitOutcome {
+    /// 补全 Task 已 signal（成功或失败，错误由 `FixResultBox` 携带）
+    case finished
+    /// 等待期间用户点击取消 → 立刻中止（不等补全跑完）
+    case cancelled
+    /// 600s 上限耗尽
+    case timedOut
 }
 
 /// 跨线程共享的一次性「已放弃」标志。

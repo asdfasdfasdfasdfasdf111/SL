@@ -2,6 +2,54 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 「取消」变成真的取消：准备期不再偷偷把游戏拉起来（2026-09-25）
+
+**症状（用户视角）**：下载/校验阶段点右下角电源键，界面确实复位了，但过了几十秒**游戏自己弹出来**。
+
+**根因**：`GameSession.launcher.terminate()` 只能终止**已经起来**的进程。而从点「启动」到进程
+`run()` 之间（皮肤资源包准备 → 启动前补全，最长 600s、可能下载数百 MB → Java 选择）
+**根本还没有 launcher 对象**，`terminate()` 无从下手；原先的取消分支只做了 `resetProgress()`
+与相位复位，后台准备链完全感知不到「用户已经不要了」，于是照常跑完并 `process.run()`。
+
+- **新增准备阶段取消令牌 `SLCore/SLLaunchBridge.swift`（`LaunchCancellationToken`）**：
+  与既有 `isUserTerminated` 的分工是**时段**而不是重复 —— 后者管「进程已起、要终止它」，
+  本令牌管「进程还没起、别再起了」。显式 `nonisolated` + `NSLock`（创建在主线程、读取在准备线程）。
+- **桥接层五处判定点**（`slLaunchInternal`）：① 函数入口 ② 进入启动前补全之前
+  ③ 补全等待期间 ④ Java 选择之前 ⑤ 拉起进程之前。任一命中都以 `LaunchError.cancelled` 收口并 `return`。
+  ①放在函数入口的额外收益：**「已取消 ⇒ 绝不启动」这条断言可以脱离游戏目录确定性地单测**
+  （否则要造一整套实例夹具才走得到）。
+- **补全等待改为可打断**：原实现是一次性 `wait(timeout: .now() + 600)`，用户在这 10 分钟内点取消，
+  最早也要等补全整个跑完才可能被察觉（最多白等 10 分钟、白下载数百 MB）。
+  改为 **200ms 分片轮询**（3000 × 0.2s，上限仍 600s，不用时钟所以不受系统时间调整影响），
+  可感知等待从「最多 600s」降到「≤0.2s」。残余的在途下载无法立即停止（下载层无取消检查点），
+  但它只写本地缓存目录、下次启动可直接复用，且本函数已 return，不再阻塞流程。
+- **`Features/Launch/LaunchCoordinator.swift`**：
+  - 每次启动新建令牌并挂到 `LaunchSessionManager.launchCancellationToken`（电源按钮只有
+    `sessionManager` 一个入参，挂这里既不必新增全局可变状态，也不用把有状态的引用塞进
+    `LaunchRequest` —— 后者是 `Equatable` 值类型，塞进去会破坏其等价语义）；
+  - `handlePowerTap` 的取消分支置位令牌（原先只复位界面）；
+  - 失败上报**按令牌判定为「用户主动取消」时不弹错误框** —— 判据读令牌本身而非错误文案，
+    这样无论错误从 `.failed` 事件还是 `launch(_:)` 抛出回来都能识别；
+  - 皮肤/语言后台准备期间就取消的，直接不再发起启动（省掉一次完整桥接流程）。
+- **`MinecraftInstanceLaunchService.swift`**：新增 `launch(_:cancellation:)` 重载
+  （协议入口 `launch(_:)` 不变，转调本重载并传 nil，行为与旧路径逐条一致）；
+  `mapFailure` 对 `.cancelled` 原样透传，不再落进「按文案前缀匹配」的兜底分支退化成
+  `.unknown("启动已取消")`。
+- **残余窗口兜底**：判定点⑤与 `launch()` 之间仍有极短间隙（主线程取消可能恰好插进去）。
+  `.launcherReady` 分支据此改为：令牌已置位时**不建会话**（否则界面会留下一个没有进程、
+  也无法终止的幽灵日志卡）并直接 `terminate()` 刚拉起的进程。
+
+**新增反向用例 `qwqTests/LaunchCancellationTests.swift`（4 条）**：已置位令牌 →
+必然 `.cancelled` 且**绝不**触发 `onLauncherReady`/进度/相位/成功；未置位令牌 → 入口判定不误拦；
+`launch(_:cancellation:)` 原样透传 `.cancelled`；令牌重复取消幂等。
+按项目纪律，正向链路（`RealLaunchIntegrationTests`）证「该启动的能启动」，
+本文件证「该拦住的真被拦住」，两边都要有。
+
+**验证**：`./scripts/typecheck.sh` 两口径 **0 错误**（告警 42 / 24；口径一 +2 是新增测试文件
+带来的 `@testable import` 统计口径产物，非回归，已记入脚本头部）；
+`./scripts/verify-build.sh` → **BUILD SUCCEEDED**；`./scripts/verify-test.sh build` → 见下。
+`verify-test.sh run` **必须在用户 Terminal 里跑**（沙箱内测试宿主会 hang，见 TESTING.md）。
+
 ## 两处隐蔽缺陷修复：写盘崩溃路径 + 日志旁路无上限（2026-09-25）
 
 **背景**：五个子系统交由并行只读侦察找线索，由主代理**逐条亲自核实**后修复。
@@ -28,9 +76,8 @@
   `.log` 分支改为 `else if !l.hasEverHadSession` 才暂存，否则丢弃。
   注意：本改动只制止堆积，**不改变**「会话存在期间日志照常落地」的行为。
 
-**判定暂不动（需先确认）**：`LaunchCoordinator.swift:153-168` 的 `.launcherReady` 分支无取消判定 ——
-准备期点击取消只复位界面，后台准备链仍会走完并 `addSession` + `process.run()`，**游戏照常启动**；
-改它属行为变更（「取消」将变成真的取消），需先确认。另两条同属「下载成败判定」类，同样先不动：
+**判定暂不动（需先确认）**：上一节提到的「准备期点取消、游戏照常启动」一项已在本轮修复
+（见文首「取消变成真的取消」）。另两条同属「下载成败判定」类，仍先不动：
 `NetDownloadState` 的 `sourcesOnce` 把「服务器忽略 Range、不支持断点续传」等同于「该源已死」，
 会导致本可单线程下完的文件被判失败并删掉健康数据；`NetSliceFetcher.swift:114` 的 5 分钟分片总超时
 不随剩余量与实测速度缩放，大文件 + 慢网会被误判失败。

@@ -66,6 +66,18 @@ final class LaunchSessionManager: ObservableObject {
 
     // MARK: - 启动进度（进度条/阶段/深浅条动画）
 
+    /// 本次启动「准备阶段」的取消令牌（由 `LaunchCoordinator.start` 每次启动新建并挂上）。
+    ///
+    /// 为什么放在这里：`handlePowerTap(sessionManager:)` 只有本对象一个入参，
+    /// 而取消判定要在主线程做（本类默认 MainActor 隔离），挂在本管理器上既不用新增全局可变状态，
+    /// 也不用把令牌塞进 `LaunchRequest`（后者是 `Equatable` 值类型，见适配器的说明）。
+    ///
+    /// ⚠️ 只对「正在准备中」的那一次启动有效：准备阶段取不到 launcher（进程还没起），
+    /// `launchCancellationToken.cancel()` 是这段时间唯一的取消手段；进程一旦起来，
+    /// 取消改走 `GameSession.launcher.terminate()`（见 `handlePowerTap` 的另一分支）。
+    /// 启动结束后本字段会留下最后一次的令牌（通常是已置位状态），无害 —— 下次启动会被覆盖。
+    var launchCancellationToken: LaunchCancellationToken?
+
     // 启动进度的一组状态。浅色条由真实进度驱动；深色条走定时器平滑逼近 darkBarTarget。
     @Published var isLaunching = false
     @Published var launchProgress: Double = 0.0

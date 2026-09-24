@@ -25,6 +25,7 @@
 # 2026-09-24 新增 SkinPatchSupportTests.swift（第 16 个测试文件）后，口径一 36 / 口径二 24。
 # 2026-09-24 新增 GameScanGenerationTests.swift（测试文件 17 → 18 个）后，口径一 38 / 口径二 24（同为 +2，非回归）。
 # 2026-09-24 新增 GameLogRetentionTests.swift（测试文件 18 → 19 个）后，口径一 40 / 口径二 24（同为 +2，非回归）。
+# 2026-09-25 新增 LaunchCancellationTests.swift（测试文件 19 → 20 个）后，口径一 42 / 口径二 24（同为 +2，非回归）。
 # 判定仍以「逐条 diff 告警集合」为准；若口径一多了 2 的整数倍，先确认是不是测试文件数变了，
 # 再去查真实回归。
 #

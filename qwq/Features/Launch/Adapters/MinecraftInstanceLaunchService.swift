@@ -132,6 +132,19 @@ public final class MinecraftInstanceLaunchService: LaunchService, @unchecked Sen
 
     @discardableResult
     public func launch(_ request: LaunchRequest) async throws -> LaunchResult {
+        try await launch(request, cancellation: nil)
+    }
+
+    /// 带「准备阶段取消令牌」的启动入口。
+    ///
+    /// 为什么是重载而不是往 `LaunchRequest` 里加字段：`LaunchRequest` 是 `Equatable` 的值类型
+    /// （测试与日志都依赖这一点），而令牌是有状态的引用类型，塞进去会破坏该等价语义。
+    /// 也不是改协议：`launch(_:)` 仍是 `LaunchService` 的唯一契约入口，本重载只是适配器
+    /// 额外提供的可选能力（令牌为 nil 时行为与旧路径逐条一致）。
+    ///
+    /// 令牌语义与判定点见 `SLLaunchBridge.swift` 的 `LaunchCancellationToken`。
+    @discardableResult
+    public func launch(_ request: LaunchRequest, cancellation: LaunchCancellationToken?) async throws -> LaunchResult {
         // 启动前参数预处理：离线用户名校验（原桥接层 slLaunchInternal 首段上移至用例层，判定逐条等价）
         let safeUsername = try Self.validatedUsername(request.offlineUsername)
         let sessionID = UUID()
@@ -178,6 +191,7 @@ public final class MinecraftInstanceLaunchService: LaunchService, @unchecked Sen
                     )
                     Task { await self.sessionStore?.update(.launching, for: sessionID) }
                 },
+                cancellation: cancellation,
                 completion: { [weak self] launcher, result in
                     guard gate.claim() else { return }
                     Task {
@@ -307,6 +321,12 @@ public final class MinecraftInstanceLaunchService: LaunchService, @unchecked Sen
     /// 故此处按文案前缀做一次映射。**这是临时桥接**：
     /// 文案本地化或改写都会静默退化为 `.unknown`（见 LAUNCH_FLOW.md 风险点 R5）。
     static func mapFailure(_ error: Error, version: String) -> LaunchError {
+        // 取消是**预期内的收尾**，不是失败：直接原样透传，避免落进下面的文案前缀匹配，
+        // 退化成 `.unknown("启动已取消")`（UI 侧据此判定「不弹错误框」，语义必须保住）。
+        if let launchError = error as? LaunchError, launchError == .cancelled {
+            return .cancelled
+        }
+
         let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
 
         // 桥接层对「进程未拉起」统一加「启动失败：」前缀（与「游戏异常退出（退出码 N）」区分），
