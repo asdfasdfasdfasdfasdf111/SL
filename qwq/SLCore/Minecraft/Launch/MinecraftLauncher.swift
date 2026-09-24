@@ -65,8 +65,15 @@ public class MinecraftLauncher {
         process.arguments!.append(instance.manifest.mainClass)
         process.arguments!.append(contentsOf: buildGameArguments(options))
         let executablePath = process.executableURL?.path ?? "<未指定 Java 路径>"
-        let command = executablePath + " " + (process.arguments ?? []).joined(separator: " ")
-            .replacingOccurrences(of: #"--accessToken\s+\S+"#, with: "--accessToken 🎉", options: .regularExpression)
+        // 令牌遮蔽：accessToken 除了以 `--accessToken <token>` 出现在 JVM 参数里，还会以
+        // `auth_access_token:<token>` / `auth_session:<token>` 出现在游戏参数里
+        // （见 MinecraftLauncherArguments.swift:201-202，两处都是同一个 accessToken）。
+        // 只按参数名做正则遮蔽会漏掉后两者 → 令牌明文进日志。改为直接对令牌值本身做替换。
+        // 空令牌必须跳过：`replacingOccurrences(of: "")` 会在每个字符间插入替换串。
+        var command = executablePath + " " + (process.arguments ?? []).joined(separator: " ")
+        if !options.accessToken.isEmpty {
+            command = command.replacingOccurrences(of: options.accessToken, with: "🎉")
+        }
         debug(command)
         MinecraftCrashHandler.lastLaunchCommand = command
         process.currentDirectoryURL = instance.runningDirectory

@@ -18,8 +18,7 @@
 //  官方链接 https://docs.swift.org/swift-book/documentation/the-swift-programming-language/accesscontrol/
 //  与 .../extensions/）：扩展不能声明存储属性，且 `private` 仅对同一封闭声明及其同文件成员可见。
 //  存储属性不能由扩展声明，故 version / manifest 的 setter 由 private(set) 放宽为 internal(set)
-//  （对外读权限与类型均未变），RequiredJava16/17/21 由 private static 放宽为 internal static。
-//  对外接口零变化。
+//  （对外读权限与类型均未变）。对外接口零变化。
 //
 
 import Foundation
@@ -31,10 +30,6 @@ import UniformTypeIdentifiers
 
 public class MinecraftInstance: Identifiable, Equatable, Hashable {
     private static var cache: [URL : MinecraftInstance] = [:]
-    
-    static let RequiredJava16: MinecraftVersion = MinecraftVersion(displayName: "21w19a", type: .snapshot)
-    static let RequiredJava17: MinecraftVersion = MinecraftVersion(displayName: "1.18-pre2", type: .snapshot)
-    static let RequiredJava21: MinecraftVersion = MinecraftVersion(displayName: "24w14a", type: .snapshot)
     
     public let runningDirectory: URL
     public let minecraftDirectory: MinecraftDirectory

@@ -26,8 +26,7 @@ import Foundation
 /// 一个 Minecraft 游戏版本标识。
 ///
 /// 现有构造点：`VersionManifest.swift:54`（由版本清单构造，带 type）、
-/// `MinecraftInstanceVersion.swift:73`（由实例 json 的 `"id"` 构造，type 靠反查）、
-/// `MinecraftInstance.swift:35-37`（三个 Java 版本阈值常量，显式传 `.snapshot`）。
+/// `MinecraftInstanceVersion.swift:73`（由实例 json 的 `"id"` 构造，type 靠反查）。
 public class MinecraftVersion: Comparable, Hashable {
     /// 面向用户的版本号原文，如 `"1.21.8"`、`"24w14a"`。也是唯一标识。
     public let displayName: String

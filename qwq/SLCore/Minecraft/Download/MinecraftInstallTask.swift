@@ -42,6 +42,10 @@ public class MinecraftInstallTask: InstallTask {
     
     public override func start() {
         Task {
+            // 记录「安装前版本目录是否已存在」：覆盖安装（目录早就存在）失败时**绝不能删整个目录**，
+            // 否则一次网络失败会把用户既有实例的版本 jar 与 json 一起清掉。只有「本次新建」的目录
+            // 才是安装过程自己产出的半成品，失败时清理才安全。
+            let versionDirExistedBefore = FileManager.default.fileExists(atPath: versionURL.path)
             do {
                 try await startTask(self)
                 complete()
@@ -51,7 +55,7 @@ public class MinecraftInstallTask: InstallTask {
                 await MainActor.run {
                     currentState = .failed
                     failureReason = error.localizedDescription
-                    if removesVersionOnFailure {
+                    if removesVersionOnFailure && !versionDirExistedBefore {
                         try? FileManager.default.removeItem(at: versionURL)
                     }
                     // 失败也必须 complete()：触发 onComplete 回调 → 关闭下载详情页 + 弹失败提示。

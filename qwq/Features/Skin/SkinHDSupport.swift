@@ -160,9 +160,12 @@ enum SkinVersionIdentity {
     /// 原版 `26.2` → 原样返回。
     static func minecraftVersion(from versionID: String) -> String {
         guard let token = loaderToken(from: versionID) else { return versionID }
-        // 从后往前找 `-<token>`，避免误伤版本号里同名的片段
-        if let range = versionID.lowercased().range(of: "-" + token, options: .backwards) {
-            return String(versionID[versionID.startIndex..<range.lowerBound])
+        // 从后往前找 `-<token>`，避免误伤版本号里同名的片段。
+        // ⚠️ 必须**直接在原串上**查找：不能在 `lowercased()` 得到的串上取 range 再拿去切原串 ——
+        // 大小写转换可能改变字素结构，下标与原串不再对应（越界或切错位置）。
+        // `.caseInsensitive` 让原本的大小写不敏感语义保持不变（`-Fabric` 也能命中）。
+        if let range = versionID.range(of: "-" + token, options: [.backwards, .caseInsensitive]) {
+            return String(versionID[..<range.lowerBound])
         }
         return versionID
     }

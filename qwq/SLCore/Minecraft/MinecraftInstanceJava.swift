@@ -12,7 +12,6 @@
 //  跨文件访问级别说明（依据 references/swift-language/access-control.md 与 extensions.md，
 //  官方链接 https://docs.swift.org/swift-book/documentation/the-swift-programming-language/accesscontrol/
 //  与 .../extensions/）：扩展不能声明存储属性，且 `private` 仅对同一封闭声明及其同文件成员可见。
-//  故 RequiredJava16/17/21 由 private static 放宽为 internal static（本文件 getMinJavaVersion 读取）；
 //  findJVM / ensureDataManagerHasJava / archName 仅本文件调用，保持 private static。对外接口零变化。
 //
 //  ── 这个文件在解决什么 ─────────────────────────────────────
@@ -175,22 +174,19 @@ extension MinecraftInstance {
 
     /// 按版本号推断最低 Java 要求。
     ///
-    /// 分界点取自三个**具体的 Minecraft 版本**（`RequiredJava16/17/21`，定义在
-    /// `MinecraftInstance` 主文件），用版本比较而不是解析版本号数字 ——
-    /// 因为快照版号（`24w14a`）没法当数字比，而 `MinecraftVersion` 的 `<` 是按发布时间比的。
+    /// ⚠️ **别再写回 `version >= RequiredJava21` 那种比较**（原实现，已证实会退化）：
+    /// `MinecraftVersion.<` 是按**发布时间**比较的，而发布时间要反查版本清单、查不到就落到
+    /// 1970-01-01 这个兜底值（见 `MinecraftVersion.swift` 文件头「维护提示 1」）。于是：
+    /// - 版本不在清单里 —— 带加载器后缀的自定义目录名（`1.20.1-forge`）正是模组实例的常态：
+    ///   该版本 releaseDate = 1970，而三个阈值是真实日期 → `>=` 全假 → 一律落到最下面的 **8**；
+    /// - 清单整体还没加载：双方都是 1970 → `>=` 全真 → 一律返回 **21**。
+    /// 两种都会让游戏起不来（1.20.1 要 17，给 8 给 21 都失败），且报错方向与真实原因无关。
     ///
-    /// 三个分界值本身来自 Minecraft 官方的要求变更历史（21w19a 起要 16，1.18-pre2 起要 17，
-    /// 24w14a 起要 21）。**改这三个常量等于改「什么版本要什么 Java」**，别随手动。
+    /// 因此这里统一委托 `JavaRequirement.minimumMajor`：它按**版本号数字**推导，且与本工程其它
+    /// 入口（`VersionUtils.requiredJavaVersionForMinecraft`、`DownloadCategoryViewModel`）
+    /// 用的是同一个函数 —— 口径只有一处。
     public static func getMinJavaVersion(_ version: MinecraftVersion) -> Int {
-        if version >= RequiredJava21 {
-            return 21
-        } else if version >= RequiredJava17 {
-            return 17
-        } else if version >= RequiredJava16 {
-            return 16
-        } else {
-            return 8
-        }
+        JavaRequirement.minimumMajor(forMinecraftVersion: version.displayName)
     }
     
     /// 从已登记的 JVM 里挑一个能用的。

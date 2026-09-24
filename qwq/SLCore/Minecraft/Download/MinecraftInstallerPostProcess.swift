@@ -121,10 +121,14 @@ extension MinecraftInstaller {
             to: targetURL
         )
         
-        // 初始化实例
-        let instance = MinecraftInstance.create(.init(rootURL: task.versionURL.deletingLastPathComponent().deletingLastPathComponent(), name: ""), task.versionURL, config: MinecraftConfig(version: task.minecraftVersion))
-        
-        instance?.saveConfig()
+        // 初始化实例配置：**仅当 `.SL.json` 尚不存在时**才新建实例并落默认配置。
+        // ⚠️ 覆盖安装时该文件已存在（内含用户自定的 Java / 内存等），无条件 `saveConfig()` 会把默认
+        // 配置盖回去 —— 一次重装或补全就把用户的实例设置清零。
+        let configPath = task.versionURL.appendingPathComponent(".SL.json")
+        if !FileManager.default.fileExists(atPath: configPath.path) {
+            let instance = MinecraftInstance.create(.init(rootURL: task.versionURL.deletingLastPathComponent().deletingLastPathComponent(), name: ""), task.versionURL, config: MinecraftConfig(version: task.minecraftVersion))
+            instance?.saveConfig()
+        }
         
         // 修改 GLFW
         if let glfw = manifest.getNeededLibraries().first(where: { $0.name.contains("lwjgl-glfw") }) {

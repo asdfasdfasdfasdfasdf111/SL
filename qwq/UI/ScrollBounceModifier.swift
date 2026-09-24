@@ -22,7 +22,11 @@ import SwiftUI
 struct ScrollBounceModifier: ViewModifier {
     func body(content: Content) -> some View {
         if #available(macOS 13.3, *) {
-            content.scrollBounceBehavior(.basedOnSize)
+            // ⚠️ axes 必须显式给 `.horizontal`：本修饰器的两个调用点（`ContentCard` / `DetailPageHeader`）
+            // 都是 `ScrollView(.horizontal, …)`，而 SDK 里该方法的签名是
+            // `scrollBounceBehavior(_:axes: Axis.Set = [.vertical])` —— 默认只对纵向生效，
+            // 不写就等于「加了但没生效」，这正是此前回弹设置一直没起作用的原因。
+            content.scrollBounceBehavior(.basedOnSize, axes: .horizontal)
         } else {
             // macOS 13.0–13.2：API 不存在，保持系统默认回弹行为（不改变任何既有观感）
             content

@@ -83,14 +83,19 @@ final class AppContext {
         }
 
         // 响应内存压力（macOS 上没有 NSApplication.didReceiveMemoryWarning，使用 DispatchSource）
-        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical])
+        // ⚠️ queue 必须显式给 `.main`：官方对该参数只说「用于执行事件处理器的队列」，
+        // 未定义传 nil 时落在哪个队列。而处理器要调用的 `DownloadCategoryView.clearStaticCaches()`
+        // 属于主 actor 隔离状态 —— 从后台队列去碰它就是一次静默的跨隔离访问。
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
         source.setEventHandler { [weak self] in
             // 半清而非全清：保留最近使用的一半（LRU 裁剪），避免压力过后所有缓存
             // 重新从磁盘/网络回填；真正的临界压力由系统触发多次事件逐步收紧
             self?.cacheManager.trimMemory(toFraction: 0.5)
             DownloadCategoryView.clearStaticCaches()
         }
-        source.resume()
+        // 官方 Discussion 明文：新建的 dispatch source 处于 inactive 状态，必须显式 `activate()`
+        // 才开始派发事件（原写法 `resume()` 虽是旧式等价物，但官方指名的入口是 `activate()`）。
+        source.activate()
         memoryPressureSource = source
     }
 
