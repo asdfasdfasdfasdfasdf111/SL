@@ -112,6 +112,24 @@ final class NoticeCenterTests: XCTestCase {
         XCTAssertEqual(center.current?.id, notice.id)
     }
 
+    /// 主线程上投递必须**同步**生效，不得被推迟到下一轮 runloop。
+    ///
+    /// 否则「先 `post` 后 `presentAndWait`」会出现投递顺序倒置 —— 后发的 `presentAndWait`
+    /// （其内部 `deliver` 是同步的）反而先落到 `current` 上，先 post 的那条被当成"被顶替"
+    /// 立即按默认按钮应答，用户看不到它。
+    ///
+    /// 反证：摘掉 `post` 里 `Thread.isMainThread` 的同步分支（退回裸 `Task { @MainActor in }`）后，
+    /// 本用例会在断言处变红 —— 因为 `Task` 要到下一轮 runloop 才执行。
+    func testPostOnMainThreadIsSynchronous() async {
+        let notice = makeNotice(message: "同步投递")
+
+        center.post(notice)
+
+        // 关键：不做任何等待、不 await，紧接着断言 —— 只有同步投递才可能成立
+        XCTAssertEqual(center.current?.id, notice.id, "主线程投递被推迟到了下一轮 runloop")
+        XCTAssertEqual(center.history.last?.id, notice.id, "history 未同步更新")
+    }
+
     /// 连续投递：每次投递都成为新的 current
     func testLaterPostReplacesCurrent() async {
         let first = makeNotice(message: "第一条")

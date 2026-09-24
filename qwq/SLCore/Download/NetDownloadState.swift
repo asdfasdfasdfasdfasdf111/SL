@@ -34,6 +34,16 @@ extension NetManager {
         var done: Int64 = 0
         var sourceIndex: Int
         var state: SliceState = .downloading
+        /// 本失败片是否已被「自它的终点起续传」的新分片接管。
+        ///
+        /// 为什么必须有这个标记：判定「这片还需不需要续传」原本只靠 `undone(of:) > 0` ——
+        /// 已知大小时，新分片插进来后本片的 `end` 变成「新片起点 − 1」，`undone` 自动归零，
+        /// 于是调度器自然不再重复建片。但**未知大小（`fileSize == -1`）时 `undone` 恒返回 -1**，
+        /// 上面那套「自动归零」失效：若不显式标记，`tryBeginSlice` 的 `fileSize <= 0` 分支
+        /// 会在**每个 tick** 都对同一片失败分片再建一个「从同一偏移续传」的新片
+        /// → 同一字节区间被并发重复下载，合并时按 start 拼接出「尾部重复」的坏文件；
+        /// 且旧片永远停在 `.failed`，调度器 `needMore` 恒真，记录永不进入终止态。
+        var superseded = false
         /// 本片临时文件地址（断点续传要复用它）；nil 表示尚未分配。
         var tempURL: URL?
 

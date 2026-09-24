@@ -2,6 +2,68 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 补回「被推翻那批」漏下的 3 处修复（2026-09-25）
+
+**背景**：远端 `refactor/modular` 一直停在 `f4e7578`（2026-09-24 17:48 推上去的
+「全项目 18 模块审查修复批次」，29 files / +363 / −218）。而本地在 28 分钟后判定该批
+「改过头、可读性下降」并**推翻重做**（`5d0004a`），从此两条线分叉：远端 1 个提交，
+本地 8 个提交（`git status` → `ahead 8, behind 1`）。逐条核对被废弃那批的修复后发现，
+重做时**有 3 处真修复没有被带过来**（不是实现不同，是本地压根没有）。
+
+**① 提示中心：主线程投递从「下一轮 runloop」改为同步**
+`NoticeCenter.post` 原本一律 `Task { @MainActor in deliver(notice) }`，即使调用方已在主线程，
+投递也要等下一轮 runloop。于是「先 `post` 后 `presentAndWait`」这类同线程调用会**顺序倒置**：
+后发的 `presentAndWait`（其 `deliver` 是同步的）反而先落到 `current`，先 `post` 的那条被当成
+「被顶替」立即按默认按钮应答，用户根本看不到它。
+改为：`Thread.isMainThread` 时走 `MainActor.assumeIsolated { deliver }` 同步投递，后台线程保持原 hop 路径。
+`assumeIsolated` 的可用性**实测过**（部署目标 macOS 13.0 下类型检查通过，非 14.0-only），未凭印象加守卫。
+
+**② 版本按钮：不可取消的回弹闭包改为可取消的 `.task(id:)`**
+`VersionButton` 用 `DispatchQueue.main.asyncAfter` 回写 `@State animationScale`，闭包**不可取消**；
+视图在这 0.12s 内被销毁（连点其它版本、返回上一页、切换分类）时，闭包仍会写已释放的 State storage
+—— 本工程多处 UAF 的成因。改为 `@State clickCount` + `.task(id: clickCount)`。
+⚠️ 睡眠必须 `do/catch + return`，**不能写 `try?`**：取消时 `Task.sleep` 抛 `CancellationError`，
+用 `try?` 吞掉会继续往下执行 `withAnimation { scale = 1 }`，等于「取消之后仍然回写 @State」，
+正是本组件要根治的那个隐患。
+
+**③ 下载：未知大小（无 Content-Length）的分片真正能续传**
+`Slice.undone(of:)` 对 `fileSize == -1` 恒返回 -1，而 `tryBeginSlice` / `tickOnce` 的续传判定是
+`undone > 0` —— 于是**未知大小文件的续传分支永不触发**：断流后旧片永远停在 `.failed`，
+调度器 `needMore` 恒真，每个 tick 都为同一片再建一条「从同一偏移续传」的新片，
+同一区间被并发重复下载，合并时按 start 拼接出**尾部重复的坏文件**。
+改为在 `Slice` 上引入显式 `superseded` 标记：建续传片时标记旧片已被接管，
+判定处跳过已接管的片；`fileSize <= 0`（-1 未知 / -2 未取得）时按 `failed.start + failed.done` 续传，
+零进度仍回到「重建首线程」（保留原 -2 行为，不回退）。
+本地此前只用 `waitForCompletion` 的 1800s 兜底把「挂死」降级成「超时失败」，**没修续传本身**。
+
+⚠️ **本处没有专门的反证用例**：续传判定内联在 `tryBeginSlice`（NetManager 实例方法）里，
+而它必然调用 `startSliceTask` 起真实下载任务；要钉住它得先把判定抽成纯函数（如同 `sliceBudget`），
+属另一件事。本处目前靠**忠实移植 + 全流水线不回归**（含 `DownloadAdapterTests` /
+`DownloadMergerTests` / `DownloadSliceBudgetTests` 等下载侧用例）交付，反证用例留待补。
+
+## 一处只在提交信息里存在的缺陷：启动桥的隔离错配（2026-09-25）
+
+`f4e7578` 的提交信息写着「`SLLaunchBridge.slLaunch` / `slLaunchInternal` 被推断 @MainActor，
+却被 `DispatchQueue.global().async` 调用（编译器不报）→ 真实数据竞争。改为 nonisolated。」
+但 `git show f4e7578 -- qwq/SLCore/SLLaunchBridge.swift | wc -l` = **0** —— **那个文件它一行没改**，
+基线 `3ba8ce5` 与本地都是裸 `func`。也就是说这是个「**两个分支都没修、只在文档里修了**」的缺陷。
+
+我按它描述的方式改了（两处都加 `nonisolated`）并实测，结论是**不能这么改**：
+- 口径二（`-default-isolation MainActor`）裸计数告警 **24 → 210**，多出的 **93 条（带冒号口径）全在 `SLLaunchBridge.swift`**，
+  是 `log()`、`DataManager.shared`、`.version`、`.manifest`、`javaVirtualMachines` 等
+  **主 actor 隔离成员被非隔离上下文访问**；
+- 口径一也多 2 条：`@Sendable` 闭包捕获非 Sendable 的 `MinecraftLauncher` / `LaunchOptions`。
+
+即：启动链**本身就工作在主 actor 隔离状态上**，把它标成 `nonisolated` 只是把长期被
+「默认推断掩盖」的隔离问题一次性掀开。真正的修法要让整条链贯通隔离语义（哪些必须留主 actor、
+哪些要显式 hop），是**独立一轮的重构**，不是补一行。本处**已撤销**，保持 0 新增告警。
+
+**验证**：`./scripts/typecheck.sh` 两口径 **0 错误**、告警 **44 / 24 与基线逐条一致**（新增 0）；
+`./scripts/verify-build.sh` → **BUILD SUCCEEDED**；`./scripts/verify-test.sh` →
+**TEST BUILD SUCCEEDED**；`./scripts/verify-test.sh run` → **232 用例 0 失败、1 跳过**（原 231 + 新增 1）。
+新增用例 `NoticeCenterTests.testPostOnMainThreadIsSynchronous`：主线程 `post` 后**不 await 立即断言**，
+只有同步投递才可能通过。
+
 ## 分片总超时不再一刀切：慢但健康的下载不再被判失败（2026-09-25）
 
 **症状**：进度明明在走，某个分片 5 分钟后被判超时；反复几次之后，**已下好的临时分片被删掉**，
