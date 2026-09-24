@@ -135,7 +135,12 @@ extension NetManager {
                 } else {
                     toWrite = min(buffer.count, Int(remaining))
                 }
-                handle.write(Data(buffer.prefix(toWrite)))
+                // 必须用 throwing 版本：旧的无返回值 `write(_:)` 在磁盘满/IO 错误时抛的是
+                // ObjC 异常（NSFileHandleOperationException），Swift 的 do/catch 抓不到，会直接
+                // 崩掉进程。改成抛 Swift 错误后，失败沿本函数的 throws 走到 sliceFailed，
+                // 按「断流续传 / 源判死」既有路径处理，而不是崩。
+                // 另注：磁盘空间预检只覆盖 >50MB 的文件（见下方 236 行），小文件本来无人兜底。
+                try handle.write(contentsOf: Data(buffer.prefix(toWrite)))
                 await manager.sliceAppend(fileID: fileID, sliceID: sliceID, bytes: toWrite)
                 await SpeedMeter.shared.addBytes(toWrite)
                 await manager.addBytes(Int64(toWrite))
@@ -155,7 +160,8 @@ extension NetManager {
                 toWrite = min(buffer.count, Int(remaining))
             }
             if toWrite > 0 {
-                handle.write(Data(buffer.prefix(toWrite)))
+                // 同上方分片主循环：throwing 版本，避免磁盘写失败时抛 ObjC 异常崩进程。
+                try handle.write(contentsOf: Data(buffer.prefix(toWrite)))
                 await manager.sliceAppend(fileID: fileID, sliceID: sliceID, bytes: toWrite)
                 await SpeedMeter.shared.addBytes(toWrite)
                 await manager.addBytes(Int64(toWrite))

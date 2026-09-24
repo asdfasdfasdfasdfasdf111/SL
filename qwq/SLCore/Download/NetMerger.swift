@@ -94,7 +94,10 @@ extension NetManager {
                         }
                         // 官方语义：到达文件末尾返回空 Data（不是 nil），两者都作为正常结束
                         guard let chunk, !chunk.isEmpty else { break }
-                        out.write(chunk)
+                        // throwing 版本：旧的 `write(_:)` 在磁盘满/IO 失败时抛 ObjC 异常
+                        // （NSFileHandleOperationException），Swift 抓不到会崩进程。
+                        // 改抛 Swift 错误后由外层 catch 删掉截断的目标文件再重抛（见下方 catch）。
+                        try out.write(contentsOf: chunk)
                     }
                 }
             } catch {

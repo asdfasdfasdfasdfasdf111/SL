@@ -2,6 +2,43 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 两处隐蔽缺陷修复：写盘崩溃路径 + 日志旁路无上限（2026-09-25）
+
+**背景**：五个子系统交由并行只读侦察找线索，由主代理**逐条亲自核实**后修复。
+本轮只收录已核实的两条；另有若干条属行为变更，列在文末待确认。
+
+- **`SLCore/Download/NetSliceFetcher.swift`（:138 / :158）、`SLCore/Download/NetMerger.swift`（:97）：
+  三处写盘改用 throwing API，消除「写失败即崩进程」**。
+  原写法是无返回值、不可 `try` 的 `FileHandle.write(_:)`，它在写失败（磁盘满、IO 错误）时抛的是
+  **ObjC 异常 `NSFileHandleOperationException`** —— Swift 的 `do/catch` 抓不到，进程直接崩。
+  而磁盘空间预检**只覆盖 `size > 50MB` 的文件**（`NetSliceFetcher.swift:236`），
+  小文件与合并阶段本就没有兜底。改为 `try handle.write(contentsOf:)` / `try out.write(contentsOf:)`
+  （工程他处 `FileManagerExtension.swift`、`MinecraftLauncherLog.swift` 早已采用此写法）：分片侧的错误
+  沿 `runSlice` 的 `throws` 进入 `sliceFailed`，走既有的断流续传 / 源判死路径；合并侧由外层既有
+  `catch` 先删除被写截断的目标文件再重抛，避免残缺文件被后续 `.skip` 预检固化为「已存在可复用」。
+
+- **`Features/Launch/LaunchCoordinator.swift`、`Features/Launch/LaunchSessionManager.swift`、
+  `SLCore/SLLaunchBridge.swift`：日志缓冲不再无上限增长**。
+  `pendingLogs` 的清理点原本**只有 `LaunchSessionManager.addSession` 一处**（仅在建立会话时执行一次）。
+  用户关掉日志卡片（`removeSession`）后游戏仍在运行，`.log` 事件查不到会话 → 持续
+  `l.pendingLogs.append(logLine)`，一直堆积到进程结束才随对象释放；Forge/NeoForge 刷屏级长会话下
+  内存呈线性增长，且与 `GameSession` 已有的 20000 行上限**互不相干**（那是另一条路径）。
+  判定依据由「**当前**有没有会话」改为「**是否建过会话**」：`SLLaunchBridge` 增补 ObjC 关联标志
+  `hasEverHadSession`（与既有 `pendingLogs` / `isUserTerminated` 同一存储模式），`addSession` 中置位，
+  `.log` 分支改为 `else if !l.hasEverHadSession` 才暂存，否则丢弃。
+  注意：本改动只制止堆积，**不改变**「会话存在期间日志照常落地」的行为。
+
+**判定暂不动（需先确认）**：`LaunchCoordinator.swift:153-168` 的 `.launcherReady` 分支无取消判定 ——
+准备期点击取消只复位界面，后台准备链仍会走完并 `addSession` + `process.run()`，**游戏照常启动**；
+改它属行为变更（「取消」将变成真的取消），需先确认。另两条同属「下载成败判定」类，同样先不动：
+`NetDownloadState` 的 `sourcesOnce` 把「服务器忽略 Range、不支持断点续传」等同于「该源已死」，
+会导致本可单线程下完的文件被判失败并删掉健康数据；`NetSliceFetcher.swift:114` 的 5 分钟分片总超时
+不随剩余量与实测速度缩放，大文件 + 慢网会被误判失败。
+
+**验证**：`./scripts/typecheck.sh` 两口径 **0 错误**（告警 40 / 24，与基线一致，新增 0、消掉 0）；
+`./scripts/verify-build.sh` → **BUILD SUCCEEDED**；`./scripts/verify-test.sh` →
+**TEST BUILD SUCCEEDED**；`./scripts/verify-test.sh run` → **221 用例 0 失败、1 跳过**。
+
 ## 全流程运行审查后的六处修复（2026-09-24）
 
 **背景**：按要求把程序「从头到尾跑一遍」，判据取工程内的两个 skill ——

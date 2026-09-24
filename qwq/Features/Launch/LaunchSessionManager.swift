@@ -30,6 +30,10 @@ final class LaunchSessionManager: ObservableObject {
     /// 所以界面上的「启动日志N」不保证唯一递增。
     @discardableResult
     func addSession(launcher: MinecraftLauncher) -> GameSession {
+        // 标记「这个 launcher 已经有会话了」：从这一刻起 pendingLogs 不再是合法的暂存目标。
+        // 用户随后关掉日志卡时，后续日志行没有消费者，必须丢弃而不是无限暂存
+        // （见 LaunchCoordinator 的 .log 分支）。设置必须在这里、而不是 session 存在期间。
+        launcher.hasEverHadSession = true
         let usedIndices = Set(sessions.map { $0.index })
         var newIndex = 1
         while usedIndices.contains(newIndex) { newIndex += 1 }

@@ -144,9 +144,14 @@ enum LaunchCoordinator {
                             // 走会话的唯一写入口：合并窗口内批量落地，
                             // 避免 Forge/NeoForge 刷屏时逐行广播（见 GameSession.appendLogs 的说明）
                             session.appendLog(logLine)
-                        } else {
+                        } else if !l.hasEverHadSession {
                             // session 尚未建立：暂存到 launcher，建立后 flush
                             l.pendingLogs.append(logLine)
+                        } else {
+                            // 已经建过会话、但现在不在列表里 —— 用户把日志卡关掉了，
+                            // 这些行没有消费者，直接丢弃。
+                            // 不能继续 append：pendingLogs 的唯一清理点是 addSession（只跑一次），
+                            // 关掉日志卡后游戏还在跑，日志会一直堆积到进程结束（内存只涨不落）。
                         }
                     }
                 case .launcherReady(let launcher):
