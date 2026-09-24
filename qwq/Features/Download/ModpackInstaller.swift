@@ -1,3 +1,20 @@
+//
+//  ModpackInstaller.swift
+//  整合包安装：解包 → 读 manifest → 装原版 → 铺 mods / overrides → 装加载器。
+//
+//  职责：把一份整合包（Modrinth pack 结构）当成「原版 + 内容 + 加载器」三件事，
+//        依次落地到指定实例目录。
+//  边界：不选实例、不实现下载（`installMinecraft` / `installLoader` / `downloadMod`
+//        都由外部注入或另处实现），也不产出任何 UI 提示；临时目录一律用完即删（defer）。
+//  关键约束（目录口径，改之前必读）：整合包的 `mods` 与 `overrides` 必须落到
+//        `<实例目录>/versions/<游戏版本>/`（**版本运行目录**），**不是**游戏根目录 ——
+//        游戏进程的 `game_directory` 就是这个版本目录，写到根目录游戏不会加载。
+//        该口径与 `installMinecraft` 共用同一个 `versions/<版本>` 路径，改一处必须改两处。
+//  顺序约定：**加载器放在最后装** —— 让原版清单与整合包内容先落盘（用户随后在带加载器的
+//        实例里可直接复用这些文件），再由 `installLoader` 抛错把「加载器没装上」暴露出来；
+//        把顺序倒过来会让失败时连原版都没装上。
+//
+
 import Foundation
 import ZIPFoundation
 

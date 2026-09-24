@@ -2,6 +2,65 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 全流程运行审查后的六处修复（2026-09-24）
+
+**背景**：按要求把程序「从头到尾跑一遍」，判据取工程内的两个 skill ——
+`.opencode/skills/swiftui-expert-skill`（其 **Correctness Checklist** 原文写的是
+「These are hard rules -- violations are always bugs」）与 `.opencode/skills/swift-style-skill`，
+外加工程自己的注释政策（≥15 行的文件注释密度 ≥20%、文件头写职责/边界、每类型每属性 `///`）。
+查出问题后本轮修掉六处；另有几处**经核对判定不动**，理由记在文末。
+
+- **`Features/ModBrowser/LocalModCatalog.swift`：目录解析器换代，峰值常驻内存 249.6 MB → 174.4 MB**。
+  原实现用 `JSONSerialization` 把 122477 条目录先展开成 Foundation 对象图（每行一个 `[String: Any]`）
+  再手工搬进 `Item`。用同一份真实数据实测（两个独立可执行文件，指标取
+  `mach_task_basic_info.resident_size_max`）：**对象图建完那一刻就占 210.5 MB**，全程峰值 249.6 MB；
+  换成 `JSONDecoder` 直解后峰值 174.4 MB（**省 75 MB，约 30%**），耗时同为 0.4 s 量级，
+  产物逐条一致（首/末条 title 比对相同）。改法：新增短键 wire 结构 `BundleEntry` / `BundleCatalog`
+  （键名 `i/t/n/d/c/u/x` 由 `crawl_modrinth.py` 定死），字段**全部声明为可选**以保住旧实现的容错语义
+  （旧代码逐条 `compactMap`，某行缺字段只丢那一行；若用非可选字段，一条坏数据会让整个 decode 抛错、目录全空）。
+  另：`Item` 与两个新结构体显式标 `nonisolated` —— 工程开了 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`，
+  未标注类型的 `Decodable` 一致性会被推断成主 actor 隔离，在 `nonisolated` 解码路径里使用会报
+  `[#IsolatedConformances]`（Swift 6 下是错误）；用最小探针实测 `struct X: Decodable` 报警、
+  `nonisolated struct X: Decodable` 不报
+- **`Features/Launch/GameSession.swift`（+ `LaunchCoordinator` / `LaunchSessionManager` / `SessionLogCardView`）：日志不再无上限、也不再逐行广播**。
+  `@Published var logs` 原先没有任何裁剪，且每追加一行就向全部订阅者广播一次 —— Forge / NeoForge
+  启动期一秒能刷几十行，日志卡片被反复整表重算；会话又只在用户点 × 时移除，游戏退出后整份日志仍留在内存。
+  现改为：① **合并窗口** —— 新行先进非 `@Published` 的缓冲，每 0.1 s 才写一次 `logs`（合并的是广播次数，
+  行序与完整性不变）；② **摊还裁剪** —— 超过 20000 行时一次丢到 3/4 处（每 5000 行才搬一次数组，
+  而不是每行一次）；③ `logs` 改 `private(set)`，**唯一写入口**收成 `appendLog(_:)` / `appendLogs(_:)`；
+  ④ 卡片顶部在裁剪发生后显示一行「较早的 N 行已省略」，不假装日志是完整的
+- **`App/qwqApp.swift`、`Features/Download/DownloadDetailView.swift`、`Features/Game/VersionSelectionSection.swift`：`ForEach` 身份改用稳定键**。
+  Correctness Checklist 原文：`ForEach` 必须用稳定身份（**never `.indices`/`\.offset`**）。
+  分类菜单改用 `\.element.id`（`Category` 是 `Identifiable` 且 `Category.all` 是 `static let`，UUID 稳定）；
+  安装阶段表原先因为「元组不能做 `Identifiable`、键路径也取不到元组成员」才退化成下标，现收成
+  `InstallStageRow`（身份 = 阶段本身）；版本网格的行身份由行下标改为「本行第一个版本的游戏版本号」
+- **`App/ViewModels/LaunchPanelState.swift`：提示层不再被无关设置写入作废**。
+  原先它转发 `LauncherSettings.objectWillChange` 的**全部**变化（该对象有 19 个 `@Published` 字段），
+  于是「在输入框敲一个字符」这类与该面板无关的写入也会作废提示层全部订阅者。
+  改为逐字段订阅它真正暴露的 4 个（`$showLaunchAlert` / `$showJavaPopup` / `$javaPopupMessage` / `$launchErrorMessage`）
+- **补 5 个缺文件头的文件**：`App/ContentView.swift`、`App/qwqApp.swift`、`App/AppDelegate.swift`、
+  `Features/Download/ModpackInstaller.swift`、`Features/ModBrowser/ModVersionDetector.swift`。
+  说明：全库 240 个（≥15 行的）Swift 文件**注释密度无一低于 20% 门槛**（中位数 35.2%，最低 20.2%），
+  即"注释不够密"不成立，真正的缺口是文件头 —— 加上这 5 个之后全库已无缺文件头的文件
+- **新增回归守卫** `qwqTests/GameLogRetentionTests.swift`（3 个用例：未超上限不丢 / 超限后上限不被突破且裁剪是摊还的 / 上限必须大到让 1/4 摊还量非 0）。
+  为让上限这条不变量可测，`GameSession` 把裁剪判定抽成 `nonisolated static func dropCount(forCount:)` 纯函数 ——
+  端到端不测是刻意的：`GameSession` 需要真实 `MinecraftLauncher`，而它的 init 会往用户 Application Support
+  写日志并修剪历史日志，单测不该动这些真实数据
+
+**经核对判定不动的三处**：
+① 六个分类页在 `ContentView.categoryCanvas` 里是 `HStack`（非惰性容器）→ 各页 `onAppear` 冷启动即全部触发。
+这是"首屏即有数据"的**刻意设计**（代码注释已写明），且各页重活本就在后台队列，改惰性容器会变成"切页才加载"的行为变更；
+另需注意 `LazyHStack` 只在 `ScrollView` 内才真正惰性，脱离滚动容器未必有效；
+② 离线用户名输入框直绑全局 `LauncherSettings` → 每敲一个字符全窗失效。可修（局部草稿 + 防抖回写），
+但该字段正处于 `LauncherSettings → AppSettingsStore` 迁移中（`AppSettingsStore` 里已有同名的第二份声明），
+此刻改绑定会引入第三份状态，留待迁移收口时一并处理；
+③ `AppDelegate` 里把应用图标缩放到 0.7 倍：纯外观且 Dock 本就会按需缩放，属可删的冗余，但无功能影响。
+
+- **验证**：`./scripts/typecheck.sh` 两口径 **0 错误**（告警 40 / 24；口径一 +2 是新增第 19 个测试文件的固定产物，
+  `typecheck.sh` 头注释已记录）；告警集合已用 `git archive HEAD` 导出基线逐条 `comm` 比对，**新增 0 条、消掉 0 条**；
+  `./scripts/verify-test.sh` → **TEST BUILD SUCCEEDED**；`./scripts/verify-build.sh` → **BUILD SUCCEEDED**；
+  `./scripts/verify-test.sh run` → **221 用例 0 失败、1 跳过、无 abort**（218 → 221 即本次新增的 3 条）
+
 ## 崩溃日志信号安全 + 慢盘扫描不再丢结果（2026-09-24）
 
 **背景**：对照上游 PCL2 原版（`Meloong-Git/PCL`，VB.NET/WPF）逐项核过之后的两处落实 —— 一处是本地自造的崩溃捕获在**信号路径里做堆分配**，另一处是本地自造的 **10 秒扫描超时会把迟到结果整条丢掉**。逐项对照与「哪些其实不是本地改坏」记在 `../SL-原版PCL2对照.md`。

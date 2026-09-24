@@ -35,7 +35,8 @@ final class LaunchSessionManager: ObservableObject {
         while usedIndices.contains(newIndex) { newIndex += 1 }
         let session = GameSession(index: newIndex, launcher: launcher)
         if !launcher.pendingLogs.isEmpty {
-            session.logs.append(contentsOf: launcher.pendingLogs)
+            // 同样走唯一写入口：这些是会话建立前暂存的行，一并按合并窗口落地
+            session.appendLogs(launcher.pendingLogs)
             launcher.pendingLogs.removeAll()
         }
         sessions.append(session)

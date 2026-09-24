@@ -1,3 +1,18 @@
+//
+//  ModVersionDetector.swift
+//  从模组 jar 内部元数据反查「这个 mod 支持哪个游戏版本区间、属于哪个加载器」。
+//
+//  职责：① 列出 jar 条目（`unzip -Z1`）；② 按加载器优先级读元数据
+//        （`fabric.mod.json` / `quilt.mod.json` / `mods.toml` / `mcmod.info` / `MANIFEST.MF`）；
+//        ③ 解析版本区间（含 maven 风格 `[1.20,1.21)`）并判断是否覆盖给定游戏版本。
+//  边界：**只读 jar**，不修改、不下载、不安装（下载与落盘分别属 Downloader / Installer）。
+//  性能约束（改之前必读）：`Process` 实例只能 `run()` 一次，**「尝试次数」就是「进程创建次数」**。
+//        旧实现按 fabric → quilt → forge → mcmod → manifest 顺序逐条试 `unzip -p`，
+//        「条目不存在」也要完整启停一次 unzip 才能得到结论，全部未命中要创建 5 个进程；
+//        现在先列一次条目清单、再由清单决定提取哪些条目，进程数最坏值由 5 降到 2。
+//        **新增元数据来源时不要再加"试一次看看"的分支**，要走清单判断。
+//
+
 import Foundation
 
 class ModVersionDetector {

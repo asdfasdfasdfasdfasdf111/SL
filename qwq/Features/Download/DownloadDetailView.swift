@@ -17,6 +17,23 @@ struct DownloadDetailView: View {
     /// 下载速度来自全局计量器（约每秒推送一次），是本页唯一「不属于任务表」的数据源。
     @ObservedObject private var speedMeter = SpeedMeter.shared
 
+    /// 安装阶段表里的一行。
+    ///
+    /// **为什么需要这个类型**：`getInstallStates()` 返回的是 `Dictionary`，排序后得到
+    /// `[(key: InstallStage, value: InstallState)]` —— 元组既不能做 `Identifiable`，
+    /// 也不能写 `\.element.key` 这种键路径（Swift 不允许键路径取元组成员），
+    /// 旧代码只好退回 `Array(...enumerated()) + id: \.offset` 拿下标当身份。
+    /// 但下标是「位置」不是「身份」：阶段集合一旦增减或重排，SwiftUI 会按位置复用行视图，
+    /// 把上一阶段的勾选/失败样式贴到别的阶段上。收成结构体后，身份就是阶段本身
+    /// （`InstallStage` 是 `Int` 原始值的枚举、又当字典键用，必然 `Hashable`）。
+    private struct InstallStageRow: Identifiable {
+        /// 阶段（排序依据与身份来源）
+        let stage: InstallStage
+        /// 该阶段当前状态（决定这一行画百分比还是图标）
+        let state: InstallState
+        var id: InstallStage { stage }
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             // 左侧信息面板（对标 LeftTabView：总进度 / 下载速度 / 剩余文件）
@@ -95,17 +112,18 @@ struct DownloadDetailView: View {
     /// 单个任务各阶段渲染（对标 InstallingView.getEntries）：
     /// inprogress → 实时百分比；finished → 勾选图标；waiting/failed → 对应图标 + 阶段名
     /// 单个任务的各阶段行。
-    /// ⚠️ 用 `.enumerated()` + `id: \.offset` 而非用 stage 本身当 id：
-    /// 同一任务内 stage 唯一，用下标作 identity 可行；但若阶段列表顺序发生变化，
-    /// SwiftUI 会按位置复用视图（当前阶段集合固定，暂无此问题）。
+    /// 身份改用阶段本身（`InstallStageRow.id`），不再用下标 —— 下标是位置不是身份，
+    /// 阶段集合增减或重排时会把上一阶段的样式错配到别的阶段（详见 `InstallStageRow` 的说明）。
     @ViewBuilder
     private func entries(for task: InstallTask) -> some View {
         // 按 InstallStage 的 rawValue 排序 —— rawValue 本身就是展示顺序（安装流程 0..7）。
-        let states = task.getInstallStates()
+        let rows = task.getInstallStates()
             .sorted { $0.key.rawValue < $1.key.rawValue }
+            .map { InstallStageRow(stage: $0.key, state: $0.value) }
         VStack(spacing: 0) {
-            ForEach(Array(states.enumerated()), id: \.offset) { _, pair in
-                let (stage, state) = pair
+            ForEach(rows) { row in
+                let stage = row.stage
+                let state = row.state
                 HStack(spacing: 10) {
                     if state == .inprogress {
                         Text(String(format: "%.0f%%", task.progressForStage(stage) * 100))

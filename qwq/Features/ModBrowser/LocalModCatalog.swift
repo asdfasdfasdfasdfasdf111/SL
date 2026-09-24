@@ -11,7 +11,17 @@ import os
 
 enum LocalModCatalog {
 
-    struct Item: Codable {
+    /// 目录条目（长键名，**磁盘缓存的读写格式就由这套属性名决定**，改名等于读废旧缓存）。
+    ///
+    /// 显式 `nonisolated`：工程开了 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`，未标注的类型
+    /// 会被推断成主 actor 隔离，它的 `Decodable` 一致性随之被隔离；而在**非隔离**上下文里使用
+    /// 该一致性会报 `main actor-isolated conformance of 'X' to 'Decodable' cannot be used in
+    /// nonisolated context [#IsolatedConformances]`（Swift 6 语言模式下是**错误**）。
+    /// 本类型的解码/编码都发生在非隔离路径上（`loadCatalogFromDisk()` / `saveCatalogToDisk(_:)`），
+    /// 故与下面两个 bundle 结构体统一口径、一并显式退出默认隔离。
+    /// 实测（口径二同参数探针）：`struct X: Decodable` 在非隔离上下文报警、
+    /// `nonisolated struct X: Decodable` 不报；本轮新增的 `BundleCatalog` 确实触发过该告警。
+    nonisolated struct Item: Codable {
         let projectID: String
         let projectType: String
         let title: String
@@ -19,6 +29,36 @@ enum LocalModCatalog {
         let categories: [String]
         let iconURL: String?
         let downloads: Int
+    }
+
+    // MARK: - bundle 目录的解码结构（短键）
+
+    /// bundle 内 `modrinth_catalog.json.gz` 的条目结构。
+    ///
+    /// **为什么不直接给 `Item` 写 `CodingKeys`**：
+    /// ① `Item` 同时被磁盘缓存的 `JSONEncoder` / `JSONDecoder` 使用，键名是长名
+    ///    （`projectID` / `projectType`…）；把两者强行统一会读废已经写到磁盘上的缓存。
+    /// ② 全部字段声明为**可选**，是为了保住旧实现的容错语义：旧代码是
+    ///    `compactMap` + `guard let i, t, n`，某一行缺字段只丢那一行、其余照常；
+    ///    若在这里用非可选字段，一条坏数据会让整个 `decode` 抛错 → 目录整体变空。
+    /// 键名映射见生成脚本 `crawl_modrinth.py`：i=id、t=type、n=name、d=description、
+    /// c=categories、u=icon_url、x=downloads。
+    ///
+    /// 同 `Item` 的隔离口径：**必须**显式 `nonisolated` —— 本轮首次落地时正是这里报出了
+    /// `[#IsolatedConformances]`（在 `nonisolated` 的 `loadCatalog()` 里解码），加 `nonisolated` 后消失。
+    private nonisolated struct BundleEntry: Decodable {
+        let i: String?
+        let t: String?
+        let n: String?
+        let d: String?
+        let c: [String]?
+        let u: String?
+        let x: Int?
+    }
+
+    /// bundle 目录的顶层结构（`{"items":[…]}`）。`nonisolated` 理由同上。
+    private nonisolated struct BundleCatalog: Decodable {
+        let items: [BundleEntry]
     }
 
     /// 目录内存锁（保护 `localCatalog` / `localCatalogItemsByType`，临界区只做字典读写）。
@@ -213,23 +253,30 @@ enum LocalModCatalog {
             catalog = fromDisk
             parsedFromBundle = false
         // 2) 冷启动：从 bundle 的 gzip 解析
+        //
+        // 这里刻意**不再用 `JSONSerialization`**：它会把整份 JSON 先展开成 Foundation 对象图
+        // （122477 个 `[String: Any]`，每个字段还要桥接成 NSString/NSNumber 临时对象），
+        // 峰值内存远高于"只需要一个 `[Item]`"的实际需求。
+        // 用同一份真实数据（122477 条）实测两种写法的进程峰值常驻内存：
+        //   · `JSONSerialization` + 手工搬运 → 249.6 MB
+        //   · `JSONDecoder` 直解（本实现）   → 174.4 MB      ⇒ 省 75 MB（约 30%）
+        // 耗时同为 0.4 s 量级、解析结果逐条一致（首/末条 title 比对相同）。
         } else if let url = Bundle.main.url(forResource: "modrinth_catalog", withExtension: "json.gz"),
                   let compressed = try? Data(contentsOf: url),
                   let data = inflateGzipData(compressed),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let entries = json["items"] as? [[String: Any]] {
-            catalog = entries.compactMap { entry -> Item? in
-                guard let projectID = entry["i"] as? String,
-                      let projectType = entry["t"] as? String,
-                      let title = entry["n"] as? String else { return nil }
+                  let bundle = try? JSONDecoder().decode(BundleCatalog.self, from: data) {
+            catalog = bundle.items.compactMap { entry -> Item? in
+                guard let projectID = entry.i,
+                      let projectType = entry.t,
+                      let title = entry.n else { return nil }
                 return Item(
                     projectID: projectID,
                     projectType: projectType,
                     title: title,
-                    description: entry["d"] as? String ?? "",
-                    categories: entry["c"] as? [String] ?? [],
-                    iconURL: entry["u"] as? String,
-                    downloads: entry["x"] as? Int ?? 0
+                    description: entry.d ?? "",
+                    categories: entry.c ?? [],
+                    iconURL: entry.u,
+                    downloads: entry.x ?? 0
                 )
             }
             parsedFromBundle = true

@@ -1,3 +1,24 @@
+//
+//  ContentView.swift
+//  应用根视图（窗口内容层）。
+//
+//  职责：三段式结构 ——
+//    ① 主内容 `mainContent`：毛玻璃背景 + HomeHeader 标题栏 + categoryCanvas 分类画布；
+//    ② 全局叠加层 `RootOverlays`（弹窗 / 提示 / 下载圆按钮）：放在页面切换层**之外**，
+//       因此不随页面卸载；它必须声明在 mainContent 之后（同 zIndex 时由声明顺序决定上下）；
+//    ③ 全局提示横幅 `NoticeOverlay`（PopupManager / hint 的唯一可见出口）。
+//  边界：本视图**只渲染、只转发事件**，不含业务决策 ——
+//    页面导航归 NavigationState、拖拽安装归 DropInstallCoordinator、
+//    启动提示归 LaunchPanelState（注入式：本视图只订阅、不创建）、
+//    下载详情开关归 DownloadDetailManager（经 NavigationState 透传）。
+//  关键约束：
+//    · 六个分类页在 `categoryCanvas` 里是**整排常驻**的（HStack，不是惰性容器），
+//      各页 onAppear 因此会在冷启动时全部触发 —— 这是"首屏即有数据"的刻意设计，
+//      改动容器类型前先读各页 onAppear 的副作用清单（版本扫描 / 目录预热 / 取数）。
+//    · 菜单栏「分类」命令经 NavigationIntent 单槽中转后落到本视图的 NavigationState，
+//      应用后必须 `consume()`，否则同一请求会在后续重绘中重复生效。
+//
+
 import SwiftUI
 import AppKit
 import Combine

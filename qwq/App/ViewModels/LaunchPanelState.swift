@@ -25,9 +25,24 @@ final class LaunchPanelState: ObservableObject {
     private var cancellable: AnyCancellable?
 
     init() {
-        cancellable = settings.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
+        // ⚠️ 只转发本面板**真正暴露的这 4 个字段**，而不是 `settings.objectWillChange` 的全部变化。
+        //
+        // 原先的写法是 `settings.objectWillChange.sink { … objectWillChange.send() }` ——
+        // 那是把 LauncherSettings 全部 19 个 `@Published` 字段的任何一次写入都转发过来。
+        // 于是「在输入框里敲一个字符（写 offlineUsername）」这种与提示无关的动作，
+        // 也会作废提示层（TaskPill / NoticeOverlay 一侧）的全部订阅者。
+        //
+        // 4 个来源字段与下面 4 个计算属性（javaPopupMessage / showJavaPopup /
+        // showLaunchAlert / launchErrorMessage）一一对应，逐个订阅既不再漏、也不再多。
+        // 依据：Combine 的 `@Published` 投影 `$field` 逐字段发值，可精确订阅单个字段。
+        // https://developer.apple.com/documentation/combine/published
+        cancellable = settings.$showLaunchAlert
+            .combineLatest(settings.$showJavaPopup,
+                           settings.$javaPopupMessage,
+                           settings.$launchErrorMessage)
+            .sink { [weak self] _, _, _, _ in
+                self?.objectWillChange.send()
+            }
     }
 
     // MARK: - Java 提示气泡

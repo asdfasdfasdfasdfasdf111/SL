@@ -1,3 +1,19 @@
+//
+//  AppDelegate.swift
+//  应用级 AppKit 兜底 —— 只放 SwiftUI 场景表达不了的那几件事。
+//
+//  职责：① 把已有窗口改成透明标题栏 + 全尺寸内容区（配合 Scene 的 `.hiddenTitleBar`）；
+//        ② 旧系统（< macOS 13）的窗口尺寸兜底：**本工程部署目标是 13.0，该分支永不执行**，
+//           保留仅为将来下调部署目标时仍有兜底；
+//        ③ 把应用图标缩放到 0.7 倍后设为 Dock 图标（纯外观）。
+//  边界：**不声明窗口最小尺寸**。唯一来源是 qwqApp.swift 根视图的 `.frame(minWidth:minHeight:)`
+//        （内容约束），理由见该处注释：`NSWindow.contentMinSize` 的优先级高于 `minSize`，
+//        在 AppKit 侧写 minSize 度量的是含标题栏的 frame，与内容区口径不同，属冗余声明。
+//  注意：`applicationDidFinishLaunching` 时窗口已存在，这里取 `NSApp.windows.first` 是按
+//        「启动即单窗口」的现状写的；将来若出现第二个窗口或先弹设置窗，需要按内容视图反查
+//        目标窗口，而不是取第一个。
+//
+
 import Cocoa
 import SwiftUI
 

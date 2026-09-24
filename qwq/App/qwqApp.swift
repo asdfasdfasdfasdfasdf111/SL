@@ -1,3 +1,21 @@
+//
+//  qwqApp.swift
+//  应用入口：Scene 声明（主窗口 / 默认尺寸 / 菜单命令 / 设置场景）。
+//
+//  职责：① 首帧之前完成两件一次性初始化 —— 崩溃自捕获安装（CrashReporter.install）、
+//           本地 Modrinth 全量目录后台预热（LocalModCatalog.warmUp）；
+//        ② 声明 WindowGroup 与**窗口最小尺寸 800×590 的唯一来源**（内容约束）；
+//        ③ 声明「分类」菜单与 ⌘1…⌘6（经 NavigationIntent 单槽送到 ContentView）；
+//        ④ 声明「设置…」（⌘,）的 Settings 场景（内容镜像「个性化」页）。
+//  边界：不含任何界面布局与业务逻辑（内容全在 ContentView 及其子树）。
+//        窗口最小尺寸**不得**在他处重复声明：AppDelegate 与窗口修饰器里的旧声明已删，
+//        因为 `NSWindow.contentMinSize` 的取值会被这里的内容约束压过，重复声明只会造成
+//        两处数值不一致（历史上就出现过 800×590 与 800×550 并存）。
+//  关键约束：`init()` 在主线程、且早于首帧 —— **任何同步 IO 都会直接推迟窗口出现**。
+//        因此这里只允许两类动作：装处理器（CrashReporter）与把重活丢到后台
+//        （LocalModCatalog.warmUp 内部就是 Task.detached）。新增初始化前先确认它不读盘。
+//
+
 import SwiftUI
 
 @main
@@ -42,7 +60,11 @@ struct SLApp: App {
         // 两者不在同一视图树，故经 `NavigationIntent` 单槽中转，见该文件说明。
         .commands {
             CommandMenu("分类") {
-                ForEach(Array(Category.all.enumerated()), id: \.offset) { index, category in
+                // 身份用 `category.id` 而不是枚举下标：`Category` 自身是 `Identifiable`，
+                // 且 `Category.all` 是 `static let`（每个实例只建一次、UUID 稳定），
+                // 所以 id 是「活得比视图久」的稳定身份；下标只是位置，任何顺序调整都会错配复用。
+                // （`enumerated()` 保留是因为快捷键 ⌘N 要用到序号。）
+                ForEach(Array(Category.all.enumerated()), id: \.element.id) { index, category in
                     Button(category.name) {
                         NavigationIntent.shared.requestCategory(at: index)
                     }

@@ -100,10 +100,13 @@ struct VersionSelectionSection: View {
                         let rows = stride(from: 0, to: uniqueVersions.count, by: chunkSize).map {
                             Array(uniqueVersions[$0..<min($0 + chunkSize, uniqueVersions.count)])
                         }
-                        // 用行下标当 identity：行内容会随数据变化，下标是这里最稳的键。
-                    ForEach(rows.indices, id: \.self) { rowIdx in
+                        // 行身份改用「本行第一个版本的游戏版本号」，不再用行下标：
+                        // 行内容会随 `uniqueVersions` 变化（筛选/排序后同一行会换成别的版本），
+                        // 下标身份会把旧内容的视图状态（选中高亮等）错配到新内容上；
+                        // 而游戏版本在 `uniqueVersions` 内唯一，故 `first?.gameVersion` 既稳定又唯一。
+                        ForEach(rows, id: \.first?.gameVersion) { row in
                             HStack(spacing: 12) {
-                                ForEach(rows[rowIdx], id: \.gameVersion) { item in
+                                ForEach(row, id: \.gameVersion) { item in
                                     VersionLoaderCard(
                                         version: item.gameVersion,
                                         isSelected: selectedModpackVersionId == item.version.id,

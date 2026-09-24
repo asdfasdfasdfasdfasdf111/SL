@@ -2,6 +2,7 @@
 //  SessionLogCardView.swift
 //  模块化拆分：启动日志卡片视图（从 CategoryContentView.swift 拆出）
 //  用 @ObservedObject 监听 session.logs 变化，确保日志实时刷新
+//  本视图**只读**日志：写入一律走 GameSession.appendLog(_:)（见该文件的合并窗口与上限说明）
 //
 
 import SwiftUI
@@ -38,6 +39,15 @@ struct SessionLogCardView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 2) {
+                        // 超长会话被裁剪过时，如实说明「上面还有内容被丢了」——
+                        // 否则用户会以为这就是全部日志。这一行不参与 scrollTo 的下标锚点，
+                        // 因为它不在 `logs` 里，不会让下面的下标错位。
+                        if session.droppedLogLineCount > 0 {
+                            Text("… 较早的 \(session.droppedLogLineCount) 行已省略（超出 \(GameSession.maxLogLines) 行上限）")
+                                .font(.system(.caption2, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .opacity(0.7)
+                        }
                         // 用下标当 id，并给每行再挂 `.id(idx)`：后者是给 scrollTo 定位的锚点 ——
                         // identity 管复用、`.id` 管滚动定位，两者缺一不可。
                         ForEach(session.logs.indices, id: \.self) { idx in

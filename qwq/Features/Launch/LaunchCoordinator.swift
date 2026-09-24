@@ -141,7 +141,9 @@ enum LaunchCoordinator {
                     DispatchQueue.main.async {
                         guard let l = boundLauncher else { return }
                         if let session = sessionManager.session(for: l) {
-                            session.logs.append(logLine)
+                            // 走会话的唯一写入口：合并窗口内批量落地，
+                            // 避免 Forge/NeoForge 刷屏时逐行广播（见 GameSession.appendLogs 的说明）
+                            session.appendLog(logLine)
                         } else {
                             // session 尚未建立：暂存到 launcher，建立后 flush
                             l.pendingLogs.append(logLine)
