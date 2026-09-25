@@ -62,10 +62,24 @@ SL/
 ├── docs/                   # 架构与重构文档
 ├── scripts/                # 辅助脚本（Modrinth 目录爬虫等）
 ├── README.md
+├── HANDOVER.md             # 交接文档（接手者先读这个）
 ├── REFACTOR_PLAN.md
 ├── CHANGELOG.md            # 更新日志
 └── LICENSE
 ```
+
+## 文档导航
+
+| 想知道什么 | 看哪份 |
+|---|---|
+| **怎么上手、怎么验证、坑在哪** | **[`HANDOVER.md`](./HANDOVER.md)** ← 接手者从这里开始 |
+| 这是什么应用、功能状态 | `README.md`（本文） |
+| 重构的方向与分层原则 | `ARCHITECTURE.md` |
+| 重构计划与历史进度 | `REFACTOR_PLAN.md` |
+| 14 个模块的完成度盘点 | `docs/MODULE-INVENTORY.md` |
+| 测试怎么跑、覆盖了什么 | `qwqTests/TESTING.md` |
+| 每一轮改了什么、为什么 | `CHANGELOG.md` |
+| 哪些是桩实现 | `qwq/SLCore/STUBS_AUDIT.md` |
 
 ## 致谢与引用说明
 
