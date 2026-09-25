@@ -2,6 +2,66 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 处置一条并发隔离跟进项：把「主线程 ⇒ 在 MainActor 上」从隐藏假设变成有测试守着的显式假设（2026-09-25）
+
+**外部复核提出的问题**（明确标注不阻塞上一轮 P0）：`MemoryPressureBroadcaster.post` 用
+`Thread.isMainThread` 判断「是否已经在主 actor 上」，再决定同步调用还是 hop；
+而 Swift **并不保证**这两者等价 —— `MainActor.assumeIsolated` 校验的是**执行器**，不是线程。
+
+**先实测再决定改不改**（独立探针，`/tmp/iso-probe/probe.swift`、`probe2.swift`）：
+
+| 上下文 | 结果 |
+| --- | --- |
+| 与生产**同构**：`DispatchSource.makeTimerSource(queue: .main)` 的事件回调里调 `assumeIsolated` | **通过** |
+| 同一份探针从后台线程调 | **被拒绝**（`SIGTRAP`，退出码 133）→ 该检查真会拒绝错的环境，不是恒真 |
+| 「主线程但不在 MainActor 执行器上」能否构造出来 | 40000 个 `Task.detached` / 后台发起的非隔离任务里，落在主线程上的次数 **0** |
+
+**结论：不改成「永远 hop」**，理由是对称的两条：
+
+1. 保留同步送达换来一个**真实性质** —— 「裁 `CacheManager` + 清那 4 个缓存」落在同一个事件处理器里，
+   不被主 actor 上的其它活儿插到中间；而改成永远 hop 只是去规避一个本工具链下构造不出来的上下文，
+   代价与收益不成比例。
+2. 这条检查在**真实风险方向上是保守的**：若哪天有人把 `AppContext` 里 source 的 `queue` 改掉
+   （连 `queue: nil` 这种「官方未定义落到哪个队列」的写法也算），`Thread.isMainThread` 会变成 false
+   → 自动走 hop 路径（**更安全**），不会误走同步路径。即最可能的未来改动只会让它退化，不会让它变危险。
+
+于是改为**把假设写成显式契约并用测试钉住**：
+
+- `post` 的文档里写明该假设、上面三条实测证据、以及「假设一旦不成立，守它的用例会当场 trap 而不是静默出错」；
+- 文件头加指引，避免后人以为那是随手写的线程判断；
+- 新增 `testPostFromMainQueueDispatchSourceIsDelivered`：用**同构的 `queue: .main` dispatch source 回调**
+  复现生产发布点，钉住「在该上下文里发布同样送达」；
+- 写明**不要**与 `NoticeCenter.post`「顺手统一」—— 那边同步投递是**承重**的（先 `post` 后 `presentAndWait`
+  会顺序倒置 → 提示被当成"被顶替"直接应答，用户根本看不到），且已有专门的反证用例。
+
+**生命周期三问的答复**（复核里要求「补一个生命周期测试或至少验证」）：
+
+- `AppContext` 销毁后 source 是否取消：`deinit { memoryPressureSource?.cancel() }` 在；但
+  `AppContext.shared` 是**进程级单例** ⇒ `deinit` 实际永不执行，属防御性写法。
+- broadcaster 是否仍保留 handler：**是，且应当如此** —— 内存压力订阅是进程级的，不注销。
+  但「注销后不得继续持有」这一半补了测试：`testRemovedHandlerReleasesItsCaptures`
+  用哨兵对象 + `weak` 观察「注册期间被持有、注销后被释放」，作为闭包泄漏的回归守卫。
+- 有无 handler 反向保活 `AppContext` 的强引用链：**无**。引用关系是
+  `AppContext` →(强) `memoryPressureSource` →(强) 事件处理器 →(弱) `AppContext`（`[weak self]`），
+  且处理器不直接捕获局部变量 `source`；`MemoryCacheReclaimer` 注册的闭包不捕获任何实例。
+
+**顺带自查出并修掉的测试缺陷**：反向用例实测发现「摘掉同步分支」这一个原因会**连带打红 5 条用例** ——
+`testPostPreservesLevel` / `testPostReachesEveryRegisteredHandler` /
+`testReclaimerRegistrationClearsModrinthMemoryCache` / `testReclaimerRegistrationIsIdempotent` /
+`testPostWithoutHandlersDoesNotCrash` 都在 `post` 之后**不 await 就断言**，隐式依赖了同步性。
+已全部改成 `await` 送达后再断言，让「同步性」只由唯一一条具名用例守卫。另：
+`testReclaimerRegistrationIsIdempotent` 原先「连注册三次后看缓存还是不是被清掉」，
+**根本区分不出 1 个处理器和 3 个处理器**（等于没测幂等性），已改为比较
+`handlerCount` 的调用前后差值。
+
+**验证**：typecheck 两口径 **0 错误**（告警 46 / 24，口径二不变）；**BUILD SUCCEEDED**；
+**TEST EXECUTE SUCCEEDED，243 用例 / 0 失败 / 1 跳过**。反向用例（每条都实测、无连带）：
+
+| 破坏 | 变红用例 |
+| --- | --- |
+| 摘掉 `post` 的同步分支（改无条件 hop） | **精确 1 条**：`testPostOnMainThreadDeliversSynchronously` |
+| 摘掉 `remove` 的实现 + 摘掉 `register` 的幂等守卫 | **精确 4 条**：两个 `testRemovedHandler*`、`testPostWithoutHandlersDoesNotCrash`、`testReclaimerRegistrationIsIdempotent` |
+
 ## 修掉一处基础设施→UI 的反向依赖：`AppContext` 不再认识具体视图（2026-09-25）
 
 **问题**：`AppContext`（基础设施层）在系统内存压力事件里直接调 `DownloadCategoryView.clearStaticCaches()`

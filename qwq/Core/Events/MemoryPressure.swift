@@ -14,6 +14,8 @@
 //    订阅表用 `NSLock` 串行化；
 //  - 处理器类型是 `@MainActor`，因为订阅方要碰主 actor 隔离的静态缓存；
 //  - `post` 在主线程时**同步**调用处理器（见下方注释），后台线程则 hop 到主 actor。
+//    ⚠️ 同步分支依赖「主线程 ⇒ 当前就在 MainActor 执行器上」这一**运行时假设** ——
+//    它不是语言保证，理由、实测证据与守它的用例都写在 `post` 的注释里，改动前先读那段。
 //
 //  使用方：
 //  - 发布：`App/AppContext.swift`（内存压力 source 的事件处理器）；
@@ -74,8 +76,30 @@ nonisolated final class MemoryPressureBroadcaster: @unchecked Sendable {
     /// 发布一次内存压力事件。**处理器的调用顺序不保证**（订阅表是无序字典）。
     ///
     /// 主线程上**同步**调用：发布点（`AppContext` 的 dispatch source 跑在 `.main` 队列）本就在主线程，
-    /// 若一律 hop，`post` 会在下一次 runloop 才生效 —— 内存压力这类「越快越好」的响应没必要多等一轮。
-    /// 后台线程走 hop 路径，行为与主线程一致（只是异步到达）。
+    /// 若一律 hop，`post` 会在下一次 runloop 才生效 —— 内存压力这类「越快越好」的响应没必要多等一轮，
+    /// 而且同步完成能让「裁 CacheManager + 清 4 个缓存」这一批动作落在同一个事件处理器里、不被主 actor
+    /// 上的其它活儿插到中间。后台线程走 hop 路径，行为与主线程一致（只是异步到达）。
+    ///
+    /// ⚠️ **这里有一个必须写明的运行时假设**：`Thread.isMainThread == true` 不被 Swift 语言定义为
+    /// 「当前处于 MainActor 执行器上」，两者严格来说不等价；`MainActor.assumeIsolated` 校验的是后者。
+    /// 本工程接受该假设，理由是可核对的：
+    /// 1. **发布点的上下文与生产同构地实测过**（2026-09-25，独立探针）：在
+    ///    `DispatchSource.makeTimerSource(queue: .main)` 的事件回调里调 `assumeIsolated` **通过**；
+    ///    同一份探针从后台线程调则被拒绝（`SIGTRAP`，退出码 133）—— 说明该检查真的会拒绝错的环境，
+    ///    不是恒真。
+    /// 2. **「主线程但不在 MainActor 执行器上」这个上下文在本工具链下构造不出来**：40000 个
+    ///    `Task.detached` / 后台发起的非隔离任务，落在主线程上的次数为 **0**（协同线程池从不使用主线程）；
+    ///    而主 actor 的执行器就是主队列本身。
+    /// 3. **这条检查在真实风险方向上是保守的**：若哪天有人把 `AppContext` 里 source 的 `queue` 改掉，
+    ///    `Thread.isMainThread` 会变成 false → 自动走 else 的 hop 路径，而不是误走同步路径。
+    ///    即最可能的未来改动只会让它退化（更安全），不会让它变危险。
+    /// 4. `MemoryPressureTests.testPostFromMainQueueDispatchSourceIsDelivered` 用**同构的
+    ///    dispatch source 上下文**把这条假设钉住 —— 假设一旦不成立，那个用例会当场 trap/变红，
+    ///    而不是静默地错。
+    ///
+    /// 对照：`NoticeCenter.post` 里有结构相同的一段，**不要「顺手统一」**。那边的同步投递是**承重**的
+    /// （先 `post` 后 `presentAndWait` 会顺序倒置 → 提示被当成"被顶替"直接应答，用户看不到），
+    /// 且已有专门的反证用例；本处只是省一轮 runloop，取舍不同。
     func post(_ level: MemoryPressureLevel) {
         lock.lock()
         let snapshot = Array(handlers.values)
