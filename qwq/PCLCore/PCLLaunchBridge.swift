@@ -185,12 +185,9 @@ private func pclLaunchInternal(
             selectedJavaURL = jvm.executableURL
             log("通过 DataManager 自动选择 Java: \(jvm.executableURL.path) (major=\(jvm.version), callMethod=\(jvm.callMethod))")
         } else {
-            // 兜底：直接使用 JavaManager.selectBestJava（基于 LauncherSettings.availableJavaList）
-            var scanned = LauncherSettings.shared.availableJavaList
-            if scanned.isEmpty {
-                scanned = JavaManager.shared.scanInstalledJava(useCache: true)
-                DispatchQueue.main.async { LauncherSettings.shared.availableJavaList = scanned }
-            }
+            // 兜底：直接使用 JavaManager 的扫描结果，不再从设置兼容层读取
+            // Java 运行时状态。
+            let scanned = JavaManager.shared.scanInstalledJava(useCache: true)
             log("DataManager 未命中，回退 JavaManager 扫描列表 (count=\(scanned.count))")
             if let best = JavaManager.shared.selectBestJava(requiredMajor: minJavaVersion, from: scanned) {
                 selectedJavaURL = URL(fileURLWithPath: best.path)
@@ -201,10 +198,8 @@ private func pclLaunchInternal(
 
     guard let finalJavaURL = selectedJavaURL, fm.isExecutableFile(atPath: finalJavaURL.path) else {
         let available = DataManager.shared.javaVirtualMachines.map { "\($0.executableURL.path) (major=\($0.version), \($0.callMethod))" }
-        let scanned = LauncherSettings.shared.availableJavaList.map { "\($0.path) (major=\($0.majorVersion))" }
         log("未找到满足版本要求 (Java \(minJavaVersion)+) 的 Java 安装")
         log("DataManager JVMs: \(available.joined(separator: "; "))")
-        log("LauncherSettings list: \(scanned.joined(separator: "; "))")
         completion(nil, .failure(MyLocalizedError(reason: "未找到满足版本要求 (Java \(minJavaVersion)+) 的 Java 安装，请先在「Java 管理」中扫描或下载 Java。")))
         return
     }
