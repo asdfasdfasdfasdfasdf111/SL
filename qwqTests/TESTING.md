@@ -38,7 +38,7 @@
 | `HomeInteractionStateTests.swift` | HomeInteractionState | 纯视图级状态容器 |
 | `DropInstallCoordinatorTests.swift` | DropInstallCoordinator | 只覆盖分流与失败分支；成功安装分支见缺口 §4.5 |
 | `DownloadAdapterTests.swift` | DownloadSourceResolver / DefaultDownloadSourceResolver / NetDownloaderDownloadEngine / DefaultDownloadVerifier.checker | 经构造参数注入 resolver，`precheck` 跳过路径无需网络 |
-| `MemoryPressureTests.swift` | `Core/Events/MemoryPressure.swift`、`App/MemoryCacheReclaimer.swift` | 事件发布/订阅语义 + 「装配根确实注册过」；端到端验证内存压力真能清掉 `ModrinthCategoryCache` |
+| `MemoryPressureTests.swift` | `Core/Events/MemoryPressure.swift`、`App/MemoryCacheReclaimer.swift` | 事件发布/订阅语义 + 「装配根确实注册过」+ 生产同构的 dispatch source 上下文；端到端验证内存压力真能清掉 `ModrinthCategoryCache` |
 | `SkinDecoderTests.swift` | `DefaultSkinDecoder.supportedPixelSizes` 与 `SkinAvatarCropper.validateSkin` | 钉死「校验放行的尺寸必须真能被裁剪」这条一致性约束 |
 | `SkinPatchSupportTests.swift` | 皮肤补丁的尺寸分类 / 版本 id 拆分 / 加载器闸门 | 尺寸必须按整倍数判定，最易误放行的是 `128×32` |
 | `RealLaunchIntegrationTests.swift` | （见 §4.14，默认跳过）真实启动链路集成用例 | 拉起真实 Minecraft 进程，靠 `/tmp/sl-real-launch.enabled` 开关默认跳过 |
@@ -111,7 +111,7 @@ func preScan() {
   其余是生产代码里既有的 warning（未使用的局部变量、Swift 6 并发警告等），与测试无关。
 
 > ★ **2026-09-25 复核**（改用统一入口 `./scripts/typecheck.sh`，口径见该脚本头部注释）：
-> **22 个测试文件 / 241 个用例**；两口径均 **0 个 error**；
+> **22 个测试文件 / 243 个用例**；两口径均 **0 个 error**；
 > 告警 **口径一 46 / 口径二 24**（口径一 = 口径二 + 2×测试文件数，差值 22×2 = 44 正是单模块编译
 > 下每个测试文件那两条 `@testable import` 产物，属预期）。
 > ⚠️ 该脚本的**裸** `grep -c 'error:'`／`'warning:'` 会把 swiftc 打印的**源码上下文行**也算进去，
@@ -173,17 +173,34 @@ func preScan() {
 | `SkinDecoderTests.swift` | 9 | 真实断言（尺寸白名单与裁剪口径一致性） |
 | `SkinPatchSupportTests.swift` | 20 | 真实断言（尺寸分类 / 版本 id 拆分 / 加载器闸门） |
 | `GameScanGenerationTests.swift` | 3 | 真实断言（扫描代际；含「超时不作废结果」的回归守卫） |
-| `MemoryPressureTests.swift` | 9 | 真实断言（主线程同步送达 / 等级透传 / 注销 / 装配根注册 / 端到端清缓存） |
+| `MemoryPressureTests.swift` | 11 | 真实断言（主线程同步送达 / 等级透传 / 注销与闭包释放 / 生产同构的 dispatch source 上下文 / 装配根注册 / 幂等 / 端到端清缓存） |
 | `RealLaunchIntegrationTests.swift` | 1 | 默认跳过：真实拉起 Minecraft 进程验证启动链路健康（见 §4.14） |
-| **合计** | **241** | 其中 1 条默认跳过 |
+| **合计** | **243** | 其中 1 条默认跳过 |
 
-> 上表为 **2026-09-25** 实测口径（`Executed 241 tests, with 1 test skipped and 0 failures`）。
-> 历史：2026-09-24 为 218 条 / 18 个文件；此后新增 `DownloadSliceBudgetTests`、
-> `LaunchCancellationTests`、`MemoryPressureTests` 等文件，并给 `NoticeCenterTests` 补了同步投递用例。
-> ⚠️ **新增测试文件时必须一并更新本表与总数** —— 本表已漂移过两次（一次是「表里 14 个、实际 18 个」，
-> 一次是「表里 218、实际 241」）。核对命令：`./scripts/verify-test.sh run` 后 grep
-> `Executed [0-9]+ tests` 与各 `Test Suite 'XxxTests'` 的 `Executed` 行，
-> 或直接 `ls qwqTests/*.swift | wc -l` 校验文件数。
+> **本次实测口径（含提交锚点，便于复核）**
+>
+> ```text
+> Executed 243 tests, with 1 test skipped and 0 failures
+> Commit: e9ec2288b4ed48b812974c213861cb35a1ebc144（243 用例即该提交的内容）
+> Date:   2026-09-25
+> Branch: refactor/modular
+> ```
+>
+> **232 → 241 → 243 的来源逐条写明**（不要只更新总数）：
+>
+> - `218 → 232`：**不是新增用例，是本表漏记**。此前新增的 4 个文件的用例从未录入本表 ——
+>   `DownloadSliceBudgetTests` +6、`LaunchCancellationTests` +4、`GameLogRetentionTests` +3，
+>   加上 `NoticeCenterTests` 后来补的同步投递用例 +1 ⇒ 218 + 14 = **232**。
+> - `232 → 241`：新增 `MemoryPressureTests`（9 条）。
+> - `241 → 243`：`MemoryPressureTests` 再补 2 条 —— 生产同构的 dispatch source 上下文
+>   （`testPostFromMainQueueDispatchSourceIsDelivered`）与注销后闭包释放
+>   （`testRemovedHandlerReleasesItsCaptures`）。
+>
+> 历史：2026-09-24 为 218 条 / 18 个文件。⚠️ **新增测试文件时必须一并更新本表、总数与上表行** ——
+> 本表已漂移过两次（一次「表里 14 个、实际 18 个」，一次「表里 218、实际 232」）。
+> 核对命令：`ls qwqTests/*.swift | wc -l` 校验文件数，
+> `./scripts/verify-test.sh run` 后 grep `Executed [0-9]+ tests` 与各
+> `Test Suite 'XxxTests'` 的 `Executed` 行校验用例数。
 
 关于「非纯真实断言」的两处，均为无法消除的环境约束，已在对应文件注释中写明：
 
@@ -352,11 +369,34 @@ rm /tmp/sl-real-launch.enabled
 若在无法驱动 UI 的环境里（无辅助功能权限）需要跑一次启动，还有第三条路，见
 `REFACTOR_PLAN.md` §七：`SL_DEBUG_AUTO_LAUNCH=1`。
 
+### 4.15 安装进度的 NaN 显示（**原缺口，已闭合**）
+
+- 历史现象：空任务组（0/0）的总进度算出 `NaN`，下载详情页把它原样打印成字面量「**nan %**」。
+- 现状：**已由 `InstallTaskProgressTests` 覆盖**（`XCTAssertFalse(group.getProgress().isNaN)` 等），
+  同名两个 `getProgress()` 的边界口径一致。此处保留条目是为了让「§4 = 缺口登记簿」
+  能体现**已闭合**的历史缺口，不再计入待办。
+
+### 4.16 内存压力链路：有意接受的运行时假设（**非缺口，但必须登记**）
+
+- `MemoryPressureBroadcaster.post` 在 `Thread.isMainThread` 为真时**同步**调用处理器，
+  而 Swift 并不保证「主线程」等价于「在 MainActor 执行器上」（`assumeIsolated` 校验的是后者）。
+- **这是有意接受的假设，不是待修缺陷**。实测证据与取舍写在 `Core/Events/MemoryPressure.swift`
+  的 `post` 文档里，简述：生产发布点（`queue: .main` 的 dispatch source 回调）下 `assumeIsolated`
+  实测可用；后台线程会被正确拒绝（`SIGTRAP`）；「主线程但非 MainActor」这个上下文在本工具链下
+  构造不出来（40000 个非主 actor 任务落在主线程的次数为 0）；且若 source 的 `queue` 被改掉，
+  该检查会退化到更安全的 hop 路径。
+- **守它的用例**：`MemoryPressureTests.testPostFromMainQueueDispatchSourceIsDelivered`
+  （同构的 dispatch source 上下文）。假设一旦不成立，该用例会当场 trap，而不是静默出错。
+- **不能覆盖的部分**：`AppContext` 只有私有 init + `shared` 单例，实例化会建 3 个 URLSession、
+  1 个 ProcessPool 并启动一次磁盘清扫，故 `AppContext.init()` 里的 source 接线（含
+  「先赋值后 activate」的顺序）无法用用例驱动，只能靠读代码 + 真实运行覆盖；
+  `MemoryPressureTests` 末尾的「覆盖率缺口」注释里逐条记了原因。
+
 ## 五、必须遵守：用例一律写成 `async`（Xcode 26.2 隔离析构缺陷）
 
 **结论**：`qwqTests` 里**每个 `test…()` 方法都必须写成 `async`**。这不是为了等待什么，
-而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 **22** 个测试文件、**241** 个用例已全部统一
-（2026-09-25 实测：`Executed 241 tests, with 1 test skipped and 0 failures`；
+而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 **22** 个测试文件、**243** 个用例已全部统一
+（2026-09-25 实测：`Executed 243 tests, with 1 test skipped and 0 failures`；
 新增测试文件时请同步上面的数字）。
 
 ### 现象
