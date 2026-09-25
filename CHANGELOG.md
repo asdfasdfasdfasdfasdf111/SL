@@ -2,6 +2,62 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 给 `JavaResolverBridge` 补解析器注入点，并修掉一整批「假绿」用例（2026-09-25）
+
+**背景**：`JavaResolverBridgeTests.swift` 的注释里自己写着一条缺口 ——「`JavaResolverBridge` 内部直接构造
+`DefaultJavaResolver()`，没有 resolver 注入点，无法构造 `JavaResolutionError.scanFailed` /
+`.noCompatibleVersion` 的确定性场景，只能覆盖『超时 → nil』」。本轮补上这个注入点，结果发现问题比注释写的更重。
+
+**发现（比预想严重）**：那 8 条用例**并不能证明它们声称测的东西**。
+
+`resolveSynchronously` 的第一条分支是 `if Thread.isMainThread { return nil }`（避免 8 秒信号量等待冻结 UI）；
+而本工程测试 target 开了 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`，`XCTestCase` 的 async 用例体就跑在主线程上。
+两者相遇 ⇒ 用例里直接调用这个桥接，**被测行为会被早退分支整体短路**：
+
+| 原用例 | 真实情况 |
+| --- | --- |
+| 6 条用 `timeout: 0` / 负数 / `0.001` 的 | 主线程早退先返回，`semaphore.wait` 从未执行 ⇒「超时保护」从未被验证；且 `timeout: 0` 本身就意味着内部任务还没被调度，即使不在主线程也测不到 |
+| `testRepeatedTimeoutCallsReturnPromptly` | 5 次调用全走早退 ⇒「秒级返回」恒真，与超时是否生效无关 |
+| `testNonNilResultIsAnExistingLocalFile` | 主线程调用结果**恒为 nil** ⇒ `if let url` 整段是**死代码**，是彻底的假绿 |
+| `testConcurrentCallsReturnNilWithoutDeadlock` | `concurrentPerform` 有部分迭代确实跑到真实超时路径，但断言「都返回 nil」在 `timeout: 0` 下无区分力 |
+
+**改法**（本轮的实质）：
+
+1. **加注入点**：`resolveSynchronously(…, makeResolver: @escaping @MainActor @Sendable () -> any JavaResolver = { DefaultJavaResolver() })`。
+   默认值即生产路径，行为零变化；测试注入替身即可确定性地构造「命中」与「未命中」。
+   参数标 `@MainActor` 是因为 `DefaultJavaResolver` 在默认隔离下被推断为主 actor 隔离、只能在主 actor 上构造；
+   标 `@escaping` 是因为它被逃逸的 `Task.detached` 闭包捕获。
+2. **把「调用线程」变成必须显式选择的东西**，这是修掉假绿的关键：
+   - `callOffMainThread(_:)` —— 在 `Task.detached` 里调用，走真实解析路径。**所有关于解析结果/超时的断言都必须用它。**
+   - `callOnMainThread(_:)` —— 在 `MainActor.run` 里调用，用于断言「主线程早退」这条性质本身。
+   两者配对（同一份「必定成功」的解析器，唯一变量是线程），才能做到「一条失败只指向一个性质」。
+3. **把前提本身钉成断言**（`testThreadPremisesHold`）：确认 `MainActor.run` 内是主线程、`Task.detached` 内不是。
+   若将来有人改掉调用方式，前提会立刻变红，而不是悄悄退回「所有断言都因为主线程返回 nil 而变绿」。
+4. 用例 8 条 → 12 条：新增命中透传、`minimumMajor` 钳制与 `Int.max`/`mcVersion`/`remarks` 透传（这三条过去**根本无法断言**，
+   只能退而断言「不崩溃」）、真实等待到超时（带 `≥ 0.25s` 下界，证明走的是超时路径而非别的原因提前返回）、
+   三条解析未命中原因逐条吞掉、失败**立刻返回**而不是耗满 timeout、并发不串扰（断言每次拿到**自己的**结果）。
+
+**为什么测试不跑一次「真实默认解析器」**：`DefaultJavaRepository.save` 会调
+`JavaManager.shared.saveCachedJavaPath`，即**写入真实用户设置**。让测试驱动真实扫描等于在测试里改用户数据，
+故一律用替身；代价（默认工厂那一行只在评审层面被守住）已写进测试文件的「覆盖率缺口」。
+
+**反向验证**（两个破坏点，各自精确只红 1 条）：
+
+| 破坏点 | 结果 |
+| --- | --- |
+| 摘掉主线程早退分支 | **恰好 1 条失败**：`testMainThreadCallReturnsNilWithoutTouchingResolver`，报「主线程调用耗时 10.001s，说明早退分支没生效」。顺带实测到一个副作用：主 actor 被信号量阻塞后，内部 `Task.detached` 的 `MainActor.run` 拿不到主 actor ⇒ 只能等满 timeout —— 这正是早退分支必须放在最前面的实证 |
+| 摘掉 `max(0, minimumMajor)` 钳制 | **恰好 1 条失败**：`testMinimumMajorIsClampedBeforeReachingResolver`（同一条用例内 -5 与 `Int.min` 两个断言行） |
+
+**验证**：typecheck 两口径 **0 错误**，且告警集合与 `HEAD` **逐条一致**（46 / 24，零新增零消失 —— 这条是必须做的，
+因为「改动引入新告警」本身就是改动不成立的信号）；`verify-build.sh` **BUILD SUCCEEDED**；
+`verify-test.sh run` **`Executed 248 tests, with 1 test skipped and 0 failures`**（244 → 248），
+`pointer being freed` / `Restarting after unexpected exit` 两个计数均为 **0**。
+
+**顺带记录一条工具链盲区**（本轮实际踩到）：`swiftc -typecheck` 对
+`escaping closure captures non-escaping parameter` **完全静默**（5 行最小复现：给函数加闭包参数、
+在 `Task.detached` 里调用它），两口径 0 错误、真实编译报 1 error。这与已知的「SILGen 阶段才报的初始化违规」
+是**两个不同**的触发类；共同结论是：**加注入点这类改动必须跑真实编译**。
+
 ## 拆分 `SLCore/Stubs.swift`：按职责拆成 7 个文件（纯搬家，零行为变更，2026-09-25）
 
 **背景**：`qwq/SLCore/Stubs.swift`（387 行）是一份历史遗留的「杂物袋」—— 文件名说它是桩，

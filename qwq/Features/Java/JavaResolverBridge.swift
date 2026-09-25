@@ -33,6 +33,17 @@ nonisolated enum JavaResolverBridge {
     ///   - minimumMajor: 最低 Java 主版本要求（0 表示不限制）
     ///   - mcVersion: Minecraft 版本号，仅用于日志追溯
     ///   - timeout: 等待上限；超时即放弃，避免阻塞应用启动
+    ///   - makeResolver: 解析器工厂。默认 `{ DefaultJavaResolver() }`，即生产路径；
+    ///     测试注入固定行为的解析器／仓储，才能确定性地覆盖「解析失败 → nil」。
+    ///
+    ///     **为什么参数类型带 `@MainActor`**：`DefaultJavaResolver` 在本工程的默认隔离设置下被推断为
+    ///     主 actor 隔离，只能在主 actor 上构造。把工厂标成 `@MainActor` 后，它既能在下方既有的
+    ///     `MainActor.run` 里被调用，又不要求本函数本身改成 async/隔离——沿用原有做法，不新增约束。
+    ///     工厂值本身是 `@Sendable` 的，因此可以安全地跨进 `Task.detached`。
+    ///     必须标 `@escaping`：它会被下面的 `Task.detached` 闭包捕获，而那个闭包是逃逸的。
+    ///     （`@MainActor` 只约束「在哪个 actor 上调用」，不改变逃逸性；漏标 `@escaping` 的后果是
+    ///     `escaping closure captures non-escaping parameter` —— 注意这条**类型检查层看不到**，
+    ///     只有真实编译会报，见 `scripts/verify-build.sh` 的必要性说明。）
     /// - Returns: 可用 Java 的可执行文件路径；解析失败、超时或主线程调用时返回 nil
     ///
     /// 为什么不能在这里「同步等待异步」：
@@ -47,10 +58,15 @@ nonisolated enum JavaResolverBridge {
     /// 远高于「本次 Java 解析未命中」的代价。因此检测到主线程时**不启动解析、不阻塞、不留游离任务**，
     /// 立即返回 `nil`，交由调用方回退既有链路（缓存 Java → DataManager → JavaManager 三级兜底）。
     /// 这不构成行为退化：本桥接是优先路径而非唯一路径，返回 `nil` 本来就是它既有的失败语义。
+    ///
+    /// ⚠️ 这条早退分支的**优先级高于一切**：主线程调用时，即使注入的解析器一定能成功，也照样返回 `nil`。
+    /// 因此**测试必须区分线程**：断言「解析结果」的用例都要在非主线程上调用（见 `JavaResolverBridgeTests`
+    /// 的 `callOffMainThread`），否则所有断言都变成「nil 是因为主线程」，看不出任何被测行为。
     nonisolated static func resolveSynchronously(
         minimumMajor: Int,
         mcVersion: String?,
-        timeout: TimeInterval = 8
+        timeout: TimeInterval = 8,
+        makeResolver: @escaping @MainActor @Sendable () -> any JavaResolver = { DefaultJavaResolver() }
     ) -> URL? {
         // 主线程一律不阻塞：既不等待，也不留下无人回收的后台任务。
         if Thread.isMainThread {
@@ -72,12 +88,15 @@ nonisolated enum JavaResolverBridge {
             // Swift 6 语言模式下为错误）。两个值都是纯数据/无状态对象，这里改到后台任务内
             // 通过 `await MainActor.run` 异步构造：既是官方允许的跨 actor 访问形态，
             // 也只是一次不阻塞任何线程的跳转（`await` 挂起的是任务，不是线程）。
+            //
+            // 解析器改为经 `makeResolver` 构造（默认仍是 `DefaultJavaResolver()`），
+            // 于是「在主 actor 上构造」这条约束对它同样成立——这也是工厂必须标 `@MainActor` 的原因。
             let (requirement, resolver) = await MainActor.run {
                 (JavaRequirement(
                     minimumMajor: max(0, minimumMajor),
                     mcVersion: mcVersion,
                     remarks: "SLLaunchBridge 同步桥接"
-                ), DefaultJavaResolver())
+                ), makeResolver())
             }
 
             do {

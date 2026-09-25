@@ -4,6 +4,8 @@
 //
 //  历史：本文件原属 `SLCore/Stubs.swift`。字段的引用情况已在下文逐个标明 ——
 //  保留它的原因是**三个字段都有读取方**，而不是「看起来像桩就删掉」。
+//  注意「有读取方」不等于「已可编辑」：其中 `currentMinecraftDirectory` **当前只有读取方、没有写入方**
+//  （实际恒为 `.default`），详见下方逐字段说明与 `SLCore/STUBS_AUDIT.md` §5.4。
 //
 //  职责：`DownloadSourceOption` 枚举与持有它的 `AppSettings` 单例。
 //  边界：**不是设置界面的数据源**。个性化页的偏好由 `Features/Settings/` 下的存储承担；

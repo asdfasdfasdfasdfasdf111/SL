@@ -1038,9 +1038,16 @@ XCTest 用例方法默认在主线程执行，因此新增的主线程判断生�
 
 ### 8.6 待办：测试侧（本次**不**实施）
 
-- [ ] **把 `JavaResolverBridgeTests` 的超时用例改为不在主线程运行**
+- [x] ~~**把 `JavaResolverBridgeTests` 的超时用例改为不在主线程运行**~~
   （例如放进后台队列或用 `async` 用例），使其继续覆盖「超时 → nil」与「非 nil 结果必为本机文件」
   两条路径；否则主线程判断会把这批用例变成同一条分支的重复断言。
+  → **2026-09-25 已实施，且原判断「会变成同一条分支的重复断言」被实测证实为偏轻**：
+  实际上那 8 条里有 6 条**连一条分支都没覆盖到**（早退分支先返回，`semaphore.wait` 从未执行），
+  `testNonNilResultIsAnExistingLocalFile` 的结果恒为 nil、断言体是死代码。
+  做法：加 `makeResolver` 注入点 + 把调用线程变成显式选择的两个入口
+ （`callOffMainThread` 走真实路径 / `callOnMainThread` 专测早退分支），并把两个线程前提钉成断言。
+  用例 8 → 12，全量 244 → 248。反向验证：摘掉早退分支 / 摘掉 `minimumMajor` 钳制各**精确只红 1 条**。
+  详见 `qwqTests/TESTING.md` §4.3。
 - [ ] 为 `ManagedProcess.waitForTermination()` 补一条**已结束进程**的用例：
   构造一个立即退出的 `Process`，断言 `waitForTermination()` 能返回而**不永久挂起**
   ——这正是 §2.1 修复所保护的行为（当前 `ManagedProcess` 直接持有 `Process`、无注入点，

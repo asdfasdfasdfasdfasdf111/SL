@@ -31,7 +31,7 @@
 | `GameLogRetentionTests.swift` | `Features/Launch/GameSession.swift` 的 `dropCount(forCount:)` 与 `maxLogLines` | 日志合并窗口 + 上限裁剪的边界 |
 | `GameScanGenerationTests.swift` | `Features/Game/ViewModels/GameCategoryViewModel.swift` | 扫描代际；含「超时不作废结果」的回归守卫 |
 | `ModuleRegistryTests.swift` | SLModule / ModuleContext / ModuleRegistry / ModuleCapabilityKey | 用 `SLModule` 替身，不触发真实模块副作用 |
-| `JavaResolverBridgeTests.swift` | JavaResolverBridge | 只覆盖超时/边界；无 resolver 注入点，见缺口 §4.3 |
+| `JavaResolverBridgeTests.swift` | JavaResolverBridge | 2026-09-25 起经 `makeResolver` 注入 resolver 替身；**并且所有断言都在非主线程上调用**（否则会被「主线程直接返回 nil」的早退分支整体短路 —— 这正是重写前那 8 条用例的假绿成因，见 §4.3） |
 | `NoticeCenterTests.swift` | NoticeCenter / Notice / NoticeLevel / NoticeButton | MainActor 单例，用例内复位承载者状态 |
 | `NavigationStateTests.swift` | NavigationState | 断言已复位 `DownloadDetailManager.shared` |
 | `LaunchPanelStateTests.swift` | LaunchPanelState | 断言已复位 `LauncherSettings` 四个内存字段 |
@@ -111,7 +111,7 @@ func preScan() {
   其余是生产代码里既有的 warning（未使用的局部变量、Swift 6 并发警告等），与测试无关。
 
 > ★ **2026-09-25 复核**（改用统一入口 `./scripts/typecheck.sh`，口径见该脚本头部注释）：
-> **22 个测试文件 / 244 个用例**；两口径均 **0 个 error**；
+> **22 个测试文件 / 248 个用例**；两口径均 **0 个 error**；
 > 告警 **口径一 46 / 口径二 24**（口径一 = 口径二 + 2×测试文件数，差值 22×2 = 44 正是单模块编译
 > 下每个测试文件那两条 `@testable import` 产物，属预期）。
 > ⚠️ 该脚本的**裸** `grep -c 'error:'`／`'warning:'` 会把 swiftc 打印的**源码上下文行**也算进去，
@@ -163,7 +163,7 @@ func preScan() {
 | `DownloadStateTests.swift` | 10 | 真实断言（纯值类型） |
 | `LaunchStateTests.swift` | 9 | 真实断言（纯值类型） |
 | `ModuleRegistryTests.swift` | 13 | 真实断言（`SLModule` 替身 + 真实 `AppModuleBootstrap`） |
-| `JavaResolverBridgeTests.swift` | 8 | **部分为条件断言**，见下方说明 |
+| `JavaResolverBridgeTests.swift` | 12 | 真实断言（注入 resolver 替身；调用线程显式选择：非主线程走真实路径、主线程专测早退分支） |
 | `NoticeCenterTests.swift` | 22 | 真实断言 |
 | `NavigationStateTests.swift` | 16 | 真实断言 |
 | `LaunchPanelStateTests.swift` | 11 | 真实断言 |
@@ -179,18 +179,18 @@ func preScan() {
 | `GameScanGenerationTests.swift` | 3 | 真实断言（扫描代际；含「超时不作废结果」的回归守卫） |
 | `MemoryPressureTests.swift` | 12 | 真实断言（主线程同步送达 / 等级透传 / 注销与闭包释放 / 生产同构的 dispatch source 上下文 / 装配根接线（§4.17）/ 首次注册 +1 与重复注册 +0 / 端到端清缓存） |
 | `RealLaunchIntegrationTests.swift` | 1 | 默认跳过：真实拉起 Minecraft 进程验证启动链路健康（见 §4.14） |
-| **合计** | **244** | 其中 1 条默认跳过 |
+| **合计** | **248** | 其中 1 条默认跳过 |
 
 > **本次实测口径（含提交锚点，便于复核）**
 >
 > ```text
-> Executed 244 tests, with 1 test skipped and 0 failures
-> Commit: 88fc537ea77ef5b141295fa9ee23c305dae09460（244 用例即该提交的内容）
+> Executed 248 tests, with 1 test skipped and 0 failures
+> Commit: 见本轮「补 JavaResolverBridge 注入点」提交（248 用例即该提交的内容）
 > Date:   2026-09-25
 > Branch: refactor/modular
 > ```
 >
-> **232 → 241 → 243 → 244 的来源逐条写明**（不要只更新总数）：
+> **232 → 241 → 243 → 244 → 248 的来源逐条写明**（不要只更新总数）：
 >
 > - `218 → 232`：**不是新增用例，是本表漏记**。此前新增的 4 个文件的用例从未录入本表 ——
 >   `DownloadSliceBudgetTests` +6、`LaunchCancellationTests` +4、`GameLogRetentionTests` +3，
@@ -201,6 +201,10 @@ func preScan() {
 >   （`testRemovedHandlerReleasesItsCaptures`）。
 > - `243 → 244`：把幂等用例拆成两条（`testFirstRegisterAddsExactlyOneHandler` +
 >   `testRepeatedRegisterAddsNoHandler`），用例数 +1 —— 拆分理由见 §4.17。
+> - `244 → 248`：`JavaResolverBridgeTests` **重写**（8 条 → 12 条，净 +4）。原 8 条里的 6 条因「主线程早退分支」
+>   短路而从未执行到真实路径（详见 §4.3），重写后全部改为显式选择调用线程 + 注入 resolver 替身。
+>   新增的 4 条净增覆盖：命中透传、`minimumMajor` 钳制与 `Int.max`/`mcVersion`/`remarks` 透传、
+>   三条解析失败原因逐条吞掉 + 失败立刻返回（不耗满 timeout）、并发不串扰（断言每次拿到自己的结果）。
 >
 > 历史：2026-09-24 为 218 条 / 18 个文件。⚠️ **新增测试文件时必须一并更新本表、总数与上表行** ——
 > 本表已漂移过两次（一次「表里 14 个、实际 18 个」，一次「表里 218、实际 232」）。
@@ -208,14 +212,13 @@ func preScan() {
 > `./scripts/verify-test.sh run` 后 grep `Executed [0-9]+ tests` 与各
 > `Test Suite 'XxxTests'` 的 `Executed` 行校验用例数。
 
-关于「非纯真实断言」的两处，均为无法消除的环境约束，已在对应文件注释中写明：
+关于「非纯真实断言」的**一处**（原为两处，第一处已于 2026-09-25 消除），已在对应文件注释中写明：
 
-1. `JavaResolverBridgeTests.testNonNilResultIsAnExistingLocalFile` 是**条件断言**：
-   桥接层内部硬编码 `DefaultJavaResolver()`，没有 resolver 注入点，
-   「解析成功」与「解析失败」无法与本机是否装有 Java 解耦，因此断言写成
-   `if let url = result { 断言它必须是真实存在的本地文件 }`；结果为 nil 时不做断言。
-   其余 7 条（timeout=0 / 极小 / 负数超时、超时耗时有上界、`minimumMajor` 取 `Int.min`/`Int.max`、
-   `mcVersion` 为 nil/空串、并发不死锁）都是确定性的真实断言。
+1. ~~`JavaResolverBridgeTests` 的「解析成功」分支依赖本机是否装有 Java~~ —— **已于 2026-09-25 消除**。
+   原 `testNonNilResultIsAnExistingLocalFile` 是条件断言（`if let url = result { … }`，为 nil 时不断言）。
+   根因比注释写的更重：那次调用在**主线程**上，结果**恒为 nil**，`if let` 的整段其实是**死代码**。
+   加 `makeResolver` 注入点 + 把调用移到非主线程后，命中分支由替身确定性驱动，
+   该条已替换为无条件的 `testNonNilResultIsAFileURLWithNonEmptyPath`。详见 §4.3。
 2. `DownloadAdapterTests` 中涉及引擎终态的用例依赖 `NetDownloaderDownloadEngine` 的
    `precheck` 分支（目标文件已存在且无校验要求 → `.skip`），因此**不触网**即可稳定得到
    `completed`；失败终态则用 `replaceMethod = .throw` + 已存在目标文件构造
@@ -255,14 +258,35 @@ func preScan() {
   断言 `legacyFailureReason` 保留原始文本、`.failed` 为 `.httpStatus(404)`（两者文案不同，
   正是该接口存在的理由）。
 
-### 4.3 `JavaResolverBridge` 的「解析失败（非超时）」确定性覆盖
+### 4.3 `JavaResolverBridge` 的「解析失败（非超时）」确定性覆盖 —— **已于 2026-09-25 完成**
 
-- 现状：只覆盖了「超时 → nil」（`timeout <= 0` 的确定性分支）与边界输入。
-- 未覆盖：`JavaResolutionError.scanFailed` / `.noCompatibleVersion` / `.notFound`
-  三条失败原因返回 nil 的正向断言——实现内部硬编码 `DefaultJavaResolver()`，
-  失败与超时都表现为 nil，无法区分。
-- 计划：把 resolver 提为可注入参数（`resolver: JavaResolver = DefaultJavaResolver()`），
-  再用「必抛错的 fake」+ 小 timeout 断言「返回 nil 且耗时远小于 timeout」。
+- **结论**：注入点已加（`makeResolver`，默认值 `{ DefaultJavaResolver() }` 即生产路径），
+  `scanFailed` / `noCompatibleVersion` / `notFound` 三条原因现在都有确定性断言。
+- **但真正的问题比「缺注入点」严重得多**：原 8 条用例里 6 条用 `timeout: 0`（或负数）**在主线程**调用，
+  而 `resolveSynchronously` 的第一条分支就是 `if Thread.isMainThread { return nil }`
+  （避免 8 秒信号量等待冻结 UI）。测试 target 开了 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`，
+  async 用例体就跑在主线程上 ⇒ **早退分支先返回，`semaphore.wait` 从未执行**：
+  - 那 6 条声称覆盖的「超时即放弃」**从未被验证**（且 `timeout: 0` 本身意味着内部任务还没被调度，
+    即使不在主线程也测不到）；
+  - `testNonNilResultIsAnExistingLocalFile` 结果恒为 nil，断言体是**死代码**；
+  - `testConcurrentCallsReturnNilWithoutDeadlock` 有部分迭代确实走到真实超时路径，但断言无区分力。
+- **修法**：把「调用线程」变成必须显式选择的两个入口 —— `callOffMainThread`（`Task.detached`，走真实路径）
+  与 `callOnMainThread`（`MainActor.run`，专测早退分支）；并把「`MainActor.run` 内是主线程 /
+  `Task.detached` 内不是」这两个前提本身钉成断言（`testThreadPremisesHold`），防止将来悄悄退回假绿。
+- **反向验证**（各精确只红 1 条）：摘掉主线程早退分支 → 只红 `testMainThreadCallReturnsNilWithoutTouchingResolver`
+  （耗时 10.001s；副作用实证：主 actor 被信号量阻塞后内部 `MainActor.run` 拿不到主 actor，
+  只能等满 timeout —— 这正是早退分支必须放最前的原因）；摘掉 `max(0, minimumMajor)` →
+  只红 `testMinimumMajorIsClampedBeforeReachingResolver`。
+- **代价 / 剩余缺口**：不驱动真实默认解析器，因为 `DefaultJavaRepository.save` 会写入
+  `JavaManager.shared.saveCachedJavaPath`，即**真实用户设置**（在测试里改用户数据不可接受）。
+  因此 `{ DefaultJavaResolver() }` 这一行只在评审层面被守住。
+
+### 4.3.1 一条工具链盲区（本轮实际踩到，别再重复推导）
+
+`swiftc -typecheck` 对 **`escaping closure captures non-escaping parameter`** 完全静默：
+给函数加闭包参数（为可测性加注入点时的常规动作），并在 `Task.detached` 里调用它、忘记 `@escaping`，
+则**两口径 0 错误**，而 `xcodebuild build` 报 1 error。5 行最小复现见技能 `xcodebuild-in-sandbox`
+的「真实编译 ≠ 类型检查」第 6 条。注意 `@MainActor` / `@Sendable` 都**不改变逃逸性**，三者要分别标。
 
 ### 4.4 `DefaultDownloadSourceResolver` 的镜像（自动切换）方向
 
@@ -422,8 +446,8 @@ rm /tmp/sl-real-launch.enabled
 ## 五、必须遵守：用例一律写成 `async`（Xcode 26.2 隔离析构缺陷）
 
 **结论**：`qwqTests` 里**每个 `test…()` 方法都必须写成 `async`**。这不是为了等待什么，
-而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 **22** 个测试文件、**244** 个用例已全部统一
-（2026-09-25 实测：`Executed 244 tests, with 1 test skipped and 0 failures`；
+而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 **22** 个测试文件、**248** 个用例已全部统一
+（2026-09-25 实测：`Executed 248 tests, with 1 test skipped and 0 failures`；
 新增测试文件时请同步上面的数字）。
 
 ### 现象
