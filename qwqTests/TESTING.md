@@ -186,6 +186,7 @@ func preScan() {
 > ```text
 > Executed 254 tests, with 1 test skipped and 0 failures
 > ** TEST EXECUTE SUCCEEDED **
+> Commit: d9b4f3c77f290a5c1ad32c0aec5bff8947c043f2（254 用例即该提交的内容）
 > Date:   2026-09-25
 > Branch: refactor/modular
 > ```
