@@ -36,7 +36,7 @@
 | `NavigationStateTests.swift` | NavigationState | 断言已复位 `DownloadDetailManager.shared` |
 | `LaunchPanelStateTests.swift` | LaunchPanelState | 断言已复位 `LauncherSettings` 四个内存字段 |
 | `HomeInteractionStateTests.swift` | HomeInteractionState | 纯视图级状态容器 |
-| `DropInstallCoordinatorTests.swift` | DropInstallCoordinator | 只覆盖分流与失败分支；成功安装分支见缺口 §4.5 |
+| `DropInstallCoordinatorTests.swift` | DropInstallCoordinator | 分流与失败分支 + **成功安装分支**（经构造注入点把版本检测/实例匹配替换成替身，实例指向临时目录，断言文件真的落到 `versions/<版本>/mods`） |
 | `DownloadAdapterTests.swift` | DownloadSourceResolver / DefaultDownloadSourceResolver / NetDownloaderDownloadEngine / DefaultDownloadVerifier.checker | 经构造参数注入 resolver，`precheck` 跳过路径无需网络 |
 | `MemoryPressureTests.swift` | `Core/Events/MemoryPressure.swift`、`App/MemoryCacheReclaimer.swift`、`App/AppCompositionRoot.swift` | 事件发布/订阅语义 + 「装配根确实跑过」（断言 `AppCompositionRoot.didRegisterRuntimeServices`，见 §4.17）+ 生产同构的 dispatch source 上下文；端到端验证内存压力真能清掉 `ModrinthCategoryCache` |
 | `SkinDecoderTests.swift` | `DefaultSkinDecoder.supportedPixelSizes` 与 `SkinAvatarCropper.validateSkin` | 钉死「校验放行的尺寸必须真能被裁剪」这条一致性约束 |
@@ -168,7 +168,7 @@ func preScan() {
 | `NavigationStateTests.swift` | 16 | 真实断言 |
 | `LaunchPanelStateTests.swift` | 11 | 真实断言 |
 | `HomeInteractionStateTests.swift` | 5 | 真实断言 |
-| `DropInstallCoordinatorTests.swift` | 16 | 真实断言（失败/分流分支） |
+| `DropInstallCoordinatorTests.swift` | 22 | 真实断言（分流/失败分支 + 成功安装路径：注入替身 + 临时目录，断言文件真的落到 `versions/<版本>/mods`） |
 | `DownloadAdapterTests.swift` | 25 | 真实断言（注入 resolver + `precheck` 跳过路径） |
 | `DownloadSliceBudgetTests.swift` | 6 | 真实断言（纯函数：超时预算的缩放与上下界） |
 | `InstallTaskProgressTests.swift` | 5 | 真实断言（进度边界口径，含任务组空集合的 NaN 防护） |
@@ -179,18 +179,26 @@ func preScan() {
 | `GameScanGenerationTests.swift` | 3 | 真实断言（扫描代际；含「超时不作废结果」的回归守卫） |
 | `MemoryPressureTests.swift` | 12 | 真实断言（主线程同步送达 / 等级透传 / 注销与闭包释放 / 生产同构的 dispatch source 上下文 / 装配根接线（§4.17）/ 首次注册 +1 与重复注册 +0 / 端到端清缓存） |
 | `RealLaunchIntegrationTests.swift` | 1 | 默认跳过：真实拉起 Minecraft 进程验证启动链路健康（见 §4.14） |
-| **合计** | **248** | 其中 1 条默认跳过 |
+| **合计** | **254** | 其中 1 条默认跳过 |
 
 > **本次实测口径（含提交锚点，便于复核）**
 >
 > ```text
-> Executed 248 tests, with 1 test skipped and 0 failures
-> Commit: 27e20fff1c42c792cb8cdc569ae1659f3c5b8462（248 用例即该提交的内容）
+> Executed 254 tests, with 1 test skipped and 0 failures
+> ** TEST EXECUTE SUCCEEDED **
 > Date:   2026-09-25
 > Branch: refactor/modular
 > ```
 >
-> **232 → 241 → 243 → 244 → 248 的来源逐条写明**（不要只更新总数）：
+> ⚠️ **这道门是概率性的**（2026-09-25 实测，详见 §五末）：套件约 **1/4** 概率在
+> `LaunchCancellationTests.testUncancelledTokenPassesEntryGate` 处 **abort**
+> （`pointer being freed was not allocated`，即 §五 那条工具链缺陷的另一个触发面，**真实启动路径**
+> 里析构 `MinecraftInstance` / `MinecraftDirectory` 时踩到）。**HEAD 上同样会崩**
+> （只跑「DropInstallCoordinatorTests + LaunchCancellationTests」两套、各 4 次：工作区 3 通 1 崩、
+> HEAD 3 通 1 崩）⇒ **abort 本身不能作为「代码有问题」的判据，要定性必须用同一命令在 HEAD 上对照跑。**
+> 复现方式：`SL_DERIVED=/tmp/<新目录> ./scripts/verify-test.sh run`，abort 后换全新派生目录重试。
+>
+> **232 → 241 → 243 → 244 → 248 → 254 的来源逐条写明**（不要只更新总数）：
 >
 > - `218 → 232`：**不是新增用例，是本表漏记**。此前新增的 4 个文件的用例从未录入本表 ——
 >   `DownloadSliceBudgetTests` +6、`LaunchCancellationTests` +4、`GameLogRetentionTests` +3，
@@ -205,6 +213,10 @@ func preScan() {
 >   短路而从未执行到真实路径（详见 §4.3），重写后全部改为显式选择调用线程 + 注入 resolver 替身。
 >   新增的 4 条净增覆盖：命中透传、`minimumMajor` 钳制与 `Int.max`/`mcVersion`/`remarks` 透传、
 >   三条解析失败原因逐条吞掉 + 失败立刻返回（不耗满 timeout）、并发不串扰（断言每次拿到自己的结果）。
+> - `248 → 254`：`DropInstallCoordinatorTests` 补**成功安装路径**（16 条 → 22 条，净 +6）：
+>   进弹窗（成功分支）、无匹配实例只报错、一批 jar 后写覆盖暂存目标（确认时装的的确是暂存那个）、
+>   确认安装后文件落到每个实例的 `versions/<版本>/mods` + 成功气泡、部分失败（warning 横幅 + 可写实例照常装上）、
+>   全部失败（error 横幅列出每个原因）。驱动方式与「为什么不去驱动真实 `findInstances`」见 §4.5。
 >
 > 历史：2026-09-24 为 218 条 / 18 个文件。⚠️ **新增测试文件时必须一并更新本表、总数与上表行** ——
 > 本表已漂移过两次（一次「表里 14 个、实际 18 个」，一次「表里 218、实际 232」）。
@@ -303,17 +315,29 @@ func preScan() {
 - 已覆盖的单源一侧：非官方域名、手动限定「仅官方 / 仅镜像」、无 host 的本地路径，
   均断言只返回一个候选。
 
-### 4.5 `DropInstallCoordinator` 的成功安装分支
+### 4.5 `DropInstallCoordinator` 的成功安装分支（2026-09-25 已覆盖）
 
-- 未覆盖：
-  - `beginModInstall` 的成功分支（`ModVersionDetector.detectVersion` 返回结果 +
-    `ModDragInstaller.findInstances` 命中实例 → 打开模组弹窗）；
-  - `confirmModInstall` 的成功分支（会真实拷贝文件到 `versions/<v>/mods`）；
-  - `confirmModpackInstall` 的成功分支（`ModpackInstaller().install` 真实解压）。
-- 阻塞原因：`versionDetector` / `settings` 是硬编码私有依赖，`ModDragInstaller` /
-  `ModpackInstaller` 无注入点；成功后投递的用户文案
-  「模组已安装到 N 个实例」「整合包安装完成」「整合包安装失败: …」因此仍不受保护。
-- 计划：把三者抽成协议并在 `DropInstallCoordinator` 构造时注入。
+- **已覆盖**（`DropInstallCoordinatorTests`，+6 条）：`beginModInstall` 成功分支（版本能识别 + 匹配到实例
+  → 打开弹窗并暂存）、`confirmModInstall` 的成功分支（文件真的落到每个实例的 `versions/<版本>/mods`，
+  逐字节比对内容），以及**部分失败 / 全部失败**两条结果分支（warning / error 横幅 + 失败原因逐条列出，
+  且不得把失败伪装成「已安装到 N 个实例」）。
+- **怎么做到的**：给 `DropInstallCoordinator` 加了构造注入点（两个带默认值的 `@MainActor` 闭包：
+  `detectVersion` / `findInstances`）。默认值即生产接线，生产调用点 `DropInstallCoordinator()`
+  一个字节都没改。注入后把实例指向临时目录，**保留真实的 `ModDragInstaller.install`** ——
+  被测的落盘行为因此是真代码，而不是替身自己造出来的结论。
+  ⚠️ 顺带把类显式标了 `@MainActor`（口径二下语义不变，因为它本来就被推断为主 actor 隔离）：
+  闭包参数标 `@MainActor` 后，只有显式隔离的调用方才被允许同步调它，否则「默认隔离」口径报
+  `#ActorIsolatedCall`。这也是「显式标注能把静默的隔离误用变成编译错误」的一个实例。
+- **未覆盖（有意不覆盖）**：真实的 `ModVersionDetector.detectVersion` 与 `ModDragInstaller.findInstances`
+  不在用例里驱动 —— **不是因为没有注入点（现在有了），而是因为驱动它们会写用户的真实游戏目录**：
+  `findInstances` 除「选定根目录」外还会全盘扫描本机游戏目录，并对每个扫到的根目录调
+  `MinecraftVersionManager.getVersions` → 内部 `normalizeVersionFolderNames` **会重命名磁盘上的版本文件夹
+  并改写其中的 json**。测试不该触发这类写副作用。代价：`findInstances` 自身的匹配规则（含它那个
+  `savedRoot` 分支）仍无用例；要覆盖它得先把「扫描」与「匹配」拆开，或注入一个目录列举器。
+- `confirmModpackInstall` 的成功分支**不可达**（不是「没测」）：`ModpackInstaller.install` 的最后一步
+  `installLoader` 无条件抛 `InstallError.loaderInstallUnsupported`（刻意为之，见其文档注释：
+  宁可真失败，也不假装装上加载器）⇒ `presentMessage("整合包安装完成")` 永远执行不到。
+  其失败分支要真正联网（`installMinecraft` 先打 launchermeta 官方源）才走得到，属集成测试范畴。
 
 ### 4.6 `NoticeCenter` 的 300s 兜底超时
 
@@ -524,3 +548,41 @@ func testClearLaunchErrorClearsTextOnly() {
 **注意**：不要试图写一条「释放 MainActor 类不崩溃」的同步回归用例 ——
 它在有缺陷的工具链上必然 abort，会让套件永远是红的。要在本机单独验证这条，
 只能用临时探针（跑完即删），不能进套件。
+
+### 残余触发面：`async` 并没有把这条缺陷完全挡住（2026-09-25 新证据）
+
+「用例一律 `async`」修掉的是**同步用例**那一整类。但 2026-09-25 又观测到**同一个缺陷的另一条触发路径**，
+**在 async 用例里**：
+
+```
+# 崩溃报告（~/Library/Logs/DiagnosticReports/qwq-*.ips）里的栈，自下往上：
+swift::runJobInEstablishedExecutorContext          ← 确实在一个 job 里，不是「不在 Task 里」
+MinecraftInstance.deinit / MinecraftInstance.__isolated_deallocating_deinit
+_swift_release_dealloc
+MinecraftDirectory.__deallocating_deinit           ← 内层：隐式析构 → 隔离析构
+swift_task_deinitOnExecutorMainActorBackDeploy
+swift::TaskLocal::StopLookupScope::~StopLookupScope()
+___BUG_IN_CLIENT_OF_LIBMALLOC_POINTER_BEING_FREED_WAS_NOT_ALLOCATED   → abort
+```
+
+共同点是**嵌套的隔离析构**：一个主 actor 隔离类的 `deinit` 里释放了另一个**没有显式 `deinit`**
+的主 actor 隔离类（`MinecraftInstance` → `MinecraftDirectory`；更早的两份报告是
+`ClientManifest.Rule` → `ClientManifest.Rule.OSRule`）。触发点是**真实启动路径**
+（`LaunchCancellationTests.testUncancelledTokenPassesEntryGate` 真的调了一次 `slLaunch`）。
+
+**当前状态：未修，且它是概率性的** ——2026-09-25 实测约 **1/4**：
+
+| 命令（只跑 DropInstallCoordinatorTests + LaunchCancellationTests，26 条） | 4 次结果 |
+|---|---|
+| 当前工作区 | 通过 通过 通过 **崩** |
+| HEAD（未含当轮改动） | **崩** 通过 通过 通过 |
+
+⇒ 两条纪律：① **abort 同轮重试即可**（换全新 `SL_DERIVED`），不要据此判定代码有问题；
+② 要下「是谁弄崩的」这种结论，必须**同一命令在 HEAD 上对照跑**，单次结果没有说服力。
+也可用更便宜的复现：`-only-testing:` 指定上面两套即可，不必跑全量。
+
+⚠️ 另一个连带坑：**进程 abort 之后派生目录会退化** —— `qwq.app/Contents/PlugIns/qwqTests.xctest`
+会消失，此后连 `build-for-testing` 报「成功」也不补回来（`test-without-building` 于是报
+`Failed to create a bundle instance ... exists on disk`）⇒ **abort 后一律换全新 `SL_DERIVED`**。
+⚠️ 还有：`test-without-building` **不会重新构建**，跑完「反向用例破坏版」后若不先 `build-for-testing`，
+会拿旧的坏二进制跑出**假失败**（本轮踩过，见 CHANGELOG）。

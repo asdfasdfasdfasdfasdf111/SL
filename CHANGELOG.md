@@ -2,6 +2,104 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 给 `DropInstallCoordinator` 补注入点，并补上「拖入模组 → 安装成功」这条最主线流程的用例（2026-09-25）
+
+**背景**：`TESTING.md §4.5` 登记着一处覆盖缺口 ——「模组安装的**成功分支**没有任何用例」，
+原因是 `beginModInstall` 里的版本检测（`ModVersionDetector`）与实例匹配（`ModDragInstaller`）
+都是硬编码私有依赖，测试无法把实例指到一个受控目录上。
+
+**缺口的实际后果**（这才是本轮真正要修的）：**「用户拖入一个模组 → 看到实例选择弹窗 → 点安装 →
+文件落到游戏目录」这条最主线的流程，一行断言都没有**。三种结果文案同样不受保护：
+「模组已安装到 N 个实例」／「部分实例安装失败」／「模组安装失败」——
+而最后那条恰恰是前几轮刚修出来的（在那之前，全部失败也会显示「已安装到 0 个实例」）。
+
+**改法（生产代码只有 1 个文件、逻辑净 +6 行）**：给 `DropInstallCoordinator` 加构造注入点，
+两个**带默认值**的闭包：
+
+```swift
+init(detectVersion: @escaping @MainActor (URL) -> ModVersionDetector.ModVersionInfo? = { ModVersionDetector().detectVersion(from: $0) },
+     findInstances: @escaping @MainActor (_ versionRange: String, _ savedRoot: String) -> [GameInstance] = { ModDragInstaller.findInstances(for: $0, savedRoot: $1) })
+```
+
+默认值即生产接线 ⇒ `ContentView` 里 `@StateObject private var dropInstall = DropInstallCoordinator()`
+**一个字节都没改**。
+
+- **只替换这两项、不替换 `ModDragInstaller.install`**：它把内容写到
+  `instance.rootPath/versions/<版本>/mods`，实例指向临时目录时本身就完全受控；
+  保留真实实现，才能让「文件真的写进了游戏会加载的那个目录」被真正验证，而不是由替身自证。
+- **顺带把类显式标上 `@MainActor`**（口径二下语义不变，因为它本来就被推断为主 actor 隔离）：
+  闭包参数标了 `@MainActor` 之后，只有显式隔离的调用方才被允许同步调它，否则「默认隔离」口径报
+  `#ActorIsolatedCall`。显式标注的收益是把「从非主 actor 上下文调用」从**静默**变成**编译错误**。
+- ⚠️ `@MainActor` 与 `@escaping` 要**分别标**：`@MainActor` 不改变逃逸性，漏 `@escaping` 会只被真实编译
+  拦下（快速类型检查对此完全静默，是上一轮踩过的坑）。
+
+**新增 6 条用例**（`DropInstallCoordinatorTests` 16 → 22 条，全量 **248 → 254**）：
+
+| 用例 | 守的是什么 |
+| --- | --- |
+| `testJarWithDetectedVersionAndMatchedInstanceOpensModSheet` | 前置条件齐备时必须打开弹窗并暂存「待装文件 + 匹配结果」 |
+| `testJarWithoutMatchedInstanceReportsErrorOnly` | 一个实例都不匹配时只提示错误、**不得打开空弹窗** |
+| `testBatchOfJarsKeepsLastAsPendingTarget` | 一批多个 jar 后写覆盖暂存目标 —— 用**落盘文件**证明装的确实是暂存那个 |
+| `testConfirmModInstallCopiesModToEveryInstanceAndReportsCount` | 文件真的落到**每个**实例的 `versions/<版本>/mods`（逐字节比对）+ 成功气泡 + 弹窗关闭 |
+| `testConfirmModInstallPartialFailureWarnsAndCopiesOnlyReachableInstance` | 部分失败：可写实例照常装上、warning 横幅列出失败原因、**不得**只报成功数 |
+| `testConfirmModInstallTotalFailureReportsErrorWithEveryReason` | 全部失败：error 横幅列出**每个**实例的原因、不得留下「已安装到 0 个实例」 |
+
+**反向验证（各精确只红对应用例）**：摘掉 `!instances.isEmpty` 守卫 → 只红 1 条；
+成功计数 `+1` → 只红 1 条；摘掉 `FileManager.copyItem` → 红 3 条，**全部是断言落盘的用例**
+（不是串染）。还原后源码零残留（`grep 反向用例临时摘掉` = 0）。
+
+**覆盖不了的部分（写清代价，不是「没测」）**：
+- 真实的 `findInstances` 仍无用例 —— **不是因为没有注入点（现在有了），而是因为驱动它会写用户真实游戏目录**：
+  它除「选定根目录」外会全盘扫描本机游戏目录，并对每个根目录调 `MinecraftVersionManager.getVersions`
+  → 内部 `normalizeVersionFolderNames` **会重命名磁盘上的版本文件夹并改写其中的 json**。
+  要覆盖它得先把「扫描」与「匹配」拆开。
+- `confirmModpackInstall` 的成功分支**不可达**：`ModpackInstaller.install` 最后一步 `installLoader`
+  无条件抛错（刻意为之：宁可真失败，也不假装装上加载器）⇒ `presentMessage("整合包安装完成")` 永远执行不到。
+
+### 本轮验证里查清的一处**假警报**：套件会在 `LaunchCancellationTests` 偶发 abort（**与本轮改动无关**）
+
+全量测试跑出过 `** TEST EXECUTE FAILED **`（退出码 65），崩在
+`LaunchCancellationTests.testUncancelledTokenPassesEntryGate`，报告是
+`malloc: pointer being freed was not allocated`。一上来很像是本轮改动把套件弄崩了，
+于是做了对照实验 —— **结论是无关，且这道门本身就是概率性的**：
+
+```text
+只跑字母序相邻的两套（DropInstallCoordinatorTests + LaunchCancellationTests，共 26 条）各 4 次：
+  当前工作区（含本轮改动）：  通过 通过 通过 崩
+  HEAD（git archive 导出后单独构建、未含本轮改动）：  崩 通过 通过 通过
+```
+
+- 崩溃签名固定，且**早于本轮改动就存在**：`swift_task_deinitOnExecutorMainActorBackDeploy` →
+  `TaskLocal::StopLookupScope::~StopLookupScope` 二次释放 → 宿主 abort。这就是 `TESTING.md §五`
+  记录的那条工具链缺陷（上游 `swiftlang/swift#87422`）。本机今天 `02:14` / `02:16` 的两份崩溃报告
+  是同一签名（当时受害对象是 `ClientManifest.Rule.OSRule`，本轮是
+  `MinecraftDirectory` / `MinecraftInstance` —— 即「此刻恰好正在析构的那个主 actor 隔离类」，
+  触发点在真实启动路径里，与本轮改的文件没有任何关系）。
+- ⇒ **「全量测试 0 崩溃」这道门是概率性的（本次抽样 8 次里 2 次 abort，工作区与 HEAD 各 1 次），
+  任一轮都可能随机踩到**，而且能被 26 条用例的最小集合复现。**不能用单次 abort 判定代码有问题**，
+  要定性必须用「同一命令在 HEAD 上对照跑」。
+- 排查中另有两个值得记住的坑：
+  1. **进程 abort 之后派生目录会退化**：`qwq.app/Contents/PlugIns/qwqTests.xctest` 消失，
+     此后连 `build-for-testing` 报「成功」也不会把它补回来（`test-without-building` 于是报
+     `Failed to create a bundle instance`）⇒ **abort 之后换全新 `SL_DERIVED` 再跑**。
+  2. **`test-without-building` 不会重新构建**：跑完「反向用例破坏版」之后若不先 `build-for-testing`，
+     会拿**旧的坏二进制**跑出假失败 —— 本轮的相邻两套对照第一版就是这么翻车的（3 条假红）。
+
+### 本轮的实测口径（可复核）
+
+```text
+Executed 254 tests, with 1 test skipped and 0 failures
+** TEST EXECUTE SUCCEEDED **
+类型检查：口径一 0 错/46 告警、口径二 0 错/24 告警（告警集合与 HEAD 逐条一致，零新增）
+Date:   2026-09-25        Branch: refactor/modular
+派生目录：全新（/tmp/SL-DD-<n>；abort 过的派生目录一律弃用）
+⚠️ 该套件约 1/4 概率在 LaunchCancellationTests 处 abort（工具链缺陷，HEAD 同样会），
+   故上面这次干净结果取自重试；abort 本身不作为代码有问题的判据。
+```
+
+改动面：3 个文件（生产 1 / 测试 1 / 文档 1），毛 +305 −31；
+其中生产文件 `DropInstallCoordinator.swift` 毛 +45 −5、**逻辑代码净 +6 行**（其余是文档注释）。
+
 ## 给 `JavaResolverBridge` 补解析器注入点，并修掉一整批「假绿」用例（2026-09-25）
 
 **背景**：`JavaResolverBridgeTests.swift` 的注释里自己写着一条缺口 ——「`JavaResolverBridge` 内部直接构造

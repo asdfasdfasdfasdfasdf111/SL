@@ -3,7 +3,8 @@
 //  模块化收口：把 ContentView 里「拖入文件 → 判定走模组还是整合包安装 → 匹配实例/挑目录
 //  → 执行安装 → 提示结果」这一串业务决策搬到此文件。
 //  View 只保留两件事：把拖拽事件转发进来、按协调器给出的状态渲染弹窗。
-//  本类型不持有 SwiftUI 视图状态，可脱离界面单独测试。
+//  本类型不持有 SwiftUI 视图状态，可脱离界面单独测试
+//  （两个前置决策依赖 `detectVersion` / `findInstances` 可注入，见下方 init 的说明）。
 //
 
 import Combine
@@ -13,6 +14,14 @@ import Foundation
 ///
 /// 状态约定：弹窗开关与弹窗数据由本对象持有（`@Published`），修改一律发生在主线程
 /// （拖拽回调经 `DragDropHandler` 回主队列，安装回调来自弹窗主线程动作）。
+///
+/// ⚠️ `@MainActor` 是**显式**写上的，不是冗余标注。工程开了
+/// `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`，所以真实构建里它本来就被推断为主 actor 隔离；
+/// 显式标注只是把这件事实说出来 —— 好处是「从非主 actor 上下文调用」会变成**编译错误**
+/// （未显式标注的推断隔离调用点是**静默**的，见 `MEMORY.md` 硬规则 3）。
+/// 它同时是下方注入点能成立的前提：闭包参数标 `@MainActor` 后，只有显式隔离的调用方
+/// 才被允许同步调用它们（否则「默认隔离」口径下会报 `#ActorIsolatedCall`）。
+@MainActor
 final class DropInstallCoordinator: ObservableObject {
 
     // MARK: - 弹窗状态（供 View 渲染）
@@ -36,10 +45,42 @@ final class DropInstallCoordinator: ObservableObject {
     private var pendingModpackURL: URL?
 
     private let dropLoader = DragDropHandler()
-    private let versionDetector = ModVersionDetector()
     private let settings = LauncherSettings.shared
     /// 结果提示统一走启动界面状态的投递入口，不直接操作设置字段
     private let launchPanel = LaunchPanelState.shared
+
+    // MARK: - 可注入的前置决策依赖
+
+    /// 模组 jar → 版本需求区间（生产实现 = `ModVersionDetector`）
+    private let detectVersion: @MainActor (URL) -> ModVersionDetector.ModVersionInfo?
+    /// 版本需求区间 + 用户选定根目录 → 匹配实例（生产实现 = `ModDragInstaller`）
+    private let findInstances: @MainActor (_ versionRange: String, _ savedRoot: String) -> [GameInstance]
+
+    /// 两个前置决策依赖可注入，**默认值即生产接线**，因此 `DropInstallCoordinator()` 的
+    /// 调用点（`ContentView` 的 `@StateObject`）该行的字节与行为都不变。
+    ///
+    /// 为什么必须能替换 `findInstances`：它除「用户选定根目录」外还会**全盘扫描本机游戏目录**
+    /// （`MinecraftVersionManager.findGameRootDirectories`，含 3 次 `find` 子进程），
+    /// 测试无法让它只返回一个受控的临时实例 —— 于是「拖入 jar → 确认安装 → 文件落盘」
+    /// 这条成功路径此前完全没有用例。注入替身后即可用临时根目录驱动到落盘断言。
+    ///
+    /// 为什么**不**替换 `ModDragInstaller.install`：它把内容写到
+    /// `instance.rootPath/versions/<版本>/mods`，实例指向临时目录时本身就完全受控，
+    /// 保留真实实现才能让「文件真的写进了游戏会加载的那个目录」被真正验证。
+    ///
+    /// ⚠️ 闭包类型上的 `@MainActor` 是**必需**的，不是装饰：`ModVersionDetector` /
+    /// `ModDragInstaller` 在 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` 下都是主 actor 隔离的，
+    /// 闭包若被推断成非隔离，`init` 的默认实现里就会跨 actor 调用（实测：口径二报错）。
+    /// ⚠️ `@MainActor` **不改变逃逸性**，故 `@escaping` 必须另写（这是上一轮踩过的坑：
+    /// 快速类型检查对「逃逸闭包捕获非 `@escaping` 参数」完全静默，只有真实编译会报）。
+    /// ⚠️ 反过来，标了 `@MainActor` 后调用方必须是显式主 actor 隔离的（实测：未给类加
+    /// `@MainActor` 时，口径一报 `#ActorIsolatedCall`），两条要求合起来才得出上面那个
+    /// 显式 `@MainActor` 的类标注。
+    init(detectVersion: @escaping @MainActor (URL) -> ModVersionDetector.ModVersionInfo? = { ModVersionDetector().detectVersion(from: $0) },
+         findInstances: @escaping @MainActor (_ versionRange: String, _ savedRoot: String) -> [GameInstance] = { ModDragInstaller.findInstances(for: $0, savedRoot: $1) }) {
+        self.detectVersion = detectVersion
+        self.findInstances = findInstances
+    }
 
     // MARK: - 拖拽入口
 
@@ -72,13 +113,12 @@ final class DropInstallCoordinator: ObservableObject {
     private func beginModInstall(url: URL) {
         let modName = url.deletingPathExtension().lastPathComponent
 
-        guard let versionInfo = versionDetector.detectVersion(from: url) else {
+        guard let versionInfo = detectVersion(url) else {
             launchPanel.presentError("无法检测模组「\(modName)」的 Minecraft 版本")
             return
         }
 
-        let instances = ModDragInstaller.findInstances(for: versionInfo.versionRange,
-                                                       savedRoot: settings.selectedGameRoot)
+        let instances = findInstances(versionInfo.versionRange, settings.selectedGameRoot)
         guard !instances.isEmpty else {
             launchPanel.presentError("未找到与模组「\(modName)」（需要 \(versionInfo.versionRange)）匹配的游戏版本")
             return
