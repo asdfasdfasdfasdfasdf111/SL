@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import SwiftUI
 import Combine
 
@@ -255,8 +256,34 @@ public struct PopupModel {
 public class PopupManager: ObservableObject {
     public static let shared = PopupManager()
     private init() {}
-    public func show(_ model: PopupModel) async {}
-    public func showAsync(_ model: PopupModel) async -> Int { 0 }
+    public func show(_ model: PopupModel) async {
+        _ = await showAsync(model)
+    }
+
+    public func showAsync(_ model: PopupModel) async -> Int {
+        let alert = NSAlert()
+        alert.messageText = model.title
+        alert.informativeText = model.message
+        switch model.type {
+        case .info:
+            alert.alertStyle = .informational
+        case .warning:
+            alert.alertStyle = .warning
+        case .error:
+            alert.alertStyle = .critical
+        }
+
+        for button in model.buttons {
+            alert.addButton(withTitle: button.label)
+        }
+        if model.buttons.isEmpty {
+            alert.addButton(withTitle: PopupButton.ok.label)
+        }
+
+        let response = alert.runModal()
+        guard !model.buttons.isEmpty else { return 0 }
+        return max(0, response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue)
+    }
 }
 
 // MARK: - CodableAppStorage (simplified)
