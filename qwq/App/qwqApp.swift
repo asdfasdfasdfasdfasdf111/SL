@@ -2,8 +2,9 @@
 //  qwqApp.swift
 //  应用入口：Scene 声明（主窗口 / 默认尺寸 / 菜单命令 / 设置场景）。
 //
-//  职责：① 首帧之前完成两件一次性初始化 —— 崩溃自捕获安装（CrashReporter.install）、
-//           本地 Modrinth 全量目录后台预热（LocalModCatalog.warmUp）；
+//  职责：① 首帧之前完成三件一次性初始化 —— 崩溃自捕获安装（CrashReporter.install）、
+//           本地 Modrinth 全量目录后台预热（LocalModCatalog.warmUp）、
+//           内存压力订阅注册（MemoryCacheReclaimer.register）；
 //        ② 声明 WindowGroup 与**窗口最小尺寸 800×590 的唯一来源**（内容约束）；
 //        ③ 声明「分类」菜单与 ⌘1…⌘6（经 NavigationIntent 单槽送到 ContentView）；
 //        ④ 声明「设置…」（⌘,）的 Settings 场景（内容镜像「个性化」页）。
@@ -25,6 +26,9 @@ struct SLApp: App {
     init() {
         // 崩溃自捕获：崩溃后把线程堆栈写到 ~/Library/Logs/SL_crash.log（LLDB 拦截时系统不落 .ips）
         CrashReporter.install()
+        // 内存压力订阅：把「各子系统缓存回收」登记为内存压力事件的订阅者。
+        // 必须在这里（装配期）登记，AppContext 只发事件、不认识缓存属主。仅登记闭包，不读盘。
+        MemoryCacheReclaimer.register()
         // 启动即后台预热本地 Modrinth 全量目录，让下载/mod 页首帧即有数据（参考 PCL 的加载器秒出）
         LocalModCatalog.warmUp()
     }

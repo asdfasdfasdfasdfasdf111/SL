@@ -2,6 +2,55 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 修掉一处基础设施→UI 的反向依赖：`AppContext` 不再认识具体视图（2026-09-25）
+
+**问题**：`AppContext`（基础设施层）在系统内存压力事件里直接调 `DownloadCategoryView.clearStaticCaches()`
+—— 一个 `View` 类型上的 `static func`。两重毛病：
+
+1. **依赖方向倒置**（Infrastructure → UI）：删掉或改名那个视图会波及应用基础设施；
+   后续任何页面想响应内存压力，都只能继续往 `AppContext` 里加具体 View 调用。
+2. **命名空间错位**：被清掉的 4 个缓存（`ModrinthCategoryCache` / `SearchTranslator` /
+   `GameVersionManifest` / `LoaderSupportChecker`）**没有一个属于那个视图** ——
+   「清理各模块缓存」这件事碰巧挂在了 `DownloadCategoryView` 上。
+
+**改法**（新增一层事件 + 装配期订阅，共 3 个新/改文件）：
+
+- 新增 `Core/Events/MemoryPressure.swift`：`MemoryPressureLevel` + `MemoryPressureBroadcaster`。
+  广播者 `nonisolated`、订阅表用 `NSLock` 串行化、处理器类型是 `@MainActor`（订阅方要碰主 actor 隔离的静态缓存）；
+  主线程发布走 `MainActor.assumeIsolated` **同步**送达，后台线程 hop 到主 actor。
+- 新增 `App/MemoryCacheReclaimer.swift`：装配层把「回收这 4 个缓存」登记为订阅者，`register()` 幂等。
+- `AppContext`：只把系统内存压力翻译成应用内事件并发布，**不再出现任何 UI 类型**。
+- `qwqApp.swift`（装配根）在 `SLApp.init()` 里登记订阅 ——「谁需要响应内存压力」这个知识只存在于装配层。
+- 删除 `DownloadCategoryView.clearStaticCaches()`。
+
+**行为不变**（刻意如此）：`warning` 与 `critical` 仍回收**同一批**缓存，不引入「critical 才清某个缓存」
+这类新策略（那属行为变更，需单独评估）；等级仍原样透传，将来要分等级处理不必改注册方式。
+4 个清理函数已逐个核对，**全部只动内存、不碰磁盘**。
+
+**顺手修掉的一处隐患**：原代码是 `source.activate()` 在前、`memoryPressureSource = source` 在后。
+事件处理器要读 `source.data` 才能判等级，而我改为经 `self.memoryPressureSource` **间接**取用、
+**不直接捕获 `source`**（否则 source ↔ handler 互相强引用成环，`deinit` 里的 `cancel()` 永远等不到）
+—— 因此 `memoryPressureSource` 必须**先赋值、后 activate**，否则「先激活后赋值」那段窗口里读到 nil，
+等级会被误判成 `.warning`。
+
+**验证**：
+
+- 类型检查两口径 **0 错误**；口径二告警 **24（不变，无隔离回归）**；口径一 44 → 46，
+  恰为 **+2 = 新增 1 个测试文件的 `@testable import` 产物**（脚本里已记录的固定口径，非回归）。
+- 真实 xcodebuild **`BUILD SUCCEEDED`**；`** TEST EXECUTE SUCCEEDED **`，
+  **241 用例（原 232）/ 0 失败 / 1 跳过**；崩溃计数 `pointer being freed` = 0、
+  `Restarting after unexpected exit` = 0。
+- 新增 `qwqTests/MemoryPressureTests.swift`（9 个 `async` 用例）：主线程同步送达 / 等级原样透传 /
+  多订阅者各自收到 / 注销后不再被调用 / 后台线程发布仍送达 / **装配根确实注册过**（`handlerCount ≥ 1`）/
+  端到端（`register()` 后一次事件真把 `ModrinthCategoryCache` 清空）/ 无订阅者不崩 / 注册幂等。
+- **反向用例（两条都实测变红，六个无关用例保持绿）**：
+  - RP1 摘掉 `MemoryCacheReclaimer` 处理器里的 `ModrinthCategoryCache.clearAll()`
+    → `testReclaimerRegistrationClearsModrinthMemoryCache`（2 条断言）、`testReclaimerRegistrationIsIdempotent` 变红；
+  - RP2 摘掉 `SLApp.init()` 里的 `MemoryCacheReclaimer.register()`
+    → `testCompositionRootRegistersReclaimerSubscription` 变红（`("0") is less than ("1")`）。
+  - 判据：**只保留「自己注册自己收」的用例是不够的** —— 装配根漏注册时它照样绿，而真实运行时
+    内存压力不会清任何缓存。RP2 就是补这个盲区。
+
 ## 补回「被推翻那批」漏下的 3 处修复（2026-09-25）
 
 **背景**：远端 `refactor/modular` 一直停在 `f4e7578`（2026-09-24 17:48 推上去的

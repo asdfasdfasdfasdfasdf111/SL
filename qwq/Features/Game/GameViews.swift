@@ -300,12 +300,4 @@ struct DownloadCategoryView: View {
             }
         }
     }
-
-    /// 清理静态缓存（内存警告时调用；由 AppContext 触发）
-    static func clearStaticCaches() {
-        ModrinthCategoryCache.clearAll()
-        SearchTranslator.clearCache()
-        GameVersionManifest.clearCache()
-        LoaderSupportChecker.clearMemoryCache()
-    }
 }

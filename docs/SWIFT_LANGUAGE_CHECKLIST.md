@@ -170,7 +170,7 @@ swiftc -typecheck -swift-version 5 -default-isolation MainActor \
 | # | 语法点 | 官方规则要点（原文关键句） | 项目对应位置 | 结论 |
 |---|---|---|---|---|
 | G1 | 构造与事件处理挂载 | “After creating the dispatch source, use the methods of the `DispatchSourceProtocol` protocol to install the event handlers you need. **The returned dispatch source is in the inactive state initially.** When you are ready to begin processing events, call its `activate()` method.” | `AppContext.swift` | **写法正确（但用旧 API）**：`setEventHandler` + `resume()` 语义等价于 `activate()`；`resume()` 已不在当前文档正文中出现，建议迁到 `activate()` |
-| G2 | `queue` 参数缺省意味着什么 | 签名：`queue: DispatchQueue? = nil`；参数说明：“The dispatch queue to use when executing the installed handlers.”（**官方未在正文说明 nil 时落到哪个队列**） | `AppContext.swift`（未传 `queue` → `nil`） | **未找到官方依据，标记存疑**：`nil` 时的实际执行队列官方未写明（实践上落到默认全局并发队列，**不是主队列**）。本项目 `eventHandler` 里调用 `self?.cacheManager.trimMemory(toFraction: 0.5)` 与 `DownloadCategoryView.clearStaticCaches()`，二者在默认隔离下均为 `@MainActor` 隔离 → 实测告警（§2.10）。**结论：应显式传 `queue: .main`**，见 §2.10 |
+| G2 | `queue` 参数缺省意味着什么 | 签名：`queue: DispatchQueue? = nil`；参数说明：“The dispatch queue to use when executing the installed handlers.”（**官方未在正文说明 nil 时落到哪个队列**） | `AppContext.swift`（未传 `queue` → `nil`） | **未找到官方依据，标记存疑**：`nil` 时的实际执行队列官方未写明（实践上落到默认全局并发队列，**不是主队列**）。本项目 `eventHandler` 里调用 `self?.cacheManager.trimMemory(toFraction: 0.5)`，在默认隔离下为 `@MainActor` 隔离 → 实测告警（§2.10）。**2026-09-25 起该处理器不再直接触碰任何 UI 类型**（原先另调 `DownloadCategoryView.clearStaticCaches()`，构成 Infrastructure → UI 反向依赖），改为发布 `MemoryPressureBroadcaster` 事件，缓存回收由装配层 `MemoryCacheReclaimer` 订阅。**结论：应显式传 `queue: .main`**，见 §2.10 |
 | G3 | 事件源必须 `resume/activate` 才会投递 | 见 G1 | `AppContext.swift`（`source.resume()`） | **写法正确** |
 | G4 | 生命周期与取消 | 官方未给出 `deinit` 中取消的明文要求；`DispatchSourceProtocol.cancel()` 存在 | `AppContext.swift` | **写法正确**：`AppContext.shared` 是进程级单例，`deinit` 实际不会执行；`cancel()` 属防御性写法 |
 | G5 | `DispatchSourceMemoryPressure` 的事件掩码 | `eventMask: DispatchSource.MemoryPressureEvent`，项目传 `[.warning, .critical]` | `AppContext.swift` | **写法正确** |
@@ -577,7 +577,11 @@ let source = DispatchSource.makeMemoryPressureSource(
 )
 source.setEventHandler { [weak self] in
     self?.cacheManager.trimMemory(toFraction: 0.5)
-    DownloadCategoryView.clearStaticCaches()
+    // 2026-09-25 修订：这里**不要**再直接调具体 View 上的静态方法
+    //（原为 `DownloadCategoryView.clearStaticCaches()`，已删除）。
+    // 基础设施只把系统内存压力翻译成应用内事件并发布；谁需要回收缓存由装配层订阅。
+    // 见 Core/Events/MemoryPressure.swift 与 App/MemoryCacheReclaimer.swift。
+    MemoryPressureBroadcaster.shared.post(.warning)
 }
 source.activate()          // 官方文档：返回的 source 初始为 inactive，需 activate()
 ```
