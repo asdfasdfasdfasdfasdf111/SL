@@ -43,6 +43,19 @@
 # 工程（Xcode 26 默认）启用了 SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY，
 # 而**裸 swiftc -typecheck 默认不开该特性**，于是会漏掉「成员来自未 import 的模块」这类错误
 # （真实案例：拆分时丢了 `import SwiftyJSON`，快速检查报 0 错误，真实编译报 5 个错误）。
+#
+# ⚠️ 2026-09-25 起本脚本带 `-D DEBUG`。
+# 理由：工程真实构建是 Debug（verify-build.sh 用 `-configuration Debug`，测试也是 Debug），
+# 而裸 swiftc **默认不定义 DEBUG** —— 于是 `#if DEBUG` 里的代码（如 App/DebugAutoLaunch.swift）
+# 从来没被这一层检查过，且任何 `#if DEBUG` 新增 API 都会在本脚本里「不存在」（实测：
+# 加了 `MemoryCacheReclaimer.resetForTesting()` 后，脚本报 4 处 `has no member`、真实编译 0 错误）。
+# 加标志后两个口径的实测：口径一 0 错误 / 46 告警，口径二 0 错误 / 24 告警
+# —— 口径二与加标志前**逐条一致**（它只编 qwq，DEBUG 只放行 DebugAutoLaunch.swift，无新增告警）。
+#
+# ⚠️ 另一条实测（2026-09-25）：**编译一旦报错，后续文件的告警会被吞掉**。
+# 同一份源码，有 4 处错误时口径一报 32 告警；把这 4 处修掉后报 46 告警。
+# 所以「告警数变少」未必是变好，可能是提前报错短路了；跨轮次更不能只比数字，
+# 一律用上面的「告警集合逐条 diff」。
 # 加上 -enable-upcoming-feature MemberImportVisibility 后，本脚本与真实编译对该类错误口径一致。
 #
 # 用法：
@@ -54,7 +67,7 @@ DEV=$(xcode-select -p)
 FW="$DEV/Platforms/MacOSX.platform/Developer/Library/Frameworks"
 LIB="$DEV/Platforms/MacOSX.platform/Developer/usr/lib"
 COMMON=(-typecheck -target arm64-apple-macosx13.0 -I /tmp/deps -F "$FW" -I "$LIB"
-        -enable-upcoming-feature MemberImportVisibility)
+        -enable-upcoming-feature MemberImportVisibility -D DEBUG)
 
 SOURCES=$(find qwq -name "*.swift")
 

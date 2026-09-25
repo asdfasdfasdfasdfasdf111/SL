@@ -12,7 +12,11 @@
 //  一个与它无关的视图上（被清掉的 4 个缓存没有一个属于该视图）。
 //  本次改为：事件由基础设施发布，聚合动作移到装配层，`DownloadCategoryView` 上的那个方法已删除。
 //
-//  使用方：`App/qwqApp.swift` 的 `SLApp.init()`（主线程、早于首帧，见该文件头部约束）。
+//  使用方：`App/AppCompositionRoot.swift` 的 `registerRuntimeServices()`，
+//          而它由 `App/qwqApp.swift` 的 `SLApp.init()` 调用（主线程、早于首帧，见那两个文件头部约束）。
+//  测试：`qwqTests/MemoryPressureTests`。注意 `token` 是**进程级**静态状态 ——
+//        用例若要断言「注册前后条数差多少」，必须先 `resetForTesting()` 回到确定状态，
+//        否则条数会被先前用例决定（2026-09-25 复核指出过这一点）。
 //
 
 import Foundation
@@ -48,4 +52,22 @@ enum MemoryCacheReclaimer {
             LoaderSupportChecker.clearMemoryCache()
         }
     }
+
+#if DEBUG
+    /// **仅供测试**：注销并清空令牌，把状态还原成「未注册过」。
+    ///
+    /// 为什么需要它：`token` 是**进程级**静态状态，用例一旦调用 `register()` 就再也回不到
+    /// 「未注册」。于是后续用例看到的订阅表条数会由**先前用例**决定，断言只能退化成
+    /// 「大于等于 1」这类无法区分「谁注册的」的形式（2026-09-25 复核指出）。
+    /// 有了它，用例可以从确定状态出发断言**差值**（`注册前条数 + 1`），与执行顺序无关。
+    ///
+    /// ⚠️ 生产代码不得调用；Release 构建里此方法不存在（`#if DEBUG`）。
+    @MainActor
+    static func resetForTesting() {
+        if let token {
+            MemoryPressureBroadcaster.shared.remove(token)
+        }
+        token = nil
+    }
+#endif
 }

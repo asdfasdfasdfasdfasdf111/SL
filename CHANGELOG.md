@@ -2,6 +2,65 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 修正「装配根测试可能是假绿」：让装配动作可指名、让用例从确定状态出发（2026-09-25）
+
+**外部复核指出的问题**：`testCompositionRootRegistersReclaimerSubscription` 断言的是
+`MemoryPressureBroadcaster.shared.handlerCount >= 1` —— 一个**进程级绝对条数**。
+它无法区分「应用装配根注册的」与「本文件其它用例自己 `register()` 注册的」，
+而且 `MemoryCacheReclaimer.register()` 是幂等的（`guard token == nil`）、`token` 又是静态持久状态，
+所以先前的反向验证可能只是「顺序刚好对了」。结论：**该用例需要修正才能宣称接线成立。**
+
+**先量后改**（在改任何东西之前，用现有产物单跑与全量跑各测一遍）：
+
+| 实验 | 结果 |
+| --- | --- |
+| 单跑该用例（`-only-testing:`，此前没有任何用例注册过） | **通过**，且 `handlerCount ≥ 1` |
+| 全量跑（把 `MemoryCacheReclaimer.register()` 从 `SLApp.init()` 摘掉） | **恰好 1 条失败**，就是该用例 |
+| 单跑（同上摘掉） | 同样**恰好 1 条失败** |
+
+⟹ 复核的正确部分是**结构性**的：该用例当前有效**靠的是顺序巧合**（它在本类里按字母序排在
+所有 `register()` 之前，且全仓只有这一个类会注册回收器、没有开随机顺序）。一旦顺序被随机化、
+或将来别的类先注册，它就会**假绿**，而反向验证也会随之失效。所以断言必须换成不依赖顺序的形式。
+
+**修法（不新增「测试专用分支」，只把装配动作变成可指名的入口）**：
+
+1. **新增 `App/AppCompositionRoot.swift`** —— 装配根。原先写在 `SLApp.init()` 里的三条初始化
+   （`CrashReporter.install` / `MemoryCacheReclaimer.register` / `LocalModCatalog.warmUp`）搬进
+   `registerRuntimeServices()`，`SLApp.init()` 只留**一行调用**。
+   ⚠️ 保留在 `init()` 里会导致 `Resource`/`AppContext` 的同步 IO 约束被绕过 —— 头部注释里
+   逐条写明了「只允许装处理器与丢后台」这条约束的依据。
+2. **新增单调标志 `AppCompositionRoot.didRegisterRuntimeServices`**：唯一置位点是
+   `registerRuntimeServices()` 的**最后一行**（三条动作都执行过才置位）。
+   它**不被任何人重置**，因此不受用例执行顺序影响 —— 用例改为断言它。
+   它之所以能证明「应用装配根跑过」：测试 bundle 由 `qwq.app` 宿主（`TEST_HOST` 指向 app 二进制），
+   `SLApp.init()` 先于任何用例执行。这条**承载性假设**已写进测试文件的「覆盖率缺口」一节。
+3. **`MemoryCacheReclaimer.resetForTesting()`**（`#if DEBUG`）：把「已注册」这个静态状态归零，
+   使用例可以从确定状态断言**差值**（`注册前条数 + 1`），而不是绝对条数。
+4. **把幂等性用例拆成两条**：`testFirstRegisterAddsExactlyOneHandler`（第一次 +1）与
+   `testRepeatedRegisterAddsNoHandler`（之后 +0）。合成一条时「摘掉 `guard`」会连带上一条一起红，
+   拆开后失败信号各自精确。
+5. `testReclaimerRegistrationClearsModrinthMemoryCache` 也改为先 `resetForTesting()` ——
+   否则应用启动时那次注册会**顶替**本用例自己那次注册，用例在「注册失效」时照样通过。
+6. 用例动过注册状态时，`defer` 里用 `restoreReclaimerRegistration()` 还原成进程启动态（已注册），
+   避免把状态留给后面的用例（复核指出的「顺序污染」）。
+
+**反向验证（都实测过，且「红得精确」）**：
+
+| 破坏 | 变红的用例 | 条数 |
+| --- | --- | --- |
+| 从 `SLApp.init()` 摘掉 `AppCompositionRoot.registerRuntimeServices()` | `testCompositionRootRegistersReclaimerSubscription` | **恰好 1 条** |
+| 摘掉 `MemoryCacheReclaimer.register()` 里的 `guard token == nil` | `testRepeatedRegisterAddsNoHandler` | **恰好 1 条** |
+
+**顺带修正的一处验证工具问题**：`scripts/typecheck.sh` 用的是裸 `swiftc`，**默认不定义 `DEBUG`**，
+于是工程里 `#if DEBUG` 的代码（如 `App/DebugAutoLaunch.swift`）从来没被这一层检查过；
+本轮新增的 `resetForTesting()` 因此被误报成 4 处 `has no member`（真实编译 0 错误）。
+已给脚本加上 `-D DEBUG`（实测：口径一 0 错误 / 46 告警，口径二 0 错误 / 24 告警，
+口径二与加标志前**逐条一致**）。同时实测到：**编译一旦报错，后续文件的告警会被吞掉**
+（同一份源码，带 4 处错误时 32 告警，修掉后 46 告警）—— 所以那个「32」本来就是被截断的假数，
+脚本头里已补记这条。
+
+**实测结果**：`Executed 244 tests, with 1 test skipped and 0 failures`（243 → 244，幂等用例拆分 +1）。
+
 ## 处置一条并发隔离跟进项：把「主线程 ⇒ 在 MainActor 上」从隐藏假设变成有测试守着的显式假设（2026-09-25）
 
 **外部复核提出的问题**（明确标注不阻塞上一轮 P0）：`MemoryPressureBroadcaster.post` 用

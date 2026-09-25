@@ -2,19 +2,19 @@
 //  qwqApp.swift
 //  应用入口：Scene 声明（主窗口 / 默认尺寸 / 菜单命令 / 设置场景）。
 //
-//  职责：① 首帧之前完成三件一次性初始化 —— 崩溃自捕获安装（CrashReporter.install）、
-//           本地 Modrinth 全量目录后台预热（LocalModCatalog.warmUp）、
-//           内存压力订阅注册（MemoryCacheReclaimer.register）；
+//  职责：① 首帧之前触发一次性运行时装配 —— 三条初始化（崩溃自捕获安装、本地 Modrinth 目录预热、
+//           内存压力订阅注册）都已收进 `AppCompositionRoot`，本文件只留**一行调用**，
+//           以便测试断言「装配根接线成立」（见 AppCompositionRoot 文件头）；
 //        ② 声明 WindowGroup 与**窗口最小尺寸 800×590 的唯一来源**（内容约束）；
 //        ③ 声明「分类」菜单与 ⌘1…⌘6（经 NavigationIntent 单槽送到 ContentView）；
 //        ④ 声明「设置…」（⌘,）的 Settings 场景（内容镜像「个性化」页）。
-//  边界：不含任何界面布局与业务逻辑（内容全在 ContentView 及其子树）。
+//  边界：不含任何界面布局与业务逻辑（内容全在 ContentView 及其子树），
+//        也不含装配动作本身（已移到 AppCompositionRoot，这里只负责在启动时调用它一次）。
 //        窗口最小尺寸**不得**在他处重复声明：AppDelegate 与窗口修饰器里的旧声明已删，
 //        因为 `NSWindow.contentMinSize` 的取值会被这里的内容约束压过，重复声明只会造成
 //        两处数值不一致（历史上就出现过 800×590 与 800×550 并存）。
 //  关键约束：`init()` 在主线程、且早于首帧 —— **任何同步 IO 都会直接推迟窗口出现**。
-//        因此这里只允许两类动作：装处理器（CrashReporter）与把重活丢到后台
-//        （LocalModCatalog.warmUp 内部就是 Task.detached）。新增初始化前先确认它不读盘。
+//        因此这里只允许「装处理器」与「把重活丢到后台」两类动作（现由 AppCompositionRoot 承担）。
 //
 
 import SwiftUI
@@ -24,13 +24,11 @@ struct SLApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     init() {
-        // 崩溃自捕获：崩溃后把线程堆栈写到 ~/Library/Logs/SL_crash.log（LLDB 拦截时系统不落 .ips）
-        CrashReporter.install()
-        // 内存压力订阅：把「各子系统缓存回收」登记为内存压力事件的订阅者。
-        // 必须在这里（装配期）登记，AppContext 只发事件、不认识缓存属主。仅登记闭包，不读盘。
-        MemoryCacheReclaimer.register()
-        // 启动即后台预热本地 Modrinth 全量目录，让下载/mod 页首帧即有数据（参考 PCL 的加载器秒出）
-        LocalModCatalog.warmUp()
+        // 装配根：首帧之前的一次性初始化（崩溃自捕获 / 内存压力订阅 / 目录预热）集中在
+        // AppCompositionRoot。这里**必须保持一行调用** —— 用例用
+        // `AppCompositionRoot.didRegisterRuntimeServices` 断言这次接线真的发生了，
+        // 而它只在 registerRuntimeServices() 内部置位。
+        AppCompositionRoot.registerRuntimeServices()
     }
 
     var body: some Scene {
