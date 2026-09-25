@@ -11,10 +11,12 @@
 
 - **target**：`qwqTests`，产物 `qwqTests.xctest`，类型 unit-test bundle。
 - **目录自动同步**：`qwqTests/` 作为 `PBXFileSystemSynchronizedRootGroup` 自动纳入编译，测试文件放在该目录下即生效，不需要拖进 Xcode 或在 File Inspector 里勾选 Target Membership。
-- **运行**：Xcode 中 ⌘U；或 Terminal 执行 `./scripts/verify-test.sh run`（宿主型 XCTest 依赖 testmanagerd 的 XPC，需在脱离 AI 沙箱的 Terminal 里跑，详见 `REFACTOR_PLAN.md` §六）。
+- **运行**：Xcode 中 ⌘U；或执行 `./scripts/verify-test.sh run`（编译 + 运行，约 40 秒）。
+  2026-09-24 复核：**AI 会话里就能跑**（沙箱已由用户关闭）—— 旧文档「必须脱离沙箱在 Terminal 里跑」
+  的结论已作废，根因就是调用方沙箱。
 - **接线记录**：见 `REFACTOR_PLAN.md` 第 15 项（`8172dbf`，TEST BUILD SUCCEEDED，14 文件 181 用例可编译）。
 
-测试文件清单（共 15 个，目录自动同步，无需手工加入 target）：
+测试文件清单（共 **22** 个，目录自动同步，无需手工加入 target）：
 
 | 文件 | 被测对象 | 备注 |
 | --- | --- | --- |
@@ -22,8 +24,12 @@
 | `DownloadVerifierTests.swift` | CryptoKitDownloadVerifier | 临时目录造真实文件，不依赖网络 |
 | `DownloadMergerTests.swift` | DownloadMerger 契约 | 协议无默认实现，用测试替身验证契约 |
 | `DownloadStateTests.swift` | DownloadProgress / DownloadState / DownloadError | 纯值类型，重点覆盖「大小未知」时的 NaN/除零边界 |
+| `DownloadSliceBudgetTests.swift` | `NetManager.sliceBudget`（分片总超时预算） | 纯函数：验证超时随剩余量与实测速度缩放，慢而健康的下载不再被判失败 |
 | `InstallTaskProgressTests.swift` | InstallTask.getProgress / InstallTasks.getProgress | 纯值类型；同名的两个 `getProgress()` 边界口径必须一致（空任务组 0/0 → 曾显示字面量「nan %」，见 §4.15） |
 | `LaunchStateTests.swift` | LaunchState / LaunchError / LaunchResult | 纯值类型 |
+| `LaunchCancellationTests.swift` | `LaunchCancellationToken`（`SLCore/SLLaunchBridge.swift`） | 「进程还没起就别起了」这条语义的守卫；只覆盖令牌本身，不拉起进程 |
+| `GameLogRetentionTests.swift` | `Features/Launch/GameSession.swift` 的 `dropCount(forCount:)` 与 `maxLogLines` | 日志合并窗口 + 上限裁剪的边界 |
+| `GameScanGenerationTests.swift` | `Features/Game/ViewModels/GameCategoryViewModel.swift` | 扫描代际；含「超时不作废结果」的回归守卫 |
 | `ModuleRegistryTests.swift` | SLModule / ModuleContext / ModuleRegistry / ModuleCapabilityKey | 用 `SLModule` 替身，不触发真实模块副作用 |
 | `JavaResolverBridgeTests.swift` | JavaResolverBridge | 只覆盖超时/边界；无 resolver 注入点，见缺口 §4.3 |
 | `NoticeCenterTests.swift` | NoticeCenter / Notice / NoticeLevel / NoticeButton | MainActor 单例，用例内复位承载者状态 |
@@ -32,6 +38,9 @@
 | `HomeInteractionStateTests.swift` | HomeInteractionState | 纯视图级状态容器 |
 | `DropInstallCoordinatorTests.swift` | DropInstallCoordinator | 只覆盖分流与失败分支；成功安装分支见缺口 §4.5 |
 | `DownloadAdapterTests.swift` | DownloadSourceResolver / DefaultDownloadSourceResolver / NetDownloaderDownloadEngine / DefaultDownloadVerifier.checker | 经构造参数注入 resolver，`precheck` 跳过路径无需网络 |
+| `MemoryPressureTests.swift` | `Core/Events/MemoryPressure.swift`、`App/MemoryCacheReclaimer.swift` | 事件发布/订阅语义 + 「装配根确实注册过」；端到端验证内存压力真能清掉 `ModrinthCategoryCache` |
+| `SkinDecoderTests.swift` | `DefaultSkinDecoder.supportedPixelSizes` 与 `SkinAvatarCropper.validateSkin` | 钉死「校验放行的尺寸必须真能被裁剪」这条一致性约束 |
+| `SkinPatchSupportTests.swift` | 皮肤补丁的尺寸分类 / 版本 id 拆分 / 加载器闸门 | 尺寸必须按整倍数判定，最易误放行的是 `128×32` |
 | `RealLaunchIntegrationTests.swift` | （见 §4.14，默认跳过）真实启动链路集成用例 | 拉起真实 Minecraft 进程，靠 `/tmp/sl-real-launch.enabled` 开关默认跳过 |
 
 每个测试文件顶部都有 `@testable import qwq`，因为多数被测类型（`JavaInstallation`、
@@ -96,10 +105,18 @@ func preScan() {
 
 ### 2.2 实测结果
 
-- **退出码 0，0 个 error**（全部 18 个测试文件 + 全部生产源码）。
+- **退出码 0，0 个 error**（当时的 18 个测试文件 + 全部生产源码）。
 - 48 条 warning，其中绝大多数是每个测试文件各一条
   `warning: file '...' is part of module 'qwq'; ignoring import`（单模块编译的预期产物）；
   其余是生产代码里既有的 warning（未使用的局部变量、Swift 6 并发警告等），与测试无关。
+
+> ★ **2026-09-25 复核**（改用统一入口 `./scripts/typecheck.sh`，口径见该脚本头部注释）：
+> **22 个测试文件 / 241 个用例**；两口径均 **0 个 error**；
+> 告警 **口径一 46 / 口径二 24**（口径一 = 口径二 + 2×测试文件数，差值 22×2 = 44 正是单模块编译
+> 下每个测试文件那两条 `@testable import` 产物，属预期）。
+> ⚠️ 该脚本的**裸** `grep -c 'error:'`／`'warning:'` 会把 swiftc 打印的**源码上下文行**也算进去，
+> 且每条诊断按 **2 倍**计数（本项目正好有一行 `var error: Error?` 会被误算成 error）。
+> 判定一律以**告警集合逐条 diff** 为准，**不要**用数字相等做判据。
 
 > 注：编辑过程中曾因并发写盘（`input file ... was modified during the build`）出现瞬时失败，
 > 重跑即可。命令本身无随机性。
@@ -143,21 +160,30 @@ func preScan() {
 | `LaunchStateTests.swift` | 9 | 真实断言（纯值类型） |
 | `ModuleRegistryTests.swift` | 13 | 真实断言（`SLModule` 替身 + 真实 `AppModuleBootstrap`） |
 | `JavaResolverBridgeTests.swift` | 8 | **部分为条件断言**，见下方说明 |
-| `NoticeCenterTests.swift` | 21 | 真实断言 |
+| `NoticeCenterTests.swift` | 22 | 真实断言 |
 | `NavigationStateTests.swift` | 16 | 真实断言 |
 | `LaunchPanelStateTests.swift` | 11 | 真实断言 |
 | `HomeInteractionStateTests.swift` | 5 | 真实断言 |
 | `DropInstallCoordinatorTests.swift` | 16 | 真实断言（失败/分流分支） |
 | `DownloadAdapterTests.swift` | 25 | 真实断言（注入 resolver + `precheck` 跳过路径） |
+| `DownloadSliceBudgetTests.swift` | 6 | 真实断言（纯函数：超时预算的缩放与上下界） |
 | `InstallTaskProgressTests.swift` | 5 | 真实断言（进度边界口径，含任务组空集合的 NaN 防护） |
+| `LaunchCancellationTests.swift` | 4 | 真实断言（令牌置位后各判定点一律以 `cancelled` 收口） |
+| `GameLogRetentionTests.swift` | 3 | 真实断言（合并窗口 + 行数上限裁剪） |
 | `SkinDecoderTests.swift` | 9 | 真实断言（尺寸白名单与裁剪口径一致性） |
 | `SkinPatchSupportTests.swift` | 20 | 真实断言（尺寸分类 / 版本 id 拆分 / 加载器闸门） |
 | `GameScanGenerationTests.swift` | 3 | 真实断言（扫描代际；含「超时不作废结果」的回归守卫） |
+| `MemoryPressureTests.swift` | 9 | 真实断言（主线程同步送达 / 等级透传 / 注销 / 装配根注册 / 端到端清缓存） |
 | `RealLaunchIntegrationTests.swift` | 1 | 默认跳过：真实拉起 Minecraft 进程验证启动链路健康（见 §4.14） |
-| **合计** | **218** | 其中 1 条默认跳过 |
+| **合计** | **241** | 其中 1 条默认跳过 |
 
-> 上表为 2026-09-24 实测口径（`Executed 218 tests, with 1 test skipped and 0 failures`）。
-> 新增测试文件时请一并更新本表与总数，否则会像本次一样出现「表里只有 14 个文件、实际 18 个」的漂移。
+> 上表为 **2026-09-25** 实测口径（`Executed 241 tests, with 1 test skipped and 0 failures`）。
+> 历史：2026-09-24 为 218 条 / 18 个文件；此后新增 `DownloadSliceBudgetTests`、
+> `LaunchCancellationTests`、`MemoryPressureTests` 等文件，并给 `NoticeCenterTests` 补了同步投递用例。
+> ⚠️ **新增测试文件时必须一并更新本表与总数** —— 本表已漂移过两次（一次是「表里 14 个、实际 18 个」，
+> 一次是「表里 218、实际 241」）。核对命令：`./scripts/verify-test.sh run` 后 grep
+> `Executed [0-9]+ tests` 与各 `Test Suite 'XxxTests'` 的 `Executed` 行，
+> 或直接 `ls qwqTests/*.swift | wc -l` 校验文件数。
 
 关于「非纯真实断言」的两处，均为无法消除的环境约束，已在对应文件注释中写明：
 
@@ -329,8 +355,9 @@ rm /tmp/sl-real-launch.enabled
 ## 五、必须遵守：用例一律写成 `async`（Xcode 26.2 隔离析构缺陷）
 
 **结论**：`qwqTests` 里**每个 `test…()` 方法都必须写成 `async`**。这不是为了等待什么，
-而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 18 个测试文件、218 个用例已全部统一
-（2026-09-24 实测：`Executed 218 tests, with 1 test skipped and 0 failures`）。
+而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 **22** 个测试文件、**241** 个用例已全部统一
+（2026-09-25 实测：`Executed 241 tests, with 1 test skipped and 0 failures`；
+新增测试文件时请同步上面的数字）。
 
 ### 现象
 
