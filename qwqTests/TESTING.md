@@ -31,7 +31,7 @@
 | `GameLogRetentionTests.swift` | `Features/Launch/GameSession.swift` 的 `dropCount(forCount:)` 与 `maxLogLines` | 日志合并窗口 + 上限裁剪的边界 |
 | `GameScanGenerationTests.swift` | `Features/Game/ViewModels/GameCategoryViewModel.swift` | 扫描代际；含「超时不作废结果」的回归守卫 |
 | `ModuleRegistryTests.swift` | SLModule / ModuleContext / ModuleRegistry / ModuleCapabilityKey | 用 `SLModule` 替身，不触发真实模块副作用 |
-| `JavaResolverBridgeTests.swift` | JavaResolverBridge | 2026-09-25 起经 `makeResolver` 注入 resolver 替身；**并且所有断言都在非主线程上调用**（否则会被「主线程直接返回 nil」的早退分支整体短路 —— 这正是重写前那 8 条用例的假绿成因，见 §4.3） |
+| `JavaResolverBridgeTests.swift` | JavaResolverBridge | 2026-09-25 起经 `makeResolver` 注入 resolver 替身。**调用线程是显式选择的**：覆盖解析结果 / 超时 / 失败 / 并发 / 入参透传的断言**一律在非主线程**调用（否则会被「主线程直接返回 nil」的早退分支整体短路 —— 这正是重写前那 8 条用例的假绿成因，见 §4.3）；**只有 `testMainThreadCallReturnsNilWithoutTouchingResolver` 一条在主线程上**调用，专测早退分支本身。 |
 | `NoticeCenterTests.swift` | NoticeCenter / Notice / NoticeLevel / NoticeButton | MainActor 单例，用例内复位承载者状态 |
 | `NavigationStateTests.swift` | NavigationState | 断言已复位 `DownloadDetailManager.shared` |
 | `LaunchPanelStateTests.swift` | LaunchPanelState | 断言已复位 `LauncherSettings` 四个内存字段 |
@@ -185,7 +185,7 @@ func preScan() {
 >
 > ```text
 > Executed 248 tests, with 1 test skipped and 0 failures
-> Commit: 见本轮「补 JavaResolverBridge 注入点」提交（248 用例即该提交的内容）
+> Commit: 27e20fff1c42c792cb8cdc569ae1659f3c5b8462（248 用例即该提交的内容）
 > Date:   2026-09-25
 > Branch: refactor/modular
 > ```
@@ -280,6 +280,10 @@ func preScan() {
 - **代价 / 剩余缺口**：不驱动真实默认解析器，因为 `DefaultJavaRepository.save` 会写入
   `JavaManager.shared.saveCachedJavaPath`，即**真实用户设置**（在测试里改用户数据不可接受）。
   因此 `{ DefaultJavaResolver() }` 这一行只在评审层面被守住。
+- **测试范围的准确说法**（别写成「全部覆盖」）：**已验证 `JavaResolverBridge` 的桥接语义** ——
+  命中透传、三条失败原因一律吞掉并返回 nil、超时/失败快速返回、主线程早退、入参钳制与透传、并发不串扰；
+  **未验证默认 resolver 在真实机器环境里的完整端到端行为**（真实扫描、用户环境隔离、
+  以及超时后后台任务无法取消）。
 
 ### 4.3.1 一条工具链盲区（本轮实际踩到，别再重复推导）
 
