@@ -27,8 +27,17 @@
 # 2026-09-24 新增 GameLogRetentionTests.swift（测试文件 18 → 19 个）后，口径一 40 / 口径二 24（同为 +2，非回归）。
 # 2026-09-25 新增 LaunchCancellationTests.swift（测试文件 19 → 20 个）后，口径一 42 / 口径二 24（同为 +2，非回归）。
 # 2026-09-25 新增 DownloadSliceBudgetTests.swift（测试文件 20 → 21 个）后，口径一 44 / 口径二 24（同为 +2，非回归）。
+# 2026-09-25 新增 MemoryPressureTests.swift（测试文件 21 → 22 个）后，口径一 46 / 口径二 24（同为 +2，非回归）。
 # 判定仍以「逐条 diff 告警集合」为准；若口径一多了 2 的整数倍，先确认是不是测试文件数变了，
 # 再去查真实回归。
+#
+# ⚠️ 本脚本依赖 `-I /tmp/deps` 里的第三方 .swiftmodule。`/tmp` 被清理后（例如收尾 `rm -rf /tmp/SL-*`）
+# 会报 `no such module 'SwiftyJSON'` —— 那不是代码问题，而是依赖没了。回填方法：
+#   ./scripts/verify-build.sh                                    # 先编一次，产出 /tmp/SL-DD/Build/Products/Debug
+#   mkdir -p /tmp/deps
+#   cp -R /tmp/SL-DD/Build/Products/Debug/{SwiftyJSON,ZIPFoundation}.swiftmodule /tmp/deps/
+# 判别口诀：错误里出现 `no such module` 且**告警数为 0**（编译在解析 import 时就中止了）→ 先查 /tmp/deps，
+# 不要去改代码。
 #
 # ⚠️ 关键：本脚本额外开启 MemberImportVisibility。
 # 工程（Xcode 26 默认）启用了 SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY，
