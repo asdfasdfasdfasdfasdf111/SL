@@ -22,7 +22,7 @@ SL（应用内名 **qwq**）是一个使用 **Swift + SwiftUI** 原生编写的 
 
 ### 🚧 未完成（计划中）
 
-- **微软账号登录**：当前为桩实现（`Stubs.swift` 中 `AnyAccount.microsoft` 退化为离线账号）
+- **微软账号登录**：当前为桩实现（`SLCore/Account/AnyAccount.swift` 中 `AnyAccount.microsoft` 退化为离线账号）
 - **外置登录（authlib-injector / Yggdrasil）**：桩实现
 - **主题系统**：仅基础框架
 - **多 Minecraft 目录管理**：仅默认目录

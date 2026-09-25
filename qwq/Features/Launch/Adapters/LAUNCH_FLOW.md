@@ -83,7 +83,7 @@
 |---|---|---|---|
 | 全量资源完整性检查 | `MinecraftInstaller.createCompleteTask` | `SLCore/Minecraft/Download/MinecraftInstaller.swift` | 无调用方；当前只有 `LaunchFix.perform` 的「只补缺失」 |
 | 崩溃错误报告导出（zip：环境信息 + 启动命令 + 日志） | `MinecraftCrashHandler.exportErrorReport` | `SLCore/Minecraft/MinecraftCrashHandler.swift` | 无调用方；`MinecraftCrashHandler.lastLaunchCommand` 仍由 `MinecraftLauncher` 写入，链路是活的 |
-| 崩溃弹窗（含「导出错误报告」按钮） | `PopupManager.showAsync` | `SLCore/Stubs.swift` | 无调用方；底层 `NoticeCenter.presentAndWait` 随之失去唯一使用者 |
+| 崩溃弹窗（含「导出错误报告」按钮） | `PopupManager.showAsync` | `SLCore/Notices/Popup.swift` | 无调用方；底层 `NoticeCenter.presentAndWait` 随之失去唯一使用者 |
 
 **重要**：这三项**不是「已修复」**。流程 A 从来没有被执行过，所以它提供的「兜底」本来就没生效；
 删除它只是移除了**参考实现**，缺口照旧存在。
@@ -114,7 +114,7 @@
 | 步骤 | 目标由谁负责 | 对应现在的代码 |
 |---|---|---|
 | 1. 解析实例 | 服务层：`MinecraftDirectory` + `MinecraftInstance.create` | `SLLaunchBridge.swift` |
-| 2. 用户名校验 | 服务层入口校验（UI 侧只做输入提示） | `Stubs.swift` + `SLLaunchBridge.swift` |
+| 2. 用户名校验 | 服务层入口校验（UI 侧只做输入提示） | `SLCore/Account/OfflineAccount.swift` + `SLLaunchBridge.swift` |
 | 3. 账号与令牌 | 服务层：`OfflineAccount` + `putAccessToken` + **未实现账号告警**（当前缺失，见 D6） | `SLLaunchBridge.swift`、原 `MinecraftInstance.swift`（已删） |
 | 4. 启动前补齐 | `LaunchFixPreflight`（本目录）→ 内部委托 `LaunchFix.perform` | `SLLaunchBridge.swift` |
 | 5. Java 解析 | 抽成独立解析器（`JavaResolverBridge` + `findSuitableJava` + `JavaManager` 兜底） | `SLLaunchBridge.swift`、`MinecraftInstance.resolveAndApplyJava()` |

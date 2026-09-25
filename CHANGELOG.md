@@ -2,6 +2,54 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 拆分 `SLCore/Stubs.swift`：按职责拆成 7 个文件（纯搬家，零行为变更，2026-09-25）
+
+**背景**：`qwq/SLCore/Stubs.swift`（387 行）是一份历史遗留的「杂物袋」—— 文件名说它是桩，
+里面却混着**真实现**（离线账号的 PCL2 兼容 UUID 算法、提示/弹窗通道、`DataManager` 的三个真实字段）。
+后果是审查时容易把真代码当桩看，新增文件也没有明确的归属位置。
+
+**做法**：**只按职责搬家**，一个类型都不改。判据是「纯搬家」的三条自我约束：
+
+| 不做什么 | 为什么 |
+| --- | --- |
+| 不改类型名 / 不合并类型 | 改名会波及全部调用点，超出「拆分」的范围 |
+| 不改 `Codable` 形状 | 落盘 JSON 与旧版本必须互通 |
+| 不改 `UserDefaults` key | key 一改，用户既有设置全部丢失 |
+| 不改任何行为 | 拆分不引入逻辑变更 |
+
+**拆出的 7 个文件**：
+
+| 新位置 | 内容 | 性质 |
+| --- | --- | --- |
+| `SLCore/Account/OfflineAccount.swift` | `Account` 协议、`OfflineAccount`（含 PCL2 兼容 UUID 算法）、`validateOfflineUsername` | **真实现** |
+| `SLCore/Account/AnyAccount.swift` | `AccountError`、`AnyAccount` 枚举、`AccountManager` | 真实现 |
+| `SLCore/Notices/Hint.swift` | `hint(_:_:)`、`HintType` | 真实现 |
+| `SLCore/Notices/Popup.swift` | `PopupButton`/`PopupModel`/`PopupManager` 等 | 真实现（`showAsync` 无生产调用方，保留供崩溃上报用） |
+| `SLCore/Storage/AppSettings.swift` | `DownloadSourceOption`、`AppSettings` | 真实现 |
+| `SLCore/Storage/CodableAppStorage.swift` | `@propertyWrapper CodableAppStorage` | 基础设施 |
+| `SLCore/DataManager.swift` | `DataManager` | 真实现 |
+
+**「纯搬家」是怎么被证明的**（不是靠眼看 diff）：把 `HEAD:qwq/SLCore/Stubs.swift` 与 7 个新文件都做同一套归一化
+（去 `//` 注释、去 `import`、去空行、折叠空白）后 `sort`，再比对：
+
+```bash
+# 判据 = 行数相等 且 diff 为空（多集逐行一致）
+norm() { grep -v '^[[:space:]]*//' "$1" | grep -v '^[[:space:]]*import ' \
+         | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//' | grep -v '^$' | sort; }
+```
+
+实测 **旧 184 行 = 新 184 行，`diff` 输出为空** —— 即每个「非注释、非 import」行在新文件里**恰好出现一次**，
+不多不少。文件总行数从 387 涨到 492（+105）**全部来自新文件头与 `///` 文档注释**
+（工程规约要求新增 Swift 文件必须有文件头），代码行本身未变。
+
+**同步更新的引用**：`README.md`、`qwqTests/TESTING.md`、`qwq/Features/Launch/Adapters/LAUNCH_FLOW.md`、
+`qwq/SLCore/Minecraft/MinecraftCrashHandler.swift`（注释里的 `Stubs.swift:329`）、`qwq/SLCore/STUBS_AUDIT.md`
+（加了「旧内容 → 新位置」对照表）。
+
+**验证**：`typecheck.sh` 两口径 **0 错误**（46 / 24 告警，与拆分前逐项相同）；`verify-build.sh` **BUILD SUCCEEDED**；
+`verify-test.sh run` **`Executed 244 tests, with 1 test skipped and 0 failures`**，
+且 `pointer being freed` / `Restarting after unexpected exit` 两个计数均为 **0**。
+
 ## 给装配根补一道幂等门（复核第 7 条，2026-09-25）
 
 **复核提出的问题**：`AppCompositionRoot.registerRuntimeServices()` 整体**不保证幂等** ——

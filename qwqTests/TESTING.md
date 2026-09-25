@@ -134,7 +134,7 @@ func preScan() {
 - `ModuleRegistryTests.swift` → `Core/Module/SLModule.swift`、`ModuleRegistry.swift`、`Features/Settings/AppSettingsStore.swift`
 - `JavaResolverBridgeTests.swift` → `Features/Java/` 下 `JavaResolverBridge.swift`、`JavaResolver.swift`、
   `JavaRepository.swift`、`JavaRequirement.swift`、`JavaInstallation.swift`、`JavaInfo.swift`
-- `NoticeCenterTests.swift` → `UI/Notices/NoticeCenter.swift`、`SLCore/Stubs.swift`
+- `NoticeCenterTests.swift` → `UI/Notices/NoticeCenter.swift`、`SLCore/Notices/Hint.swift`、`SLCore/Notices/Popup.swift`
 - `NavigationStateTests.swift` → `App/ViewModels/NavigationState.swift`、`Features/ModBrowser/Category.swift`、`Features/Download/DownloadDetailManager.swift`
 - `LaunchPanelStateTests.swift` → `App/ViewModels/LaunchPanelState.swift`、`Features/Settings/ThemeManager.swift`
 - `HomeInteractionStateTests.swift` → `App/ViewModels/HomeInteractionState.swift`
@@ -149,8 +149,8 @@ func preScan() {
 > `JavaResolverTests` 的命令行校验有个已知折中：被测主体（`JavaResolver` / `JavaInstallation` /
 > `JavaRequirement` / `JavaVirtualMachine`）都是真实源码，但三处**直接依赖**用签名一致的替身
 > 顶替，否则会牵出整条依赖链（`JavaRepository` → `JavaManager` → `LauncherSettings` /
-> `AppContext` / SwiftUI；`Stubs.swift`（离线账号 / 提示通道）依赖 `VersionManifest` /
-> `MinecraftDirectory`；全局 `err()` 所在的 `LogManager.swift` 依赖 `SharedConstants`）。
+> `AppContext` / SwiftUI；离线账号 / 提示通道（`SLCore/Account/`、`SLCore/Notices/`）依赖
+> `VersionManifest` / `MinecraftDirectory`；全局 `err()` 所在的 `LogManager.swift` 依赖 `SharedConstants`）。
 > 替身放在 `/tmp`，不入库；在 Xcode 里跑真身 target 时不受此影响。
 
 ## 三、测试用例分布与真实断言说明

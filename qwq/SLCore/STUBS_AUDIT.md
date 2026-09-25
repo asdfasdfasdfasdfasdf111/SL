@@ -6,6 +6,24 @@
 治理原则：**不实现缺失功能，只消除静默降级**——未实现的能力必须显式表达为未实现，
 而非伪装成可用或默默退化为其它行为。
 
+> **后续变更（2026-09-25）：本报告反复引用的 `qwq/SLCore/Stubs.swift` 已按职责拆分并删除。**
+> 拆分只做「文件搬家」——**不改类型名、不改 `Codable` 形状、不改 `UserDefaults` 键、不改任何行为**
+> （核对方式：把拆分前后所有非注释/非 import 行做多重集比对，必须逐条一致）。
+> 阅读下文表格时按此对应关系换算：
+>
+> | 原 `Stubs.swift` 中的内容 | 现位置 |
+> | --- | --- |
+> | `Account` 协议、`OfflineAccount`（含 PCL2 离线 UUID 三件套）、`validateOfflineUsername` | `SLCore/Account/OfflineAccount.swift` |
+> | `AccountError`、`AnyAccount`、`AccountManager` | `SLCore/Account/AnyAccount.swift` |
+> | `hint(_:_:)`、`HintType` | `SLCore/Notices/Hint.swift` |
+> | `PopupButton` / `PopupButtonStyle` / `PopupType` / `PopupModel` / `PopupManager` | `SLCore/Notices/Popup.swift` |
+> | `DataManager` | `SLCore/DataManager.swift` |
+> | `DownloadSourceOption`、`AppSettings` | `SLCore/Storage/AppSettings.swift` |
+> | `CodableAppStorage` | `SLCore/Storage/CodableAppStorage.swift` |
+>
+> 下文中形如 `qwq/SLCore/Stubs.swift` / `qwq/SLCore/Stubs.swift:195` 的位置标注**描述的是拆分前的状态**，
+> 按上表换算即可 —— 这些表格是第二轮普查的快照，本身不再逐格改写（见下面的「阅读须知」）。
+
 ## 0. 结论摘要
 
 - 本次治理共改动 5 个文件，新增 1 个报告文件，全部为「标注 / 显式告警」级改动，不含功能实现。
