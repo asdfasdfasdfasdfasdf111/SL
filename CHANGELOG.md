@@ -2,6 +2,39 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 给装配根补一道幂等门（复核第 7 条，2026-09-25）
+
+**复核提出的问题**：`AppCompositionRoot.registerRuntimeServices()` 整体**不保证幂等** ——
+别处若再调一次，可能重复装崩溃处理器、重复起目录预热任务。复核同时要求：
+**先确认各成员的重复调用语义，再决定要不要改**。
+
+**逐条读实现的结果**（不是预防性写法）：
+
+| 成员 | 自带幂等守卫？ | 依据 |
+| --- | --- | --- |
+| `CrashReporter.install()` | ✅ 有 | `guard !installed else { return }` |
+| `MemoryCacheReclaimer.register()` | ✅ 有 | `guard token == nil else { return }` |
+| `LocalModCatalog.warmUp()` | ❌ **没有** | 它的守卫读的是「预加载是否已完成」标志，而该标志要等后台任务跑完才置位；**在它置位之前重复调用会再起一个后台预热任务**（重复读盘 + 重复发 `localCatalogReady` 通知） |
+
+⟹ 三个成员并不一致，「入口幂等」不能在成员层面默认成立。修法是在**入口处**收口：
+
+```swift
+guard !didRegisterRuntimeServices else { return }
+```
+
+（比逐个去改成员更局部；`didRegisterRuntimeServices` 仍保留「置位放在最后」的语义。）
+
+**为什么没有给它加用例**（已写进测试文件的「覆盖率缺口」第 6 条）：要断言「第二次调用无副作用」，
+就必须把那个标志重置掉；而重置正好抹掉「装配根跑过」的**唯一证据**，会顺手破坏上一条性质。
+在引入独立证据源（例如按调用次数计数）之前，这里只做代码级收口，**不假装有测试覆盖**。
+
+**反向验证复测**：把 `AppCompositionRoot.registerRuntimeServices()` 从 `SLApp.init()` 摘掉，
+仍然**恰好 1 条失败**（就是 `testCompositionRootRegistersReclaimerSubscription`）——
+幂等门没有削弱那条用例的精度。
+
+**验证**：typecheck 两口径 0 错误（46 / 24 告警，与上一轮逐项相同）；真实编译 BUILD SUCCEEDED；
+`Executed 244 tests, with 1 test skipped and 0 failures`。
+
 ## 修正「装配根测试可能是假绿」：让装配动作可指名、让用例从确定状态出发（2026-09-25）
 
 **外部复核指出的问题**：`testCompositionRootRegistersReclaimerSubscription` 断言的是

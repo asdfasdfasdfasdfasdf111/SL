@@ -41,10 +41,25 @@ enum AppCompositionRoot {
     @MainActor
     private(set) static var didRegisterRuntimeServices = false
 
-    /// 执行运行时装配。**不保证幂等** —— 里面三条各自的行为不由本类型控制，
-    /// 生产路径靠「`SLApp.init()` 整个进程只执行一次」来保证只跑一遍。
+    /// 执行运行时装配。**幂等**：已装配过则直接返回，不会产生第二次副作用。
+    ///
+    /// 为什么这道门必须有（2026-09-25 复核提出后**逐条读实现**得到的依据，不是预防性写法）——
+    /// 三个成员各自是否幂等**不一致**，所以「入口幂等」不能在成员层面默认成立：
+    /// · `CrashReporter.install()` —— **自带**守卫（`guard !installed else { return }`），重复调用安全；
+    /// · `MemoryCacheReclaimer.register()` —— **自带**守卫（`guard token == nil else { return }`），重复调用安全；
+    /// · `LocalModCatalog.warmUp()` —— **不带**：它的守卫读的是「预加载是否已完成」标志，
+    ///   而那个标志要等后台任务跑完才置位；在它置位之前重复调用会**再起一个后台预热任务**
+    ///   （重复读盘 + 重复发 `localCatalogReady` 通知）。
+    /// 即：最坏情况下重复调用入口会多起一个后台预热任务 —— 由入口处收口比逐个改成员更局部。
+    ///
+    /// 附带好处：幂等之后，`didRegisterRuntimeServices` 作为「装配是否发生过」的证据，
+    /// 语义只由**第一次**调用决定，不会被后续误用改写。
     @MainActor
     static func registerRuntimeServices() {
+        // 防误用门：见上面注释里逐条核对的成员语义。重复调用在这里被收口，
+        // 而不是依赖「调用方记得只调一次」。
+        guard !didRegisterRuntimeServices else { return }
+
         // 崩溃自捕获：崩溃后把线程堆栈写到 ~/Library/Logs/SL_crash.log（LLDB 拦截时系统不落 .ips）
         CrashReporter.install()
         // 内存压力订阅：把「各子系统缓存回收」登记为内存压力事件的订阅者。

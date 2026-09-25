@@ -398,3 +398,10 @@ final class MemoryPressureTests: XCTestCase {
 //     ⚠️ 这条依赖「测试 target 的 `TEST_HOST` 指向 `qwq.app`」。若哪天测试改成无宿主的
 //     logic test，标志会是 false、`testCompositionRootRegistersReclaimerSubscription` 变红 ——
 //     那是**正确**的失败（装配根确实不再被执行），按该用例注释里的三步排查，不要直接删断言。
+//  6. **`AppCompositionRoot.registerRuntimeServices()` 的幂等门没有对应用例**（它靠
+//     `guard !didRegisterRuntimeServices` 收口，防的是「别处再调一次」这类误用）。
+//     不测的原因是一个两难：要断言「第二次调用不产生副作用」，就必须把标志重置掉；
+//     而把标志重置掉正好抹掉「装配根跑过」的**唯一证据**（见上面第 5 条），
+//     于是这条用例会顺手破坏上一条的性质。在不引入第二个证据源之前，这里只做代码级的收口，
+//     不假装有测试覆盖 —— 若将来真需要在测试里反复驱动装配入口，应先给它一个独立的证据源
+//     （例如按调用次数计数），而不是复用这个单调标志。
