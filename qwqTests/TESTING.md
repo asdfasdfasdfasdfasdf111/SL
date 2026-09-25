@@ -142,6 +142,7 @@ func preScan() {
 - `DownloadAdapterTests.swift` → `Core/Download/DownloadSourceResolver.swift`、`Adapters/` 下
   `DefaultDownloadSourceResolver.swift`、`DefaultDownloadVerifier.swift`、`NetDownloaderDownloadEngine.swift`、
   `SLCore/Download/NetDownloader.swift`、`MultiFileDownloader.swift`、`DownloadSourceManager.swift`
+- `AccountPersistenceCompatTests.swift` → `SLCore/Account/AnyAccount.swift`、`SLCore/Account/OfflineAccount.swift`、`SLCore/Storage/CodableAppStorage.swift`
 - `JavaResolverTests.swift` → `Features/Java/` 下 `JavaResolver.swift`、`JavaInstallation.swift`、
   `JavaRequirement.swift`、`JavaInfo.swift`，外加 `SLCore` 的
   `Java/JavaVirtualMachine.swift`、`Utils/MyLocalizedError.swift`、`Utils/PropertiesParser.swift`
@@ -179,14 +180,15 @@ func preScan() {
 | `GameScanGenerationTests.swift` | 3 | 真实断言（扫描代际；含「超时不作废结果」的回归守卫） |
 | `MemoryPressureTests.swift` | 12 | 真实断言（主线程同步送达 / 等级透传 / 注销与闭包释放 / 生产同构的 dispatch source 上下文 / 装配根接线（§4.17）/ 首次注册 +1 与重复注册 +0 / 端到端清缓存） |
 | `RealLaunchIntegrationTests.swift` | 1 | 默认跳过：真实拉起 Minecraft 进程验证启动链路健康（见 §4.14） |
-| **合计** | **254** | 其中 1 条默认跳过 |
+| `AccountPersistenceCompatTests.swift` | 13 | 真实断言（历史 JSON 字面量解码 / 编码器形状 / 往返 / 包装器机制 / 身份语义 / 安全护栏） |
+| **合计** | **267** | 其中 2 条默认跳过 |
 
 > **本次实测口径（含提交锚点，便于复核）**
 >
 > ```text
-> Executed 254 tests, with 1 test skipped and 0 failures
+> Executed 267 tests, with 2 tests skipped and 0 failures
 > ** TEST EXECUTE SUCCEEDED **
-> Commit: d9b4f3c77f290a5c1ad32c0aec5bff8947c043f2（254 用例即该提交的内容）
+> Commit: <待提交（本轮新增 AccountPersistenceCompatTests，13 条用例）>
 > Date:   2026-09-25
 > Branch: refactor/modular
 > ```
@@ -218,6 +220,10 @@ func preScan() {
 >   进弹窗（成功分支）、无匹配实例只报错、一批 jar 后写覆盖暂存目标（确认时装的的确是暂存那个）、
 >   确认安装后文件落到每个实例的 `versions/<版本>/mods` + 成功气泡、部分失败（warning 横幅 + 可写实例照常装上）、
 >   全部失败（error 横幅列出每个原因）。驱动方式与「为什么不去驱动真实 `findInstances`」见 §4.5。
+> - `254 → 267`：新增 `AccountPersistenceCompatTests`（13 条）。**③ `AnyAccount` 模型分层的前置用例**：
+>   把当前持久化契约（`@CodableAppStorage("accounts")` / `("accountId")` 的磁盘 JSON 形状、
+>   `.microsoft` / `.yggdrasil` 的历史兼容解码、`==` 只比 `id` 的等值语义、`id` 随机 vs `uuid` 可复现）
+>   钉成可执行断言，这样下一步动模型时「改了什么」会被用例立刻拦住。详见 §4.18。
 >
 > 历史：2026-09-24 为 218 条 / 18 个文件。⚠️ **新增测试文件时必须一并更新本表、总数与上表行** ——
 > 本表已漂移过两次（一次「表里 14 个、实际 18 个」，一次「表里 218、实际 232」）。
@@ -472,11 +478,55 @@ rm /tmp/sl-real-launch.enabled
   确定状态出发断言**差值**；动过注册状态的用例在 `defer` 里还原成进程启动态，避免顺序污染。
 - 反向验证（两次破坏**各精确红 1 条**）见 `CHANGELOG.md` 同日条目。
 
+### 4.18 账号持久化兼容契约（`AnyAccount` 模型分层前置，2026-09-25 落地）
+
+**背景**：`AccountManager` 通过 `@CodableAppStorage("accounts")` / `("accountId")` 把账号
+以 **JSON** 落在 `UserDefaults`。落盘格式**不是手写的解析器**，而是 Swift 为「带关联值的 enum」
+与「合成的 Codable 类」自动生成的形状 —— 由 case 名、声明顺序和字段集合决定。
+任何一次「模型分层」重构（拆 struct、改 case 名、增删字段）都会**静默**改变磁盘字节，
+让用户既有账号数据解码失败（UI 表现为「账号没了」）。
+
+**本文件在动模型之前先把当前形状钉死**，覆盖两个方向：
+- **读方向（真正的兼容性）**：按**历史字面量**硬写的 JSON 必须仍能解码，且字段值正确。
+  硬编码 `[{"offline":{"_0":{"id":…,"uuid":…,"name":…}}}]`，不是由被测代码现编出来
+  （否则重构时编码器与解码器一起改就会「自洽地」通过）。
+- **写方向**：当前编码器必须仍产出同一形状（只比**结构/键集合**，不比字符串 ——
+  实测合成 Codable 的键序不稳定：数组形态 `id,uuid,name`、单值形态 `uuid,name,id`）。
+
+**覆盖的性质**（13 条，1 条 `XCTSkip` 跳过）：
+1. 历史 `.offline` 数据仍能解码，`id` / `uuid` / `name` 逐字保留；
+2. `.microsoft` / `.yggdrasil` 这两个**只为兼容历史而保留**的 case 仍能解码，
+   且解出来仍会自报未实现（不被静默当成已实现）；
+3. **未知 case 必须报错**，不得被兜底成 `.offline`（防静默降级）；
+4. 不存在第二种历史形状（扁平字典格式解不出来 → 不该加兼容解码）；
+5. 当前编码器仍产出「合成形状」（case 名键 → `_0` → `{id,uuid,name}`）；
+6. 三种 case 往返后字段逐一保留且 case 不被换掉；
+7. `CodableAppStorage` 包装器机制：写盘 → `JSONDecoder` 读回 → 包装器读回，三者形状一致；
+8. 包装器无数据时回落到默认值、每次读都问存储（不缓存）；
+9. `accountId` 的落盘形状：裸 UUID 字符串 / `null`；
+10. `==` 只比 `id`，**不看 case**（同名 payload 的 `.offline` 与 `.microsoft` 相等）；
+11. `id` 随机（每次新建不同）vs `uuid` 可复现（同名同 uuid）+ RFC 4122 合法性（version=3, variant=9）；
+12. **安全护栏**：用例操作后断言真实 `accounts` / `accountId` 键逐字节未变（测试宿主 = qwq.app，
+    `UserDefaults.standard` 是用户真实偏好域）；
+13. **活体校验**（`XCTSkip`）：本机若真有账号数据，它必须仍能被解码。
+
+**未覆盖（有意）**：`AccountManager.shared.getAccount()` 的 `accountId == nil` 回写分支
+**本轮不测** —— 它会写真实 `UserDefaults`。要安全地测它，得先给 `CodableAppStorage` 注入
+`UserDefaults` 实例（属模型分层那一轮的范围）。
+
+**反向验证**（三条变异，各精确命中、无误伤）：
+- R1（给 `OfflineAccount` 加 `CodingKeys` 把 `uuid` 映射到 `uniqueId`）：3 红
+  （读方向 ×2 + 写方向 ×1）；
+- R2（`==` 改成区分 case）：2 红（`testEqualityIsByIDOnlyAndIgnoresKind`）；
+- R3（`.microsoft` 的 `unimplementedError` 返回 `nil`）：2 红
+  （`testLegacyUnimplementedKindsStillDecodeAndSelfReport` + `testRoundTripPreservesIdentityFieldsAndKind`）。
+  三条变异后均逐字节还原（md5 一致），零残留标记。
+
 ## 五、必须遵守：用例一律写成 `async`（Xcode 26.2 隔离析构缺陷）
 
 **结论**：`qwqTests` 里**每个 `test…()` 方法都必须写成 `async`**。这不是为了等待什么，
-而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 **22** 个测试文件、**248** 个用例已全部统一
-（2026-09-25 实测：`Executed 248 tests, with 1 test skipped and 0 failures`；
+而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 **23** 个测试文件、**267** 个用例已全部统一
+（2026-09-25 实测：`Executed 267 tests, with 2 tests skipped and 0 failures`；
 新增测试文件时请同步上面的数字）。
 
 ### 现象

@@ -2,6 +2,38 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## 给 `AnyAccount` 持久化契约补前置用例（模型分层的前置条件）（2026-09-25）
+
+**背景**：`AccountManager` 通过 `@CodableAppStorage("accounts")` / `("accountId")` 把账号
+以 JSON 落在 `UserDefaults`。落盘格式由 Swift 自动合成（case 名 → `_0` → 字段集合），
+任何模型重构（拆 struct、改 case 名、增删字段）都会**静默**改变磁盘字节，让用户既有账号数据
+解码失败 —— UI 表现为「账号没了」。
+
+**做了什么**：在动模型之前，先把当前持久化契约钉成 **13 条可执行断言**
+（`AccountPersistenceCompatTests.swift`），覆盖两个方向：
+- **读方向**（兼容性）：按历史字面量硬写的 JSON 仍能解码，且字段值正确；
+  `.microsoft` / `.yggdrasil` 仍能解码且仍自报未实现；
+  未知 case 必须报错（防静默降级）。
+- **写方向**：当前编码器仍产出合成形状（只比键集合，不比字符串 ——
+  实测合成 Codable 键序不稳定）。
+
+**安全设计**：测试宿主 = qwq.app，`UserDefaults.standard` 是用户真实偏好域。
+本文件**不驱动 `AccountManager.shared`**（`getAccount()` 会回写 `accountId`），
+只对真实键做只读访问，并用 `testWrapperMechanismLeavesRealAccountKeysUntouched`
+把「不碰真实键」变成可执行断言。
+
+**反向验证**（三条变异，各精确命中、无误伤）：
+- R1（`uuid` 改名为 `uniqueId`）：3 红（读 ×2 + 写 ×1）；
+- R2（`==` 改成区分 case）：2 红（`testEqualityIsByIDOnlyAndIgnoresKind`）；
+- R3（`.microsoft` 不再自报未实现）：2 红（legacy 解码 + 往返）。
+  三条变异后均逐字节还原（md5 一致），零残留标记。
+
+**验证**：两口径 0 错误；告警集合与基线逐条 diff 仅 +2（`ignoring import` 脚本产物）；
+真实编译 `BUILD SUCCEEDED`；全量 `Executed 267 tests, with 2 tests skipped and 0 failures`。
+
+**改动面**：1 文件（`qwqTests/AccountPersistenceCompatTests.swift`，新增）。
+生产代码零改动。
+
 ## 给 `DropInstallCoordinator` 补注入点，并补上「拖入模组 → 安装成功」这条最主线流程的用例（2026-09-25）
 
 **背景**：`TESTING.md §4.5` 登记着一处覆盖缺口 ——「模组安装的**成功分支**没有任何用例」，
