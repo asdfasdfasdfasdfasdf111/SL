@@ -38,7 +38,7 @@
 | `HomeInteractionStateTests.swift` | HomeInteractionState | 纯视图级状态容器 |
 | `DropInstallCoordinatorTests.swift` | DropInstallCoordinator | 只覆盖分流与失败分支；成功安装分支见缺口 §4.5 |
 | `DownloadAdapterTests.swift` | DownloadSourceResolver / DefaultDownloadSourceResolver / NetDownloaderDownloadEngine / DefaultDownloadVerifier.checker | 经构造参数注入 resolver，`precheck` 跳过路径无需网络 |
-| `MemoryPressureTests.swift` | `Core/Events/MemoryPressure.swift`、`App/MemoryCacheReclaimer.swift` | 事件发布/订阅语义 + 「装配根确实注册过」+ 生产同构的 dispatch source 上下文；端到端验证内存压力真能清掉 `ModrinthCategoryCache` |
+| `MemoryPressureTests.swift` | `Core/Events/MemoryPressure.swift`、`App/MemoryCacheReclaimer.swift`、`App/AppCompositionRoot.swift` | 事件发布/订阅语义 + 「装配根确实跑过」（断言 `AppCompositionRoot.didRegisterRuntimeServices`，见 §4.17）+ 生产同构的 dispatch source 上下文；端到端验证内存压力真能清掉 `ModrinthCategoryCache` |
 | `SkinDecoderTests.swift` | `DefaultSkinDecoder.supportedPixelSizes` 与 `SkinAvatarCropper.validateSkin` | 钉死「校验放行的尺寸必须真能被裁剪」这条一致性约束 |
 | `SkinPatchSupportTests.swift` | 皮肤补丁的尺寸分类 / 版本 id 拆分 / 加载器闸门 | 尺寸必须按整倍数判定，最易误放行的是 `128×32` |
 | `RealLaunchIntegrationTests.swift` | （见 §4.14，默认跳过）真实启动链路集成用例 | 拉起真实 Minecraft 进程，靠 `/tmp/sl-real-launch.enabled` 开关默认跳过 |
@@ -111,12 +111,16 @@ func preScan() {
   其余是生产代码里既有的 warning（未使用的局部变量、Swift 6 并发警告等），与测试无关。
 
 > ★ **2026-09-25 复核**（改用统一入口 `./scripts/typecheck.sh`，口径见该脚本头部注释）：
-> **22 个测试文件 / 243 个用例**；两口径均 **0 个 error**；
+> **22 个测试文件 / 244 个用例**；两口径均 **0 个 error**；
 > 告警 **口径一 46 / 口径二 24**（口径一 = 口径二 + 2×测试文件数，差值 22×2 = 44 正是单模块编译
 > 下每个测试文件那两条 `@testable import` 产物，属预期）。
 > ⚠️ 该脚本的**裸** `grep -c 'error:'`／`'warning:'` 会把 swiftc 打印的**源码上下文行**也算进去，
 > 且每条诊断按 **2 倍**计数（本项目正好有一行 `var error: Error?` 会被误算成 error）。
 > 判定一律以**告警集合逐条 diff** 为准，**不要**用数字相等做判据。
+> ⚠️ 2026-09-25 补充实测：**编译一旦报错，后面文件的告警会被吞掉** ——
+> 同一份源码带着 4 处错误时口径一只报 32 告警，修掉后恢复到 46。
+> 所以「告警变少」可能是被截断，不是变好。（该脚本本轮起带 `-D DEBUG`，
+> 理由与实测写在脚本头部：不定义 `DEBUG` 时 `#if DEBUG` 的代码从未被这一层检查过。）
 
 > 注：编辑过程中曾因并发写盘（`input file ... was modified during the build`）出现瞬时失败，
 > 重跑即可。命令本身无随机性。
@@ -173,20 +177,20 @@ func preScan() {
 | `SkinDecoderTests.swift` | 9 | 真实断言（尺寸白名单与裁剪口径一致性） |
 | `SkinPatchSupportTests.swift` | 20 | 真实断言（尺寸分类 / 版本 id 拆分 / 加载器闸门） |
 | `GameScanGenerationTests.swift` | 3 | 真实断言（扫描代际；含「超时不作废结果」的回归守卫） |
-| `MemoryPressureTests.swift` | 11 | 真实断言（主线程同步送达 / 等级透传 / 注销与闭包释放 / 生产同构的 dispatch source 上下文 / 装配根注册 / 幂等 / 端到端清缓存） |
+| `MemoryPressureTests.swift` | 12 | 真实断言（主线程同步送达 / 等级透传 / 注销与闭包释放 / 生产同构的 dispatch source 上下文 / 装配根接线（§4.17）/ 首次注册 +1 与重复注册 +0 / 端到端清缓存） |
 | `RealLaunchIntegrationTests.swift` | 1 | 默认跳过：真实拉起 Minecraft 进程验证启动链路健康（见 §4.14） |
-| **合计** | **243** | 其中 1 条默认跳过 |
+| **合计** | **244** | 其中 1 条默认跳过 |
 
 > **本次实测口径（含提交锚点，便于复核）**
 >
 > ```text
-> Executed 243 tests, with 1 test skipped and 0 failures
-> Commit: e9ec2288b4ed48b812974c213861cb35a1ebc144（243 用例即该提交的内容）
+> Executed 244 tests, with 1 test skipped and 0 failures
+> Commit: 88fc537ea77ef5b141295fa9ee23c305dae09460（244 用例即该提交的内容）
 > Date:   2026-09-25
 > Branch: refactor/modular
 > ```
 >
-> **232 → 241 → 243 的来源逐条写明**（不要只更新总数）：
+> **232 → 241 → 243 → 244 的来源逐条写明**（不要只更新总数）：
 >
 > - `218 → 232`：**不是新增用例，是本表漏记**。此前新增的 4 个文件的用例从未录入本表 ——
 >   `DownloadSliceBudgetTests` +6、`LaunchCancellationTests` +4、`GameLogRetentionTests` +3，
@@ -195,6 +199,8 @@ func preScan() {
 > - `241 → 243`：`MemoryPressureTests` 再补 2 条 —— 生产同构的 dispatch source 上下文
 >   （`testPostFromMainQueueDispatchSourceIsDelivered`）与注销后闭包释放
 >   （`testRemovedHandlerReleasesItsCaptures`）。
+> - `243 → 244`：把幂等用例拆成两条（`testFirstRegisterAddsExactlyOneHandler` +
+>   `testRepeatedRegisterAddsNoHandler`），用例数 +1 —— 拆分理由见 §4.17。
 >
 > 历史：2026-09-24 为 218 条 / 18 个文件。⚠️ **新增测试文件时必须一并更新本表、总数与上表行** ——
 > 本表已漂移过两次（一次「表里 14 个、实际 18 个」，一次「表里 218、实际 232」）。
@@ -392,11 +398,32 @@ rm /tmp/sl-real-launch.enabled
   「先赋值后 activate」的顺序）无法用用例驱动，只能靠读代码 + 真实运行覆盖；
   `MemoryPressureTests` 末尾的「覆盖率缺口」注释里逐条记了原因。
 
+### 4.17 「装配根接线」这条性质是怎么被测的（**曾假绿，2026-09-25 修正**）
+
+- 原先断言的是 `handlerCount >= 1`（**进程级绝对条数**）。它有两个结构性问题：
+  ① 无法区分「应用装配根注册的」与「本文件其它用例自己 `register()` 注册的」；
+  ② `MemoryCacheReclaimer.register()` 是**幂等**的、`token` 又是静态持久状态，
+  于是反向验证可能只是「顺序刚好」而不是「测到了装配根」。
+- 实测（改前）：它当时**确实**会红 —— 把 `register()` 从 `SLApp.init()` 摘掉后，
+  `-only-testing` 单跑与全量跑都**恰好 1 条失败**。但它成立的前提是
+  「该用例在本类按字母序排最前 + 全仓只有这一个类会注册回收器 + 未开随机测试顺序」，
+  属**顺序巧合**：顺序一乱、或将来别的类先注册，它就会**假绿**，反向验证也随之失效。
+- 现在的形式：断言 `AppCompositionRoot.didRegisterRuntimeServices` ——
+  **单调**（置位后无人重置）、**唯一置位点**是应用自己的装配入口（且是它的最后一行，
+  三条装配动作都跑完才置位）。因此与用例执行顺序无关。
+- ⚠️ **它成立的承载性假设**：测试 bundle 由 `qwq.app` 宿主（`qwqTests` 的 `TEST_HOST` 指向
+  `qwq.app/Contents/MacOS/qwq`），所以 `SLApp.init()` 先于任何用例执行。
+  若哪天改成无宿主的 logic test，该用例会变红 —— 那是**正确**的失败（装配根确实不再被执行），
+  按该用例注释里的三步排查，**不要直接删断言**。
+- 配套手段：`MemoryCacheReclaimer.resetForTesting()`（`#if DEBUG`）让用例能从**未注册**这一
+  确定状态出发断言**差值**；动过注册状态的用例在 `defer` 里还原成进程启动态，避免顺序污染。
+- 反向验证（两次破坏**各精确红 1 条**）见 `CHANGELOG.md` 同日条目。
+
 ## 五、必须遵守：用例一律写成 `async`（Xcode 26.2 隔离析构缺陷）
 
 **结论**：`qwqTests` 里**每个 `test…()` 方法都必须写成 `async`**。这不是为了等待什么，
-而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 **22** 个测试文件、**243** 个用例已全部统一
-（2026-09-25 实测：`Executed 243 tests, with 1 test skipped and 0 failures`；
+而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 **22** 个测试文件、**244** 个用例已全部统一
+（2026-09-25 实测：`Executed 244 tests, with 1 test skipped and 0 failures`；
 新增测试文件时请同步上面的数字）。
 
 ### 现象
