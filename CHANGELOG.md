@@ -1,173 +1,35 @@
 # 更新日志
 
-本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
+本文件只记录已合并、可验证且仍然对当前版本有意义的变更。历史补丁、重复描述和已失效的设计说明不再堆积在这里；详细架构迁移另见 `ARCHITECTURE.md` 与重构计划。
 
-## 皮肤资源包兼容 26.2 + 启动体验（2026-08-20）
+## Unreleased
 
-- **皮肤资源包修复（26.2+ 兼容）**：新版（25w31a+）资源包格式改用必填 `min_format`/`max_format`（resource pack ≥ 65 时旧字段 `pack_format`/`supported_formats` 会被判定 "no longer compatible" 并剔除）——现在从版本 jar 内 `version.json` 动态读取 `pack_version.resource_major/minor`，≥ 65 写新格式、老版本回落 `pack_format`；同时修复资源包临时目录未创建导致打包失败的问题。真机验证 26.2-Fabric 正常加载（`Reloading ResourceManager: vanilla, file/SL 皮肤.zip`）
-- 游戏启动强制中文：每次启动前将目标版本 options.txt 的 `lang` 写为 `zh_cn`
-- 版本选择列表支持横向滑动（版本多时左右拖动查看，避免超出卡片高度被裁）
+### 架构治理
 
-## 编译警告清零（2026-08-17）
+- 建立编译期模块注册基础，保留明确的能力键和模块装配入口。
+- 将设置持久化集中到 `AppSettingsStore`；`ThemeManager` 与 `LauncherSettings` 暂时保留为兼容入口。
+- 账号启动准备逻辑统一到 `AnyAccount.prepareLaunch(options:)`。
+- Microsoft 与 Yggdrasil 账号在未实现时显式返回错误，不再静默伪装成离线账号。
+- 启动桥的 Java 回退路径改为直接使用 `JavaManager`，不再读取 `LauncherSettings` 中的第二份 Java 扫描列表。
+- 删除恒返回在线的未使用 `NetworkTest` 存根。
 
-- 全项目编译警告 34 → **0**（macOS 12 目标、Swift 5 语言模式全量构建验证）
-- 并发：新增 `PCLCore/Utils/LockCompat.swift`，`withUnfairLock` / `NSLock.withLockCompat` / `semaphoreWait` 同步中转函数（Apple 建议的 `OSAllocatedUnfairLock` 需 macOS 13，本方案 12 可用且加锁语义与原 lock/unlock 配对完全一致）；`ModpackDownloader`、`ModDownloader`、`SearchTranslator`、`TranslationService` 中 async 上下文内的裸锁调用全部改为作用域锁，去重逻辑保持「检查+登记」原子性
-- Sendable：`CardTranslationModel` weak self 捕获改为进 `MainActor.run` 前拷成强引用常量（写回仍受 `isActive` 守卫）；`ModFileDownloadStarter` 捕获 var 改常量拷贝、移除未使用捕获
-- 机械项：删除无意义 `try?`（2 处）、`withAnimation` 结果丢弃（1 处）、多余的 `nonisolated(unsafe)`（2 处）
+### 可靠性
 
-## 最低系统要求降至 macOS 12.0（2026-08-17）
+- 修复下载、安装、启动、资源校验、日志管道和缓存索引中的多项已验证缺陷。
+- 启动前资源检查失败时停止启动并向用户报告原因。
+- 保护异步任务和进程回调的归属，避免旧任务覆盖新状态。
+- 修复 Java 需求推导、资源包格式、游戏扫描迟到结果和启动进程退出竞态。
+- 增加账号持久化兼容性验证，避免重构破坏既有账户数据格式。
 
-- 部署目标由 macOS 13.0 降至 macOS 12.0（README 系统要求同步更新）
-- 全量替换 macOS 13 专属 API 为 12 可用等价物（行为不变）：
-  - `URL.appending(path:directoryHint:)` / `appending(component:)` → `appendingPathComponent(_:)`（101 处，脚本批量替换 + 人工核对）
-  - `Task.sleep(for: .seconds/.milliseconds)` → `Task.sleep(nanoseconds:)`
-  - `URL.applicationSupportDirectory` 静态属性 → `FileManager.default.urls(for:in:)[0]`
-  - `String.replacing(_:with:)` → `replacingOccurrences(of:with:)`
-  - `URL.path(percentEncoded:)` / `path()` → `path`
-- SwiftUI：新增 `UI/CompatModifiers.swift`，`defaultFocus`、`contentTransition(.opacity)` 以 `#available` 包装修饰符（`defaultFocusCompat` / `contentTransitionOpacityCompat`）；`Scene.defaultSize` 因 SceneBuilder 在 macOS 12 目标下不支持条件语句，改由 `AppDelegate` 在 `applicationDidFinishLaunching` 中统一设置默认窗口尺寸（900×660 居中）
-- 依赖无影响：SwiftyJSON / ZIPFoundation 的最低平台要求均低于 macOS 12
-- 全量编译验证通过（swift build，macOS 12 目标，0 错误）
+### 当前限制
 
-## 仓库规范整理（2026-08-17）
+- 项目仍处于 Beta 阶段。
+- Microsoft 登录、Yggdrasil 登录、完整主题系统和多 Minecraft 目录尚未实现。
+- `PCLCore`、兼容层和多个全局状态入口仍在迁移中；本版本不宣称架构重构已完成。
+- 真实构建依赖 Xcode 与 Swift Package Manager；网络不可用时不能把依赖解析失败误判为源码编译失败。
 
-- 新增 `README.md`（项目介绍、功能状态清单、构建说明、PCL2/PCLMac 致谢与引用说明）与 `LICENSE`（GPL-3.0），修复公开仓库无许可证即默认保留所有权利的问题
-- 修复 Bundle ID：`-23.qwq`（横杠开头，不合法）→ `io.github.asdfasdfasdfasdfasdf111.SL`（按 GitHub 用户名反向域名约定）
-- 源码目录重组：`qwq/` 下 88 个平铺的 Swift 文件按功能归入 `App/`、`Features/`（Launch / Game / Download / ModBrowser / Translation / Skin / Java / Settings）、`Services/`、`UI/`，与既有的 `PCLCore/`、`Models/` 结构统一；纯磁盘移动，未改动任何代码
-- 根目录清理：删除空的 `build_and_run.sh`；`crawl_modrinth.py`、`slice_merge.swift`、`test_catalog.swift` 移入 `scripts/`
-- `.gitignore`：本地构建目录合并为 `/build_*/` 通配
+## Beta 0.1.x
 
-## Beta 0.1.10 版本发布 🚀（2026-08-14）
-
-新增全项目深度扫描校准（覆盖 40+ 文件：启动/下载/安装/资源/皮肤/Java/目录扫描全部核心模块；模式：外部数据强解包崩溃、无锁共享状态、任务归属）：客户端清单缺 assetIndex 字段（1.5.2 及以下旧版本无独立资源索引）不再强解包崩溃，改为置空 objects 跳过散列资源阶段；ArtifactVersionMapper 用第三方清单拼出的 URL 含空格等非法字符时回退保留原 path；LocalModCatalog 解压 bundle 目录资源为空 Data 时提前返回；Util.mavenCoordinate 解析/主类读取/目录替换、JavaVM 损坏 release 文件、CacheStorage 空 index.json、MinecraftInstance 配置与清单读取、VersionManifest 异常日期、ClientManifest 库坐标越界、DownloadSourceManager 测速节流 Date 数据竞争等全部回退兜底或加锁
-
-新增相邻版本预加载：详情页切换版本时静默预取相邻版本加载器状态（in-flight 合并防重复联网），切版本最常看相邻版本，先转圈后秒开
-新增加载器支持检测逐加载器流式状态：检测结果按「版本 × 单个加载器」拆分，每个加载器检测完成立即更新对应卡片（checking 转圈 → 支持/不支持/重试），不再等全部加载器结束才一次性出列表；首帧先用缓存已定论项 + 未定论项转圈初始化，未缓存版本从「白等 8~32 秒」变为「最快 0.5~2 秒先看到部分结果」
-新增按加载器粒度缓存：缓存由整版本一份列表拆为每加载器一条定论（supported 14 天 / notSupported 7 天，快照与 1.21+ 最新大版本 24 小时，unavailable 永不缓存），部分加载器网络失败不再拖累整版无法缓存——下次只重查未定论的那几个，其余秒开；兼容旧版整列表缓存格式自动迁移
-新增检测响应数据复用：加载器支持检测请求到的版本数组（Fabric/Quilt loader 数组、Forge/NeoForge 版本数组）存入内存缓存，下载时 LoaderVersionResolver 直接复用解析加载器最新版本号，检测与下载解析不再各请求一次同一端点
-
-优化 build_audit/（303MB ASan 审计构建产物目录）加入 .gitignore 忽略，与 build_asan/、build_asan2/、build_asan3/ 等同系列构建目录统一不再入库
-优化游戏日志管道解码：readabilityHandler 的 availableData 边界不是 UTF-8 字符/日志行边界，逐块解码会让多字节中文/emoji 跨块变乱码、长行被拆成两行；改为跨回调保留尾部字节的缓冲区，仅在遇到换行符才解码整行（与 PCLLaunchBridge 增量日志读取同款方案），非法 UTF-8 行丢弃、不再产生替换乱码
-优化导航栏分类切换动画：从 Downloads 中旧版同名工程直接移回原始分类画布实现——所有分类页完整横向 HStack 排布，点击导航使用旧版 spring（response 0.6 / damping 0.65 / blend 0.15）连续滑动，从第 1 项跳到第 5 项会真实经过中间页面；恢复 DragGesture.onChanged 实时跟手与松手 25% 阈值切页/原位回弹。替换当前版「仅当前页+起点页完整、其余轻量占位」方案，同时保留下载详情覆盖层及其导航栏常驻逻辑
-优化加载器检测请求：每加载器从「每端点 2 次重试 × 8s 超时」收敛为单请求 4s 请求 / 6s 资源超时（列表展示无需下载级等待），最坏等待从 16~32 秒降至 4 秒级；双源加载器（Fabric/Quilt）改为主源立即请求 + 700ms 后并行备用源的延迟并发，不再等主源完整超时才兜底
-优化同版本请求合并：同一 MC 版本的并发检测（详情页重复进入 / 切回 / 预加载与前台同时触发）复用同一个 in-flight 检测任务，绝不重复向四个加载器端点发请求
-优化启动按钮下载阶段文案：该阶段实际在执行游戏文件/资源完整性检查（含 Java 运行时按需获取），旧文案「Java 下载中」易让玩家误以为卡在 Java 安装；改为「正在检查游戏完整性」更贴合真实行为，安装阶段文案「Java 安装中」保持不变
-
-修复游戏进程退出回调竞态（GPT 交叉复核采纳）：完成回调虽经一次性门控只落一次 UI，但不保证「回调先于进程引用清理」——回调内快速重启游戏时，旧 launch 线程晚到执行 `instance.process = nil` 会清掉新启动进程的引用；现正常退出与启动失败两条清理路径均做进程身份归属校验（`instance.process === process` / `currentProcess === process` 才置 nil），沿用崩溃 #4 归属保护规则
-修复游戏进程退出回调竞态：正常退出（terminationHandler）与 1 秒轮询兜底都可能回调 UI，旧实现在进程「退出但 handler 尚未触发」时两条路径先后触发，导致启动状态被重复复位（重复重置进度/相位）；现两条路径与 run() 抛错共用一次性门控，只回调一次，另在启动失败时补发非零退出码回调并清理进程引用，UI 不再可能卡在「启动中」。日志管道解码改为失败兜底（原强制解包会在 Java/模组输出非法 UTF-8 时直接崩溃启动器）；窗口检测与退出兜底的成功通知加一次性门控，避免 UI 复位逻辑执行两次
-修复下载调度器停止竞态：调度循环判断「无任务」到清空 tickTask 引用之间，若新下载入队会因看到旧引用而跳过启动；现清空后原子重检有活动任务则立即重新拉起调度，新任务不再可能永久停在等待态不下载
-修复缓存索引保存时机错误：缓存库注册 add() 在把条目追加进内存索引之前就落盘 index.json，磁盘索引永远缺少刚注册的库，重启后按索引查不到该库、且命中文件已存在时直接 return 也不补内存索引；现改为先 append 再 save，dest 已存在时也补齐内存索引，索引与磁盘始终一致
-修复启动卡片高度改为随内容区动态：上一版把卡片高度钳制在固定 380–410pt，窗口偏矮时卡片反而比内容区高、偏高时又缩在中间不协调；现改为 `max(0, 内容区高度 - 40)`，上下各留 20pt 空隙、底部不贴边但始终延伸到底部附近，任何窗口尺寸下卡片与右侧内容区同步伸缩
-修复下载详情页圆按钮仍显过低：详情页底部存在外层裁剪，上一版把按钮底部间距提至 36pt 仍偶发偏低；现再上移 8pt（36→44），按钮完整落入窗口可视区、不再被圆角裁掉，滚动内容底部安全空间不变
-修复启动页左侧卡片高度被拉满：`GeometryReader` 中左卡片内部的两个 `Spacer` 会在可伸缩容器里把背景矩形撑到整个内容区底部，形成截图中的过长竖向矩形。现给启动卡片增加 380–410pt 的内容高度约束，保留内部布局与启动逻辑，仅限制背景卡片尺寸；不引入墓碑机制，不改下载后端
-修复下载详情页布局偏移：版本号与返回箭头距离左侧内容边界过近，和下方加载器卡片没有对齐；将详情内容层左内边距从 28pt 调整为 56pt，标题、返回箭头、版本选择区块统一起点。下载按钮原底部间距仅 12pt，在窗口底部裁剪区域容易贴底/被截断；调整为 36pt，按钮整体上移并保留详情页滚动内容底部 90pt 安全空间。仅修改 ModDetailView UI，不引入墓碑后台机制，不改下载后端
-修复镜像源空结果误判：备用镜像返回 404/空数组不再等同「该版本不支持」，仅官方权威源的 404/410/空数组可下定论；镜像空结果按「结果未知」处理走其他源，避免镜像端点未实现导致 Fabric/Quilt 被误报不支持
-修复逐加载器流式实际仍等待全部完成：旧 streamLoaderStates 内部先 await 聚合字典再逐项 yield，导致未缓存项仍一次性出现；现为 TaskGroup 每完成一项立即向全部订阅者广播，同时最终快照兜底覆盖「读缓存→订阅」窗口，逐项渲染真正生效
-修复 HTTP 4xx 误缓存为“不支持”：旧实现把 401/403/408/429 等鉴权、超时、限流错误也视为权威不支持并缓存；现严格仅 404/410 下定论，其余统一 unavailable、不写缓存
-修复 in-flight 合并竞态：查询/创建/登记改为同一锁区间原子完成，避免两个调用同时创建两组请求；每条任务新增 UUID ownerID，完成清理和流订阅解绑均校验归属，旧任务迟到不会清掉新任务；清缓存先摘除全部条目再 cancel 旧任务，沿用崩溃 #4 归属保护规则
-修复当前版本缓存全命中时不预加载相邻版本：相邻版本预取移到提前返回之前，缓存秒开的空闲窗口也会预热下一次最可能切换的版本
-修复旧版资源索引跳过逻辑顺序错误：上一版虽然为缺少 assetIndex 的旧版本增加判空，但判空位于下载 URL 构造之后，官方源与镜像源会先返回空 URL 数组并抛错，导致跳过分支永远无法执行；现将 assetIndex 判空前移到所有下载源调用之前，1.5.2 及以下无独立资源索引的版本会真正置空 objects 并继续安装，同时清理 DownloadSourceManager 的行尾空格使差异检查恢复通过
-
-## Beta 0.1.9 版本发布 🚀（2026-08-14）
-
-优化异步任务归属校验（崩溃 #4 教训通用化）：游戏分类页 fetchItems 引入请求令牌（fetchToken），每次加载/刷新/切换分类递增，网络任务与本地目录任务写回前校验令牌一致才更新列表；仅靠 cancel()+isCancelled 存在竞态窗口（旧任务已通过取消检查、新任务已启动时旧结果仍可能覆盖新列表），令牌校验保证迟到的旧结果一律丢弃、也不再触发无效翻译预取。加载器检测（上一版）、列表加载统一走「取消 + 归属校验」双保险
-
-优化缓存统一（缓存治理第一步）：游戏根目录列表缓存由 UserDefaults.stringArray 迁入统一 CacheManager（内存 LRU 32MB + 磁盘按 key 分文件、两层散列目录），避免 UserDefaults 存大数组膨胀；迁移期自动回退读取 UserDefaults 旧缓存一次后写入新缓存并清除旧值，老用户无感切换。读取链路（锁内查内存 → 锁外读盘 → 回写内存）与翻译/版本清单缓存同构，缓存命中不再触发 UserDefaults 全量 plist 编解码
-
-## Beta 0.1.8 版本发布 🚀（2026-08-14）
-
-修复启动器打开时名称框自动聚焦并全选：`.defaultFocus(false)` 只约束 SwiftUI 的默认焦点，AppKit 仍会把窗口第一个可聚焦控件（用户名 TextField）自动置为 firstResponder，表现为打开即进入编辑态并全选。现启动页挂载一个 0×0 占位 NSView，在页面加入窗口、布局完成后再主动 `makeFirstResponder(nil)` 清空焦点（双次派发确保在 AppKit 自动聚焦完成后执行），用户主动点击或按 Tab 才聚焦
-修复启动页头像延迟约 0.x 秒才出现：原实现在 SwiftUI body 内同步读 skinImageURL 且依赖 onAppear 异步加载两个图层裁剪，首帧头像为空、等 JAR 提取/磁盘写入完成才显示。现保留双层渲染（头 + 帽层叠加），但皮肤数据在视图创建时从本地预载（持久化皮肤原图 → 离线 UUID 皮肤磁盘缓存 → 内置 Steve，均为毫秒级小文件）供首帧直接裁剪显示；后续换版/JAR 提取结果经 onChange 后台刷新数据缓存，body 内不再每次重绘重复读盘
-修复头像改动引发的第二层（帽）图层丢失：初版方案改为直接展示预裁剪头像 avatarImageURL，但未选装自定义皮肤时该路径回退到内置 Steve 头部（无帽层），导致头像只剩头层；已回退为既有双层 SkinLayerView 渲染，仅预载数据提速
-修复启动首帧名称框仍被选中：上一版 FirstResponderReset 用双次派发清焦点，但执行时窗口可能尚未成为 key、AppKit 的自动聚焦在其之后才发生，表现为「先全选、约 1 秒内恢复」。现改为可接收焦点的占位 FocusSinkView 抢占窗口 initialFirstResponder，并监听 didBecomeKeyNotification 在窗口成为 key（AppKit 完成自动聚焦）后再抢一次，仅启动头 2 秒生效、不干扰后续手动聚焦
-修复启动首帧头像仍空白约 0.x 秒：皮肤数据虽已预载，但 SkinLayerView 内部仍在 onAppear 异步裁剪（首帧渲染 Color.clear 透明占位）。现改为在 init 同步裁剪 8×8 区域（毫秒级）作为 @State 初始值，body 直接渲染成品；双层视图按数据加 .id(data)，皮肤数据变更时强制重建重新裁剪，消除「先空白后出现」的闪烁
-
-## Beta 0.1.7 版本发布 🚀（2026-08-14）
-
-优化下载吞吐：直连会话每主机连接数由 8 提至 16，与全局分片池上限（16）对齐——此前 16 个分片只有 8 条连接可用，等效最多 8 路并发；同时启用 HTTP/1.1 管线化减少同主机往返等待。分片写缓冲由 64KB 提至 256KB，落盘次数降为 1/4。分片最小分割粒度由 256KB 提至 1MB，且仅大于 4MB 的大文件才允许多分片：MC 安装的依赖库数以千计且普遍只有几十 KB~几 MB，小文件多分片只会争抢分片池，把并发让给真正的大文件后整体吞吐更高
-优化加载器版本解析双源兜底：Forge 主源（BMCLAPI）网络失败时回退官方 files.minecraftforge.net 索引（promos 取 recommended/latest），NeoForge 回退官方 Maven metadata.xml（按「1.20.1→20.1、1.21→21.0」前缀过滤取最新）；请求成功但结果为空视为「明确不支持」立即报错，不重复请求，仅网络故障才切官方源
-优化加载器支持检测网络层：改用全局共享直连会话（8s 请求/15s 资源超时、禁系统代理、4 并发、管线化），不再每次检测新建 URLSession 浪费 TCP/TLS 握手；Fabric/Quilt 检测补齐 BMCLAPI 镜像兜底，与下载解析双源统一，避免「列表显示支持、下载解析失败」；NeoForge 按版本过滤，仅 1.20.1+ 发起请求
-
-修复加载器列表「鬼畜」误判：网络失败 / 5xx / 超时被当作「空数组 → 没有加载器」，且切换版本时旧检测任务迟到的结果会覆盖新版本结果。现检测结果三态化（supported / notSupported / unavailable）：明确不支持（404/410/空数组）才显示「暂无可用的加载器」，网络失败显示「暂时无法获取 + 重试」绝不误报；结果未知不写缓存（避免覆盖旧缓存），过期磁盘缓存兜底；检测任务增加取消与归属校验（切换版本或销毁视图后旧结果不再写 UI）；快照版本（24w14a）不做「明确不支持」缓存
-修复加载器检测两处残留问题：① 部分加载器已定论 + 部分网络故障时，不再把残缺列表写入 7 天缓存（此前会缓存残缺列表，超时的那几个加载器在 UI 上长期「消失」），改为只临时展示已确认列表、下次进入重新检测；② 切换版本开始检测时立即清空上一版本的加载器列表（加载中 / 网络失败态下，底部下载按钮的 loaderSupported 判定不再误用旧版本数据，避免把旧版本支持的加载器错误安装到新版本上）
-
-
-新增已装版本列表加载器后缀显示：游戏分类版本列表直接读 versions/ 文件夹名，扫描时自动把「文件夹名是纯版本号、但实际装了加载器」的历史遗留版本目录重命名为「版本-加载器」（如 1.6.1 → 1.6.1-Forge），并同步改写 version.json 的 id 字段与 json 文件名；检测依据为 version.json 的 libraries 依赖（net.minecraftforge:forge / net.fabricmc:fabric-loader / net.neoforged / org.quiltmc）或 inheritsFrom 名称，无 json / 已带后缀 / 目标重名一律幂等跳过，绝不覆盖。新下载流程本已产出带后缀目录（GameVersionDownloadStarter 拼 name），本机制兜底历史遗留与第三方启动器装的版本；游戏分类与模组详情页本地版本列表统一生效
-
-## Beta 0.1.5 版本发布 🚀（2026-08-14）
-
-修复下载报 SSL 错误：系统代理（如 Clash 127.0.0.1:12002）对 bmclapi2 / mojang 域名的 TLS 转发失败时，URLSession 报「An SSL error has occurred and a secure connection to the server cannot be made.」（同一 URL 用 curl 直连正常），Forge 安装器、原版 jar、依赖库等下载全部失败且每源重试 3 次共耗时约 45 秒；现启动器网络层统一禁用系统代理直连（connectionProxyDictionary = [:]），API 请求、分片下载、加载器支持检测、Java 运行时下载全部改走直连，官方源被墙时按既有双源机制自动切镜像，不再依赖用户代理软件出口
-修复下载切源耗时过长：连接层错误（SSL 握手失败 / 无法连接 / DNS 失败 / 连接中断 / 超时）下同源重试无意义，旧实现每源重试 3 次才切换；现遇连接层错误直接将失败计数拉满，pickSource 立即跳过该源换下一个，失败反馈从约 45 秒降至秒级
-修复选择下载版本时第一个卡片放大被裁剪：加载器选择横滚列表 HStack 缺水平 padding，第一个卡片放大 1.08 时向左溢出被 ScrollView 裁切；补齐水平 padding（与版本卡片列表一致，预留放大动画空间）
-修复启动器打开时名称框自动被选中：macOS 上绑定了 .focused 的 TextField 是窗口中第一个可聚焦控件时，AppKit 会在窗口成为 key window 时自动将其置为 firstResponder；现显式声明默认焦点为 false，用户主动点击或按 Tab 才聚焦
-
-## Beta 0.1.4 版本发布 🚀（2026-08-13）
-
-修复模组版本降级匹配过宽：Beta 0.1.3 的最后两级降级（放弃加载器过滤 → 完全放弃过滤取最新）会把实际不兼容的文件（错误加载器、错误游戏版本）下载进游戏目录，例如 Forge 环境装到 fabric 版、1.18 装到 1.20 版；现删除这两级，保留 PCL2 语义的「API 精确 → 精确版本+加载器 → 主版本前缀+加载器」三级，全部失败明确报「未找到兼容的模组版本」，绝不静默装错文件
-修复分类切换动画起点内容闪没：切换瞬间旧分类页立即被轻量占位替换，视觉上「内容闪没 + 空占位滑出」，动画起点丢失原页内容；现动画期间保留旧分类完整页一起滑出，spring 动画播放结束后再释放为占位（带归属校验的延时清理，快速连切不互相干扰）
-修复手动单源设置被悄悄跨源兜底：用户选择「仅官方/仅镜像」时，单文件下载与 DownloadItem 仍无条件追加互补源 URL，实际请求了用户明确排除的另一方域名（仅官方也会请求镜像站），破坏设置语义；现仅「自动切换」模式才追加互补源，单源模式只使用所选源、失败即明确报错
-
-## Beta 0.1.3 版本发布 🚀（2026-08-13）
-
-新增分类切换画布平移动画：从分类 1 切到 5 时动画真实经过 2/3/4 中间页（快速、非线性），中间页只渲染「图标+名称」轻量占位（零数据加载、零网络请求），后台不同时实例化 5 个完整页面，整页滑过的动画感与性能两者兼得
-新增模组版本多级降级匹配：精确过滤失败后自动按「精确版本 → 主版本前缀（1.20 ↔ 1.20.x）→ 放弃加载器过滤 → 最新版本」逐级放宽，不再因版本号细微差异（如 1.20 与 1.20.1、快照版）直接报「未找到兼容的模组版本」
-
-优化单文件下载多源化：原版 json / 资源索引 / 原版 jar 全部改为「主源+镜像源」双 URL 顺序下载（PCLNetFile 多源失败切换），原版 jar 下载失败不再卡死在官方源
-优化下载源测速切换：测速下载失败即时切换镜像源（测速失败本身就是官方源不可用的强信号），且不再在每次测速时把已切到镜像的源重置回官方（旧实现切换是一次性的）
-优化下载源状态线程安全：源状态加 NSLock 保护，消除后台测速 Task 写入与读取方之间的数据竞争
-
-修复原版 jar / 散列资源 / 依赖库下载失败不自动切换下载源：DownloadItem 备用源由硬编码官方源改为「与主源互补的源」（官方↔镜像任意方向失败互切）；散列资源旧实现硬编码官方 CDN（resources.download.minecraft.net），官方不可用时全部失败，现走 BMCLAPI 镜像（PCL2 同款 assets 规则）
-修复下载失败不终止任务、不报错：MinecraftInstallTask 失败路径不再只清全局引用，改为记录失败原因并调用 complete() 触发完成回调——下载详情页正常关闭并弹出「下载失败」提示（旧实现详情页永远挂着、既不终止也不报错）
-修复加载器（Fabric/Forge/NeoForge）安装失败被误报成功：失败时抛错中断整条安装链、状态置为 failed（旧实现吞掉错误后继续走后续步骤，最终弹「下载完成」）
-修复 Modrinth 版本过滤多加载器参数编码错误：["fabric,forge"] 改为 ["fabric","forge"]（多值数组逐个引号包裹），否则被 API 当成单个不存在的加载器名，永远查不到结果
-修复分类切换动画缺失：详情页单页替换 transition 期间卡片入场动画不可见即播完，改为画布 HStack 横向排布 + offset 平移（.id 强制重建当前页），中间页轻量占位掠过
-
-## Beta 0.1.2 版本发布 🚀（2026-08-13）
-
-新增游戏版本一键下载安装，支持 Fabric/Forge/NeoForge 加载器自动串联（对标 PCL.Mac DownloadPage）
-新增毛玻璃下载详情页与全局圆形下载按钮，移植 PCL 的 InstallTask 任务模型（总进度 / 实时速度 / 逐任务阶段渲染）
-新增崩溃自捕获（CrashReporter），崩溃时把堆栈写入 ~/Library/Logs/qwq_crash.log
-新增下载 SHA-1 校验（客户端 jar / 依赖库 / 原生库）
-新增 JVM 启动参数动态补齐与调优（-XstartOnFirstThread / G1GC / -Xms 等，查重后追加）
-新增离线用户名输入实时提示（PCL2 HintChinese 语义）
-新增游戏安装并发下载：原版 jar 与散列资源、依赖库与 natives 分波并行（PCL2 风格，全局 16 分片统一限流），加载器只等待 jar、散列资源后台继续
-新增下载阶段独立进度：InstallTask 并行阶段状态机（beginParallelStage/finishParallelStage），详情页各阶段进度互不覆盖
-新增版本列表缓存优先：磁盘缓存供首帧立即可展示（cachedMerged），联网刷新转后台执行，弱网/离线时列表不再长时间空白
-本地 Modrinth 全量目录更新至 122,477 条目
-
-优化加载器支持检测：三级缓存策略（内存 → 磁盘 7 天 TTL → 联网失败回退旧缓存），4xx 视为明确不支持，首次等待由数秒降至约 1 秒
-优化实时翻译：按需翻译 + 并发上限 24 + 内存上限 2000 条，滚动浏览不再卡顿
-优化空闲静默后台：计速器惰性启动、游戏日志增量读取、窗口轮询降频，空闲时几乎零 CPU 与内存占用
-优化在线列表缓存优先：离线 / 弱网也能秒开上次内容
-优化下载详情页密度：左侧统计面板、任务卡片间距与全局下载按钮缩小，顶部标题与分类导航永久保留，仅替换导航下方内容区，切换分类自动收起详情
-优化 Java 查找：7 类来源全量扫描，release 文件一次读取探测主版本
-代码极致模块化：全工程巨型文件按「一个文件一个顶层声明」拆分为 30+ 个单一职责模块（累计 39 批收官）
-优化build_asan3/ ASan 构建产物目录加入 .gitignore 忽略，与 build_asan/、build_asan2/ 同理不再入库
-
-修复下载页选中未列出版本后立即崩溃：下载页合并清单与旧安装器 DataManager 清单不同步，旧代码查不到版本仍强制解包触发 assertionFailure；现先查旧清单、未命中再查合并清单 URL 索引，最终缺失时返回 nil 进入可恢复错误提示，彻底移除该路径断言
-修复下载页游戏版本列表空白：官方 + 未列出两个清单源全部失败且无缓存时返回空数组；现增加 BMCLAPI 镜像自动回退（主源失败自动切换，不依赖设置二选一）+ CacheManager 磁盘缓存兜底（联网失败回退上次内容，弱网/被阻断时列表不再空白）
-修复游戏版本下载首个 await 返回时的 EXC_BAD_ACCESS：Swift 6.2 在 Swift 5 + Approachable Concurrency + 默认 MainActor 组合下会误编译存储 async 闭包的 ABI（swiftlang/swift#86332），现将闭包属性与初始化参数显式统一为 @MainActor，杜绝隐式 actor 参数错位与损坏地址跳转
-修复下载任务完成竞态导致的 UAF 风险：complete/dismiss 增加幂等与归属校验，杜绝旧任务迟到回调清掉新任务引用
-修复 EXC_BAD_ACCESS 崩溃根因：全工程 17 文件 26 处视图生命周期回调同步状态写清零（Modifying state during view update）
-修复下载链路 UAF：下载闭包零 self 捕获、动画改可取消 Task，视图销毁后不再写已释放的 State storage
-修复启动参数规则匹配误删库（移植 PCL2 顺序叠加语义 Rule.check）
-修复 JVM 参数动态补齐三处偏差（-Xmx 查重 / Log4Shell 防御 / natives 路径兜底）
-修复 Java 查找链路五处功能失效（进程死锁 / 版本正则 / 并发覆盖 / 残留 JVM / stub 矛盾）
-修复创建世界 / 进入世界 EncoderException（离线用户名超 16 字符，完整移植 PCL2 离线登录）
-修复离线自定义皮肤无效（PCL2 皮肤资源包方案，全版本生效）
-修复游戏关闭 / 手动关闭进程检测不到（terminationHandler 前置 + 超时轮询兜底）
-修复下载详情页交互：圆按钮 toggle 开关、导航下方内容互斥替换、退出后滚动位置恢复
-修复首次下载原版 JSON 失败：NetManager 未创建 Swim111Launcher/Temp 目录导致分片临时文件无法落盘；现初始化及每次下载前双重确保目录存在
-修复全部文件命中缓存时下载进度重复扣减：跳过分支已逐项计数，批次收尾只更新总体进度
-修复光影详情页返回后侧栏高亮不跳回
-修复加载器选择页显示与所点版本不一致、1.10 等版本仍显示 4 张卡片
-修复解压 ZIP 的路径穿越（ZIP Slip）漏洞
-修复缓存读写并发死锁（NSLock → NSRecursiveLock）、崩溃日志误删共享目录、下载句柄未清理
-修复下载进度负数、下载卡片无动画、Java 刷新按钮动画不同步
-修复版本清单拉取失败缓存空结果、翻译缓存未全量应用等列表展示问题
-修复并发下载进度不准：详情页按 stage 取独立进度、MultiFileDownloader 批次进度重复归一化（downloadAll 的 p 已是 0...1 不再除以文件数）、getProgress 除零/越界与 completeOneFile 完成计数下限保护
-
-## Beta 0.1.1 版本发布 🚀（2026-08-07）
-
-SL 启动器基线：游戏版本下载 / 安装 / 启动、账户与游戏目录管理
-Modrinth 全量目录爬虫（crawl_modrinth.py）与本地全量列表 / 搜索 / 实时翻译
-加载器检测缓存与重试、26.x 版本分类、详情页、版本卡片放大裁剪与图标映射
+- 支持 macOS Minecraft 离线启动、原版/Fabric/Forge/NeoForge/Quilt 安装、Java 扫描与选择、Modrinth 模组浏览、模组包安装和离线皮肤。
+- 启动器包含下载缓存、完整性检查、游戏日志管道和崩溃报告能力。
+- 详细历史变更已归档，不再作为当前架构或行为契约使用。
