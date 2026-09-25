@@ -2,6 +2,19 @@ import AppKit
 import Combine
 import SwiftUI
 
+enum UDK {
+    static let accentColor = "accentColor"
+    static let selectedMinecraftVersion = "selectedMinecraftVersion"
+    static let selectedGameRoot = "selectedGameRoot"
+    static let offlineUsername = "offlineUsername"
+    static let cachedJavaPath = "cachedJavaPath"
+    static let avatarImagePath = "avatarImagePath"
+    static let skinImagePath = "skinImagePath"
+    static let appliedSkinHash = "appliedSkinHash"
+    static let fixedOfflineUUID = "fixedOfflineUUID"
+    static let selectedJavaPath = "selectedJavaPath"
+}
+
 /// Application settings store extracted from the ad-hoc global settings used by
 /// the UI layer. This is the first boundary of the Settings module:
 ///
@@ -74,14 +87,15 @@ final class AppSettingsStore: ObservableObject {
 
         self.selectedMinecraftVersion = UserDefaults.standard.string(forKey: UDK.selectedMinecraftVersion) ?? ""
         self.selectedGameRoot = UserDefaults.standard.string(forKey: UDK.selectedGameRoot) ?? ""
-        self.offlineUsername = UserDefaults.standard.string(forKey: UDK.offlineUsername) ?? "Player"
+        let storedOfflineUsername = UserDefaults.standard.string(forKey: UDK.offlineUsername) ?? "Player"
+        self.offlineUsername = storedOfflineUsername
         self.cachedJavaPath = UserDefaults.standard.string(forKey: UDK.cachedJavaPath)
         self.appliedSkinHash = UserDefaults.standard.string(forKey: UDK.appliedSkinHash)
         self.selectedJavaPath = UserDefaults.standard.string(forKey: UDK.selectedJavaPath)
 
-        if self.offlineUsername == "SL启动器（最好使用英文及下划线）" {
+        if storedOfflineUsername == "SL启动器（最好使用英文及下划线）" {
             self.offlineUsername = "Player"
-            UserDefaults.standard.set(self.offlineUsername, forKey: UDK.offlineUsername)
+            UserDefaults.standard.set("Player", forKey: UDK.offlineUsername)
         }
 
         if let path = UserDefaults.standard.string(forKey: UDK.fixedOfflineUUID) {

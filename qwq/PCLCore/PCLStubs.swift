@@ -90,6 +90,20 @@ public protocol Account: Codable, Identifiable {
     func putAccessToken(options: LaunchOptions) async
 }
 
+public enum AccountError: LocalizedError, Equatable {
+    case microsoftLoginNotImplemented
+    case yggdrasilLoginNotImplemented
+
+    public var errorDescription: String? {
+        switch self {
+        case .microsoftLoginNotImplemented:
+            return "微软账号登录尚未实现，请改用离线账号。"
+        case .yggdrasilLoginNotImplemented:
+            return "外置登录尚未实现，请改用离线账号。"
+        }
+    }
+}
+
 public class OfflineAccount: Account {
     public let id: UUID
     public var uuid: UUID
@@ -170,8 +184,8 @@ public func validateOfflineUsername(_ raw: String) -> String {
 
 public enum AnyAccount: Account, Identifiable, Equatable {
     case offline(OfflineAccount)
-    case microsoft(OfflineAccount) // stub: treat as OfflineAccount
-    case yggdrasil(OfflineAccount) // stub: treat as OfflineAccount
+    case microsoft(OfflineAccount)
+    case yggdrasil(OfflineAccount)
 
     private var account: any Account {
         switch self {
@@ -183,6 +197,25 @@ public enum AnyAccount: Account, Identifiable, Equatable {
     public var name: String { account.name }
     public static func == (lhs: AnyAccount, rhs: AnyAccount) -> Bool { lhs.id == rhs.id }
     public func putAccessToken(options: LaunchOptions) async { await account.putAccessToken(options: options) }
+
+    /// Prepare the account-specific launch fields without silently downgrading
+    /// unsupported account kinds to offline authentication.
+    public func prepareLaunch(options: LaunchOptions) throws {
+        switch self {
+        case .offline(let account):
+            let nameError = validateOfflineUsername(account.name)
+            guard nameError.isEmpty else {
+                throw MyLocalizedError(reason: nameError)
+            }
+            options.playerName = account.name
+            options.uuid = account.uuid
+            account.putAccessToken(options: options)
+        case .microsoft:
+            throw AccountError.microsoftLoginNotImplemented
+        case .yggdrasil:
+            throw AccountError.yggdrasilLoginNotImplemented
+        }
+    }
 }
 
 public class AccountManager: ObservableObject {

@@ -109,11 +109,11 @@ private func pclLaunchInternal(
     }
 
     // 设置离线账号（PCL2 移植：UUID 走 McLoginLegacyUuid，accessToken = UUID）
-    let account = OfflineAccount(safeUsername)
+    let account = AnyAccount.offline(OfflineAccount(safeUsername))
     let options = LaunchOptions()
     options.playerName = safeUsername
     options.uuid = account.uuid
-    options.account = .offline(account)
+    options.account = account
     options.skipResourceCheck = true
 
     // MARK: 启动前补全（PCL2 DlClientFix 移植）：分析缺失/损坏的库与资源 → 仅下载缺失项
@@ -145,8 +145,14 @@ private func pclLaunchInternal(
 
     let launcher = MinecraftLauncher(instance)!
 
-    // 复刻 MinecraftInstance.launch 中启动前的最小化设置
-    account.putAccessToken(options: options)
+    // 复刻 MinecraftInstance.launch 中启动前的账号准备，但不允许
+    // 未实现的账号类型静默退化为离线登录。
+    do {
+        try account.prepareLaunch(options: options)
+    } catch {
+        completion(nil, .failure(error))
+        return
+    }
 
     // MARK: Java 选择：统一走 manifest 优先的动态策略
     // 1) 确保已触发 Java 扫描（若 DataManager 中为空）

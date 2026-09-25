@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Combine
 
 class ThemeManager: ObservableObject {
     static let shared = ThemeManager()
