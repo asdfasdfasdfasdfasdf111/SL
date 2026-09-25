@@ -259,13 +259,6 @@ public class PopupManager: ObservableObject {
     public func showAsync(_ model: PopupModel) async -> Int { 0 }
 }
 
-// MARK: - NetworkTest
-public class NetworkTest {
-    public static let shared = NetworkTest()
-    private init() {}
-    public func hasNetworkConnection() -> Bool { true }
-}
-
 // MARK: - CodableAppStorage (simplified)
 @propertyWrapper
 public struct CodableAppStorage<Value: Codable> {
