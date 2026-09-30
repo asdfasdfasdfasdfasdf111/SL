@@ -2,6 +2,57 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+## `LauncherSettings` 收敛为转发层（设置去双写，审计发现 ③ 收口）（2026-09-25）
+
+**背景**：设置模块有两份内存状态在写**同一批 `UserDefaults` 键** ——
+`AppSettingsStore`（目标上的唯一存储点）与 `LauncherSettings`（历史遗留）。
+两边都是 `@Published` + `didSet` 直写，于是同一个数据有两个写入口：
+后写入者覆盖先写入者，而**两处的内存值互不同步**。
+直接后果是「某处改了设置，另一处读到的还是旧值」，且谁也说不清以哪份为准。
+`ThemeManager` 的 `accentColor` 在更早一轮已收敛，本轮把 `LauncherSettings` 收口。
+
+**做了什么**：`LauncherSettings` 的 9 个持久化字段（`selectedMinecraftVersion` /
+`selectedGameRoot` / `offlineUsername` / `cachedJavaPath` / `avatarImageURL` /
+`skinImageURL` / `appliedSkinHash` / `fixedOfflineUUID` / `selectedJavaPath`）
+**不再自行存储**，改为计算属性整体转发到 `AppSettingsStore.shared`；原先 `private init()` 里
+那段从 `UserDefaults` 恢复的逻辑随之删除（存储点的 init 里本来就有同一份，且更完整）。
+
+- **保留的只有短生命周期 UI 状态**：`showLaunchAlert` / `launchErrorMessage` / `showJavaPopup` /
+  `javaPopupMessage` / `availableJavaList` / `isJavaScanning`。这些**不是设置**，不入库。
+- **必须补上的桥接**：转发字段不再是本类型的 `@Published`，它们的变化只能经
+  `AppSettingsStore.objectWillChange` 冒泡过来。加一条 `AnyCancellable` 订阅转发通知 ——
+  这不是优化，是**功能必需**：断掉后订阅 `LauncherSettings` 的视图（`ContentView` 等）
+  会**静默停止重绘**，编译期毫无提示。
+
+**⚠️ 本轮修掉的一个自身假绿**：新用例最初写成「经 `LauncherSettings` 写字段 → 断言本对象发过通知」。
+实测发现该断言**即使桥接被摘掉也仍然通过**（测试里先取当前值再写回，`AppSettingsStore` 的
+`@Published` 自己会发那次通知），属本项目反复出现的「假绿」。
+改为三段可分别证伪的断言：
+① **绕过兼容层直写存储点** → 断言兼容层收到 1 次通知（只有桥接能产生这 1 次）；
+② 经兼容层写 → 断言发出 1 次通知；
+③ 写入**哨兵值**（写回同值则两份副本永远相等，断言恒真）→ 断言值真的落到存储点，`defer` 无条件还原。
+发射次数 **1** 是实测值，不是推测（初版按「存储点一次 + 桥接一次 = 2」写，实测 `1` 后订正）。
+
+**反向验证（两条变异，各精确命中、无误伤）**：
+- R1 摘掉桥接订阅：`testPersistedFieldWriteIsForwardedToStore` **2 红**（两段通知断言各 1），别的用例全绿；
+- R2 让 `appliedSkinHash` 的 setter 停止转发：**2 红**（两条值断言），通知断言正确地仍绿。
+  两条变异后 `ThemeManager.swift` 均按 md5 逐字节还原（`87ea58e8…`），零残留标记。
+- **哨兵卫生**：哨兵会写进**真实** `UserDefaults`（测试宿主即用户偏好域），故刻意选
+  `appliedSkinHash`（弄脏的后果只是多打一次皮肤包，幂等自愈）而非「已选版本」——
+  本套件已知约 1/4 概率在他处 abort，万一落在 `defer` 前要尽量无害。
+  实测收尾后真实偏好域 `appliedSkinHash` 为正常值、无哨兵残留。
+
+**验证**：两口径 0 错误；告警集合与基线（`git archive HEAD` 导出后单独实测）**逐条 diff：0 新增 / 0 消除**
+（口径一 48、口径二 12，按**去上下文行的唯一告警条数**计；唯一差异是同一文件行号平移）。
+真实编译 `BUILD SUCCEEDED`；全量 `Executed 268 tests, with 2 tests skipped and 0 failures`。
+
+**改动面**：2 文件。`qwq/Features/Settings/ThemeManager.swift` 毛改动 **+60 / −82**
+（`git diff --numstat` 实测；逻辑净变化 **−22** 行 —— 删的是 9 段 `didSet` 落盘 + 一整段恢复 init，
+加的是转发访问器、桥接订阅与说明注释）；`qwqTests/LaunchPanelStateTests.swift` **+66 行**（改写 1 条用例）。
+**生产行为零变更**（字段可读写、通知照发，只是权威来源收成一处）。
+用例数不变（268）—— 本轮是**改写**上一轮新增的那条用例，不是再加一条。
+另有 3 份纯文档（`ARCHITECTURE.md` / `qwqTests/TESTING.md` / 本文件）与 `scripts/typecheck.sh` 的基线注释更新。
+
 ## 给 `AnyAccount` 持久化契约补前置用例（模型分层的前置条件）（2026-09-25）
 
 **背景**：`AccountManager` 通过 `@CodableAppStorage("accounts")` / `("accountId")` 把账号

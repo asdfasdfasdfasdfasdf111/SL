@@ -8,6 +8,10 @@
 //     写 `LauncherSettings` 后根视图将收不到，界面行为会变；
 //  2. 透传：`LauncherSettings` 的任何变化必须冒泡到 `LaunchPanelState.objectWillChange`，
 //     否则订阅它的视图不重绘（外部模块直接写设置字段的场景同样要生效）；
+//     链路有两段：`AppSettingsStore` →（桥接订阅）→ `LauncherSettings` →（归口）→ `LaunchPanelState`。
+//     本文件两段都覆盖：`testExternalSettingsWriteIsForwardedToPanel` 走非持久化字段，
+//     `testPersistedFieldWriteIsForwardedToStore` 走持久化字段的**两段**
+//     （绕过兼容层直写存储点验桥接；再经兼容层写验转发）；
 //  3. 文案与开关语义：`presentMessage` 展示气泡、`presentError` 展示失败提示；
 //     `clearLaunchError` 只清正文不清开关（沿用「点击确定即清空」的既有行为）；
 //  4. `showJavaPopup` / `showLaunchAlert` 开关可读可写，气泡自我关闭依赖写回 false。
@@ -186,6 +190,68 @@ final class LaunchPanelStateTests: XCTestCase {
 
         XCTAssertEqual(emissions, 1,
                        "外部写 LauncherSettings 未透传时，根视图的失败提示不会刷新")
+    }
+
+    /// 持久化字段（转发到 `AppSettingsStore`）的写入同样要冒泡。
+    /// 覆盖兼容层的**两段链路**，两段各用一条断言，且每条都能被单独打破：
+    ///
+    /// ⚠️ **不能**只写「经 `LauncherSettings` 写字段 → 本对象发通知」就收工 —— 那条路即使桥接断开，
+    /// 也可能被兼容层自己的 `@Published` 兜住，断言恒真（本项目反复出现的「假绿」）。
+    /// 要隔离出**桥接订阅**这一段，必须**绕过 `LauncherSettings` 直接写存储点**：
+    /// 此时兼容层自己没有任何写入路径，唯一可能的通知来源就是这条桥接。
+    ///
+    /// 发射次数为 **1**（2026-09-25 实测，非推测）：`store` 的 `@Published` 会先在
+    /// `store.objectWillChange` 上发一次，但那是**另一个对象**的通知，不会串到本对象；
+    /// 本对象只收到桥接转发来的那一次。
+    ///
+    /// 值转发用**哨兵值 + defer 还原**（同「读进程级状态 → 断言差值并还原」的既有做法）：
+    /// 写回同值的话，兼容层即使各自持副本，两份值也永远相等，断言恒真、抓不到分叉。
+    /// 哨兵取一个正常不会出现的串，测完无条件还原到原值。
+    func testPersistedFieldWriteIsForwardedToStore() async {
+        let settings = LauncherSettings.shared
+        let store = AppSettingsStore.shared
+        let current = settings.selectedMinecraftVersion
+
+        // —— 第一段：桥接订阅 `AppSettingsStore.objectWillChange` → `LauncherSettings.objectWillChange`
+        var relayEmissions = 0
+        let relayCancellable = settings.objectWillChange.sink { _ in relayEmissions += 1 }
+        defer { relayCancellable.cancel() }
+
+        // 绕过兼容层，直接写唯一存储点：兼容层自身不参与这次写入。
+        store.selectedMinecraftVersion = current
+
+        XCTAssertEqual(relayEmissions, 1,
+                       "存储点变更未冒泡到兼容层：桥接订阅断了，订阅设置的视图会静默停止重绘")
+
+        // —— 第二段：兼容层的写入要发出通知（视图刷新依赖它）
+        var forwardEmissions = 0
+        let forwardCancellable = settings.objectWillChange.sink { _ in forwardEmissions += 1 }
+        defer { forwardCancellable.cancel() }
+
+        settings.selectedMinecraftVersion = current
+
+        XCTAssertEqual(forwardEmissions, 1,
+                       "写兼容层未触发通知：setter 没有转发到存储点（转发断掉时视图不重绘）")
+
+        // —— 第三段：值必须真的落到存储点（兼容层不再自持副本）。
+        // 用哨兵值区分「转发」与「各存一份」；无论断言结果如何都还原原值。
+        //
+        // ⚠️ 刻意选 `appliedSkinHash` 而不是 `selectedMinecraftVersion` 之类：
+        // 哨兵会写进**真实** `UserDefaults`（测试宿主就是用户偏好域），而本套件已知有约 1/4 概率
+        // 在别处 abort；万一 aborts 发生在 `defer` 之前，被弄脏的键要尽量无害。
+        // 弄脏 `appliedSkinHash` 的最坏后果只是多打一次皮肤资源包（幂等、自愈），
+        // 弄脏「已选版本」则会让用户下次启动选不到版本。
+        // 还原写在最靠近写入处，缩小窗口。
+        let originalHash = store.appliedSkinHash
+        let sentinel = originalHash == "__SL_FORWARD_PROBE__" ? "SLPROBE0" : "__SL_FORWARD_PROBE__"
+        defer { store.appliedSkinHash = originalHash }
+
+        settings.appliedSkinHash = sentinel
+
+        XCTAssertEqual(store.appliedSkinHash, sentinel,
+                       "写兼容层没有落到存储点：兼容层又自持了一份副本，两处会分叉")
+        XCTAssertEqual(settings.appliedSkinHash, sentinel,
+                       "兼容层读到的不是存储点的值")
     }
 }
 

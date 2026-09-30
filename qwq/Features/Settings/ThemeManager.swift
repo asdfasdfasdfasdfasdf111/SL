@@ -66,108 +66,86 @@ func generateFixedUUIDForSteve() -> String {
     return "f47ac10b-58cc-4372-a567-0e02b2c3d479"
 }
 
-/// 全局启动器设置（单例）。每一项都是 `@Published` + `UserDefaults` 双写：
-/// 内存里供 SwiftUI 订阅，磁盘上供下次启动恢复。
-/// ⚠️ 与 ThemeManager 的收敛方向**相反** —— 这里每个 setter 都自己直写 UserDefaults，
-/// 没有统一存储点；因此同一份数据只能有这一个写入口，外部不要再写同名键。
+/// 全局启动器设置兼容层。
+///
+/// 持久化字段统一转发到 `AppSettingsStore`，本类型只保留短生命周期的 UI 状态
+/// 和暂时尚未迁移的 Java 扫描状态。
+///
+/// 收敛说明：此前本类型对同一批键**各持一份内存值并各自写 `UserDefaults`**，
+/// 与 `AppSettingsStore` 构成两个写入口 —— 后写入者覆盖先写入者，两处内存值互不同步
+/// （同一机理见 `ThemeManager` 的收敛说明）。现持久化字段不再自行存储，
+/// 读写整体转发，权威来源只剩 `AppSettingsStore` 一处。
 class LauncherSettings: ObservableObject {
     static let shared = LauncherSettings()
-    
-    /// 当前选中的游戏版本（空串 = 未选择）。界面多处据此显示「当前版本 / 未选择版本」。
-    @Published var selectedMinecraftVersion: String {
-        didSet { UserDefaults.standard.set(selectedMinecraftVersion, forKey: UDK.selectedMinecraftVersion) }
+
+    private let settings = AppSettingsStore.shared
+    /// 存储点变更通知的桥接订阅。
+    /// ⚠️ **必须保留**：上面这些转发字段在本类型里**不再是 `@Published`**，
+    /// 它们的变化只能经 `AppSettingsStore.objectWillChange` 冒泡到这里。
+    /// 这条订阅一旦断掉（或本属性被释放），写设置将不再触发本对象的 `objectWillChange` ——
+    /// 订阅 `LauncherSettings` 的视图（`ContentView` 等）会**静默停止重绘**，编译期毫无提示。
+    /// 契约用例见 `qwqTests/LaunchPanelStateTests.swift` 的「持久化字段写入同样要透传」。
+    private var settingsCancellable: AnyCancellable?
+
+    var selectedMinecraftVersion: String {
+        get { settings.selectedMinecraftVersion }
+        set { settings.selectedMinecraftVersion = newValue }
     }
-    @Published var selectedGameRoot: String {
-        didSet { UserDefaults.standard.set(selectedGameRoot, forKey: UDK.selectedGameRoot) }
+
+    var selectedGameRoot: String {
+        get { settings.selectedGameRoot }
+        set { settings.selectedGameRoot = newValue }
     }
-    /// 离线模式用户名。⚠️ 长度由 `OfflineUsernameValidator` 校验，但**本字段不拦截** ——
-    /// 非法值会一路带到启动流程（见 init 里对历史脏数据的清理）。
-    @Published var offlineUsername: String {
-        didSet { UserDefaults.standard.set(offlineUsername, forKey: UDK.offlineUsername) }
+
+    var offlineUsername: String {
+        get { settings.offlineUsername }
+        set { settings.offlineUsername = newValue }
     }
-    @Published var cachedJavaPath: String? {
-        didSet { UserDefaults.standard.set(cachedJavaPath, forKey: UDK.cachedJavaPath) }
+
+    var cachedJavaPath: String? {
+        get { settings.cachedJavaPath }
+        set { settings.cachedJavaPath = newValue }
     }
-    /// 头像图路径。nil 表示不给（init 会回落到内置图 `stf.png`）。
-    /// ⚠️ 存的是 `url.path` 字符串而非文件书签：文件被移动或改名后这里会变成悬空路径。
-    @Published var avatarImageURL: URL? {
-        didSet {
-            if let url = avatarImageURL {
-                UserDefaults.standard.set(url.path, forKey: UDK.avatarImagePath)
-            } else {
-                UserDefaults.standard.removeObject(forKey: UDK.avatarImagePath)
-            }
-        }
+
+    var avatarImageURL: URL? {
+        get { settings.avatarImageURL }
+        set { settings.avatarImageURL = newValue }
     }
-    @Published var skinImageURL: URL? {
-        didSet {
-            if let url = skinImageURL {
-                UserDefaults.standard.set(url.path, forKey: UDK.skinImagePath)
-            } else {
-                UserDefaults.standard.removeObject(forKey: UDK.skinImagePath)
-            }
-        }
+
+    var skinImageURL: URL? {
+        get { settings.skinImageURL }
+        set { settings.skinImageURL = newValue }
     }
+
     /// 启动失败弹窗的开关与文案。两者分开：先置文案再开开关，避免弹窗闪一帧空文案。
     @Published var showLaunchAlert = false
     @Published var launchErrorMessage: String?
     @Published var showJavaPopup = false
     @Published var javaPopupMessage = "正在选择 Java..."
-    @Published var appliedSkinHash: String? {
-        didSet { UserDefaults.standard.set(appliedSkinHash, forKey: UDK.appliedSkinHash) }
+
+    var appliedSkinHash: String? {
+        get { settings.appliedSkinHash }
+        set { settings.appliedSkinHash = newValue }
     }
-    /// 离线 UUID。用**立即执行的闭包**初始化：首次运行生成一次并落盘，之后每次都读回同一个值。
-    /// ⚠️ 逻辑写在属性初始化器里，每个实例构造时都会跑 —— 靠 `private init()` 的单例约束，
-    /// 实际只会执行一次。
-    @Published var fixedOfflineUUID: String = {
-        if let saved = UserDefaults.standard.string(forKey: UDK.fixedOfflineUUID) {
-            return saved
-        } else {
-            let newUUID = generateFixedUUIDForSteve()
-            UserDefaults.standard.set(newUUID, forKey: UDK.fixedOfflineUUID)
-            return newUUID
-        }
-    }()
+
+    var fixedOfflineUUID: String {
+        get { settings.fixedOfflineUUID }
+        set { settings.fixedOfflineUUID = newValue }
+    }
+
     /// 已发现的 Java 列表。⚠️ 它**不做持久化**（每次启动重新扫描）——
     /// 不要依赖它在冷启动瞬间就可用。
     @Published var availableJavaList: [JavaInfo] = []
     /// Java 扫描是否仍在进行。初值 true：启动瞬间即视为「扫描中」，避免界面先闪一下空态。
     @Published var isJavaScanning: Bool = true
-    @Published var selectedJavaPath: String? {
-        didSet { UserDefaults.standard.set(selectedJavaPath, forKey: UDK.selectedJavaPath) }
+
+    var selectedJavaPath: String? {
+        get { settings.selectedJavaPath }
+        set { settings.selectedJavaPath = newValue }
     }
 
-    /// 从 UserDefaults 恢复全部字段。`private init` + `static let shared` 构成单例 ——
-    /// 这也是上面 `fixedOfflineUUID` 的初始化闭包只会执行一次的原因。
-    /// ⚠️ 恢复逻辑**必须在这里**（不能放进属性的默认值）：默认值表达式在 init 之前求值，
-    /// 那时读不到已存在的 UserDefaults 值。
     private init() {
-        self.selectedMinecraftVersion = UserDefaults.standard.string(forKey: UDK.selectedMinecraftVersion) ?? ""
-        self.selectedGameRoot = UserDefaults.standard.string(forKey: UDK.selectedGameRoot) ?? ""
-        self.offlineUsername = UserDefaults.standard.string(forKey: UDK.offlineUsername) ?? "Player"
-        // 清理历史遗留脏数据：曾把输入框占位提示「SL启动器（最好使用英文及下划线）」存成真实用户名，
-        // 该串 17 个字符 > MC 16 字符上限，1.20.5+ 进服时 hello 包编码直接抛
-        // "String too big (was 17 characters, max 16)"（Failed to encode packet 'serverbound/minecraft:hello'）
-        if self.offlineUsername == "SL启动器（最好使用英文及下划线）" {
-            self.offlineUsername = "Player"
-            UserDefaults.standard.set(self.offlineUsername, forKey: UDK.offlineUsername)
-        }
-        self.cachedJavaPath = UserDefaults.standard.string(forKey: UDK.cachedJavaPath)
-        self.appliedSkinHash = UserDefaults.standard.string(forKey: UDK.appliedSkinHash)
-        self.selectedJavaPath = UserDefaults.standard.string(forKey: UDK.selectedJavaPath)
-        if let path = UserDefaults.standard.string(forKey: UDK.avatarImagePath) {
-            self.avatarImageURL = URL(fileURLWithPath: path)
-        } else {
-            if let builtinURL = Bundle.main.url(forResource: "stf", withExtension: "png") {
-                self.avatarImageURL = builtinURL
-            } else {
-                self.avatarImageURL = nil
-            }
-        }
-        if let path = UserDefaults.standard.string(forKey: UDK.skinImagePath) {
-            self.skinImageURL = URL(fileURLWithPath: path)
-        } else {
-            self.skinImageURL = nil
-        }
+        settingsCancellable = settings.objectWillChange
+            .sink { [weak self] _ in self?.objectWillChange.send() }
     }
 }

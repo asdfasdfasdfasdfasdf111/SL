@@ -34,7 +34,7 @@
 | `JavaResolverBridgeTests.swift` | JavaResolverBridge | 2026-09-25 起经 `makeResolver` 注入 resolver 替身。**调用线程是显式选择的**：覆盖解析结果 / 超时 / 失败 / 并发 / 入参透传的断言**一律在非主线程**调用（否则会被「主线程直接返回 nil」的早退分支整体短路 —— 这正是重写前那 8 条用例的假绿成因，见 §4.3）；**只有 `testMainThreadCallReturnsNilWithoutTouchingResolver` 一条在主线程上**调用，专测早退分支本身。 |
 | `NoticeCenterTests.swift` | NoticeCenter / Notice / NoticeLevel / NoticeButton | MainActor 单例，用例内复位承载者状态 |
 | `NavigationStateTests.swift` | NavigationState | 断言已复位 `DownloadDetailManager.shared` |
-| `LaunchPanelStateTests.swift` | LaunchPanelState | 断言已复位 `LauncherSettings` 四个内存字段 |
+| `LaunchPanelStateTests.swift` | LaunchPanelState | 断言已复位 `LauncherSettings` 四个内存字段；另含「持久化字段经 `AppSettingsStore` 转发」那段的两条透传断言（绕过兼容层直写存储点验桥接、经兼容层写验转发与落值） |
 | `HomeInteractionStateTests.swift` | HomeInteractionState | 纯视图级状态容器 |
 | `DropInstallCoordinatorTests.swift` | DropInstallCoordinator | 分流与失败分支 + **成功安装分支**（经构造注入点把版本检测/实例匹配替换成替身，实例指向临时目录，断言文件真的落到 `versions/<版本>/mods`） |
 | `DownloadAdapterTests.swift` | DownloadSourceResolver / DefaultDownloadSourceResolver / NetDownloaderDownloadEngine / DefaultDownloadVerifier.checker | 经构造参数注入 resolver，`precheck` 跳过路径无需网络 |
@@ -167,7 +167,7 @@ func preScan() {
 | `JavaResolverBridgeTests.swift` | 12 | 真实断言（注入 resolver 替身；调用线程显式选择：非主线程走真实路径、主线程专测早退分支） |
 | `NoticeCenterTests.swift` | 22 | 真实断言 |
 | `NavigationStateTests.swift` | 16 | 真实断言 |
-| `LaunchPanelStateTests.swift` | 11 | 真实断言 |
+| `LaunchPanelStateTests.swift` | 12 | 真实断言 |
 | `HomeInteractionStateTests.swift` | 5 | 真实断言 |
 | `DropInstallCoordinatorTests.swift` | 22 | 真实断言（分流/失败分支 + 成功安装路径：注入替身 + 临时目录，断言文件真的落到 `versions/<版本>/mods`） |
 | `DownloadAdapterTests.swift` | 25 | 真实断言（注入 resolver + `precheck` 跳过路径） |
@@ -181,14 +181,14 @@ func preScan() {
 | `MemoryPressureTests.swift` | 12 | 真实断言（主线程同步送达 / 等级透传 / 注销与闭包释放 / 生产同构的 dispatch source 上下文 / 装配根接线（§4.17）/ 首次注册 +1 与重复注册 +0 / 端到端清缓存） |
 | `RealLaunchIntegrationTests.swift` | 1 | 默认跳过：真实拉起 Minecraft 进程验证启动链路健康（见 §4.14） |
 | `AccountPersistenceCompatTests.swift` | 13 | 真实断言（历史 JSON 字面量解码 / 编码器形状 / 往返 / 包装器机制 / 身份语义 / 安全护栏） |
-| **合计** | **267** | 其中 2 条默认跳过 |
+| **合计** | **268** | 其中 2 条默认跳过 |
 
 > **本次实测口径（含提交锚点，便于复核）**
 >
 > ```text
-> Executed 267 tests, with 2 tests skipped and 0 failures
+> Executed 268 tests, with 2 tests skipped and 0 failures
 > ** TEST EXECUTE SUCCEEDED **
-> Commit: <待提交（本轮新增 AccountPersistenceCompatTests，13 条用例）>
+> Commit: <待提交（本轮 LauncherSettings 转发层收敛，LaunchPanelStateTests 11→12）>
 > Date:   2026-09-25
 > Branch: refactor/modular
 > ```
@@ -224,6 +224,13 @@ func preScan() {
 >   把当前持久化契约（`@CodableAppStorage("accounts")` / `("accountId")` 的磁盘 JSON 形状、
 >   `.microsoft` / `.yggdrasil` 的历史兼容解码、`==` 只比 `id` 的等值语义、`id` 随机 vs `uuid` 可复现）
 >   钉成可执行断言，这样下一步动模型时「改了什么」会被用例立刻拦住。详见 §4.18。
+> - `267 → 268`：`LaunchPanelStateTests` 补**持久化字段那一段链路**的透传用例（11 条 → 12 条，净 +1）：
+>   `LauncherSettings` 收敛为 `AppSettingsStore` 的转发层后，这些字段在兼容层里已**不是 `@Published`**，
+>   通知只能靠一条桥接订阅转发。该用例分三段分别证伪：① 绕过兼容层直写存储点 → 兼容层应收到
+>   **1 次**通知（只有桥接能产生它）；② 经兼容层写 → 应发出 **1 次**通知；③ 写入哨兵值 → 值必须
+>   真的落到存储点（同值写回会让断言恒真，故必须用哨兵 + `defer` 还原）。反向验证：摘桥接 → 2 红、
+>   停转发 → 2 红，均只红在本用例内。**这个用例本身修过一次假绿**（初版只查「收到通知」，
+>   桥接摘掉后仍绿），过程记在 `CHANGELOG.md` 同名条目里。
 >
 > 历史：2026-09-24 为 218 条 / 18 个文件。⚠️ **新增测试文件时必须一并更新本表、总数与上表行** ——
 > 本表已漂移过两次（一次「表里 14 个、实际 18 个」，一次「表里 218、实际 232」）。
@@ -525,8 +532,8 @@ rm /tmp/sl-real-launch.enabled
 ## 五、必须遵守：用例一律写成 `async`（Xcode 26.2 隔离析构缺陷）
 
 **结论**：`qwqTests` 里**每个 `test…()` 方法都必须写成 `async`**。这不是为了等待什么，
-而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 **23** 个测试文件、**267** 个用例已全部统一
-（2026-09-25 实测：`Executed 267 tests, with 2 tests skipped and 0 failures`；
+而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 **23** 个测试文件、**268** 个用例已全部统一
+（2026-09-25 实测：`Executed 268 tests, with 2 tests skipped and 0 failures`；
 新增测试文件时请同步上面的数字）。
 
 ### 现象

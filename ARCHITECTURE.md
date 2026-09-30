@@ -47,6 +47,14 @@ View → ViewModel → UseCase → Service → Infrastructure
   - 不持有 Java、下载、启动等业务状态
   - 复用项目既有的 `UDK` 键名，保证与旧数据兼容
 - `ThemeManager` / `LauncherSettings`：暂时保留为**兼容层**，不再新增字段，逐步收窄后移除
+  - **两者均已完成向 `AppSettingsStore` 的转发收敛**（不再自持持久化字段、不再各自写 `UserDefaults`）：
+    `accentColor` 更早一轮收口；`LauncherSettings` 的 9 个持久化字段已于 2026-09-25 改为计算属性转发。
+  - ⚠️ 两者各有一条 `AnyCancellable` 桥接订阅 `AppSettingsStore.objectWillChange` 并转发到自身
+    `objectWillChange`。**这条订阅是功能必需的，不是优化**：转发字段已不是 `@Published`，
+    订阅这些兼容层的视图（`ContentView` 等）只能靠它刷新，断掉后**静默不重绘**、编译期无提示。
+    契约用例：`qwqTests/LaunchPanelStateTests.swift`；改这两个文件的动因与反向验证见 `CHANGELOG.md`。
+  - 剩余的短生命周期 UI 状态（`showLaunchAlert` / `launchErrorMessage` / `showJavaPopup` /
+    `javaPopupMessage` / `availableJavaList` / `isJavaScanning`）**不是设置**，不入库、不转发。
 
 ## 五、Java 模块
 
