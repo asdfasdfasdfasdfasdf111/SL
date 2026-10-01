@@ -16,7 +16,7 @@
   的结论已作废，根因就是调用方沙箱。
 - **接线记录**：见 `REFACTOR_PLAN.md` 第 15 项（`8172dbf`，TEST BUILD SUCCEEDED，14 文件 181 用例可编译）。
 
-测试文件清单（共 **21** 个，目录自动同步，无需手工加入 target）：
+测试文件清单（共 **22** 个，目录自动同步，无需手工加入 target）：
 
 | 文件 | 被测对象 | 备注 |
 | --- | --- | --- |
@@ -27,6 +27,7 @@
 | `InstallTaskProgressTests.swift` | InstallTask.getProgress / InstallTasks.getProgress | 纯值类型；同名的两个 `getProgress()` 边界口径必须一致（空任务组 0/0 → 曾显示字面量「nan %」，见 §4.15） |
 | `LaunchStateTests.swift` | LaunchState / LaunchError / LaunchResult | 纯值类型 |
 | `LaunchCancellationTests.swift` | `LaunchCancellationToken`（`SLCore/SLLaunchBridge.swift`） | 「进程还没起就别起了」这条语义的守卫；只覆盖令牌本身，不拉起进程 |
+| `GameSessionStoreTests.swift` | `Features/Launch/GameSessionStore.swift` 的 `InMemoryGameSessionStore` | 钉住三条语义：多订阅者、终态 `finish()` 并清理订阅、晚订阅者回放最新状态。用**限时收集**而非直接 `for await`——实现若坏在「不 finish」上，用例应变红而不是把宿主挂死（见 §4.19） |
 | `GameLogRetentionTests.swift` | `Features/Launch/GameSession.swift` 的 `dropCount(forCount:)` 与 `maxLogLines` | 日志合并窗口 + 上限裁剪的边界 |
 | `GameScanGenerationTests.swift` | `Features/Game/ViewModels/GameCategoryViewModel.swift` | 扫描代际；含「超时不作废结果」的回归守卫 |
 | `JavaResolverBridgeTests.swift` | JavaResolverBridge | 2026-09-25 起经 `makeResolver` 注入 resolver 替身。**调用线程是显式选择的**：覆盖解析结果 / 超时 / 失败 / 并发 / 入参透传的断言**一律在非主线程**调用（否则会被「主线程直接返回 nil」的早退分支整体短路 —— 这正是重写前那 8 条用例的假绿成因，见 §4.3）；**只有 `testMainThreadCallReturnsNilWithoutTouchingResolver` 一条在主线程上**调用，专测早退分支本身。 |
@@ -175,7 +176,8 @@ func preScan() {
 | `MemoryPressureTests.swift` | 12 | 真实断言（主线程同步送达 / 等级透传 / 注销与闭包释放 / 生产同构的 dispatch source 上下文 / 装配根接线（§4.17）/ 首次注册 +1 与重复注册 +0 / 端到端清缓存） |
 | `RealLaunchIntegrationTests.swift` | 1 | 默认跳过：真实拉起 Minecraft 进程验证启动链路健康（见 §4.14） |
 | `AccountPersistenceCompatTests.swift` | 13 | 真实断言（历史 JSON 字面量解码 / 编码器形状 / 往返 / 包装器机制 / 身份语义 / 安全护栏） |
-| **合计** | **247** | 其中 2 条默认跳过 |
+| `GameSessionStoreTests.swift` | 6 | 真实断言（多订阅者 / 终态收口 / 回放 / 终态后不投递；限时收集防挂死，见 §4.19） |
+| **合计** | **253** | 其中 2 条默认跳过 |
 
 > **本次实测口径（含提交锚点，便于复核）**
 >
@@ -530,6 +532,38 @@ rm /tmp/sl-real-launch.enabled
 - R3（`.microsoft` 的 `unimplementedError` 返回 `nil`）：2 红
   （`testLegacyUnimplementedKindsStillDecodeAndSelfReport` + `testRoundTripPreservesIdentityFieldsAndKind`）。
   三条变异后均逐字节还原（md5 一致），零残留标记。
+
+### 4.19 `InMemoryGameSessionStore` 的三处缺陷（**已定位并修复**，2026-10-02）
+
+**背景**：该类型此前带 `@available(*, deprecated, message: "全库无引用，待清理")`。
+读实现后确认它不是「死代码」而是**带缺陷的代码**，且缺陷都命中 T8/T9 那条迁移路径上要依赖的语义。
+基准取自**同库既有实现** `Core/Download/Adapters/NetDownloaderDownloadEngine.swift`
+（数组承载多订阅者、`lastState` 回放、终态 `finish()`），即正确做法本项目自己写过。
+
+| # | 缺陷 | 位置 | 后果 |
+|---|---|---|---|
+| 1 | `continuations[UUID: Continuation]` 单个而非集合 | 原 `observe` | 第二次 `observe` **覆盖**第一个 → 先订阅者收不到任何事件且永不结束 |
+| 2 | 终态只 `yield` 不 `finish()` | 原 `update` | `for await` 永不退出；continuation 留在台账里泄漏。**违反协议本文档第 34 行**「流结束时自动清理订阅」 |
+| 3 | 无 `lastState` 回放 | 原 `observe` | 订阅前发生的状态全部丢失 —— 与文件头 T8/T9 同源 |
+
+**取证方式**：本机 xcodebuild 不可用（嵌套沙箱），故先写**独立 swiftc 探针**复刻原逻辑，
+可执行地复现三处缺陷（先订阅者收到 `[]`、两个流都不结束、终态后残留 1 个 continuation、
+晚订阅者首事件 `nil`），并带**反向对照**（照 `NetDownloaderDownloadEngine` 写法 → 两个订阅者都收全、
+都结束、0 泄漏）。修复后再用探针跑全部用例判断逻辑：**15/15 通过**。
+
+**⚠️ 探针的边界（本轮实际踩到）**：探针用 `NSLock` + 多语句闭包，照不出**类型错误**；
+真实源码用 `OSAllocatedUnfairLock`，`onTermination` 闭包隐式返回 `removeValue(forKey:)` 的
+`Continuation?` 与签名的 `Void` 冲突，**`swiftc -typecheck` 当场报错**。
+⇒ 语义由探针验、可编译性由 typecheck 验，**两个关口都要过**，不能用一个替另一个。
+
+**反向验证（三项变异，各精确命中）**：
+- 把 `continuations` 改回单个 → `testAllObserversReceiveUpdates` 红；
+- 摘掉终态的 `finish()` → `testTerminalFinishesStream` + `testFailedStateAlsoFinishesStream` 红；
+- 摘掉回放 → `testLateObserverSeesCurrentState` + `testLateObserverAfterTerminalGetsTerminalThenEnds` 红。
+
+**同轮移除**：该类型上的 `@available(*, deprecated, "全库无引用，待清理")` 标注。
+加入测试后「全库无引用」不再成立；其真实状态是**待接线**（受 `MinecraftInstanceLaunchService`
+文件头的 T1/T2/T8/T9 阻塞，其中 T2 未解决前接线只会写进一个没人订阅的表）。
 
 ## 五、必须遵守：用例一律写成 `async`（Xcode 26.2 隔离析构缺陷）
 
