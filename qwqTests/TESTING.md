@@ -16,7 +16,7 @@
   的结论已作废，根因就是调用方沙箱。
 - **接线记录**：见 `REFACTOR_PLAN.md` 第 15 项（`8172dbf`，TEST BUILD SUCCEEDED，14 文件 181 用例可编译）。
 
-测试文件清单（共 **49** 个，目录自动同步，无需手工加入 target）：
+测试文件清单（共 **52** 个，目录自动同步，无需手工加入 target）：
 
 | 文件 | 被测对象 | 备注 |
 | --- | --- | --- |
@@ -49,6 +49,9 @@
 | `LoaderSupportStateTests.swift` | `SLCore/Minecraft/Mod/Loader/LoaderSupportState.swift` | `LoaderSupportResult` **三态不可合并**（`.notSupported` 可缓存、`.unavailable` 不得缓存，否则一次网络抖动被永久缓存成「不支持」） |
 | `LaunchOptionsTests.swift` | `SLCore/Minecraft/Launch/LaunchOptions.swift` | 默认值（尤其 `skipResourceCheck` 默认 false）；钉住 `javaPath` 是**隐式解包可选**这一危险声明 |
 | `FabricManifestTests.swift` | `SLCore/Minecraft/Mod/Loader/Fabric/FabricManifest.swift` | 只读**嵌套** `loader.version` / `loader.stable`（顶层同名字段不参与）；非法 JSON 抛出而非静默空数组 |
+| `ForgeInstallProfileTests.swift` | `SLCore/Minecraft/Mod/Loader/Forge/ForgeInstallProfile.swift` | `Processor.isAvailableOnClient` 的规则（**只有恰好 `["server"]`** 才判否，双端通用仍为真）；`classpath` 尾部追加 jarPath；`jarPath` 是**已解析路径**而非坐标 |
+| `ModSearchResultTests.swift` | `Features/ModBrowser/Module/ModSearchResult.swift` | `hasMore` 用 **`offset + items.count`** 而非 `offset + limit`（服务端少返时的结论不同）；边界「相等即结束」 |
+| `ModrinthSectionTypeTests.swift` | `Features/ModBrowser/ModrinthSectionType.swift` | 五个侧边栏分类的 `project_type` 映射；`.game` 必须为 nil（走 Mojang 清单而非 Modrinth）；拼写与接口对齐 |
 | `DownloadSliceBudgetTests.swift` | `NetManager.sliceBudget`（分片总超时预算） | 纯函数：验证超时随剩余量与实测速度缩放，慢而健康的下载不再被判失败 |
 | `InstallTaskProgressTests.swift` | InstallTask.getProgress / InstallTasks.getProgress | 纯值类型；同名的两个 `getProgress()` 边界口径必须一致（空任务组 0/0 → 曾显示字面量「nan %」，见 §4.15） |
 | `LaunchStateTests.swift` | LaunchState / LaunchError / LaunchResult | 纯值类型 |
@@ -230,7 +233,10 @@ func preScan() {
 | `LoaderSupportStateTests.swift` | 9 | 真实断言（supported 空列表合法且不同于 notSupported、非 supported 的 loaders 恒空、只有 unavailable 是未知、三态互不相等、列表顺序参与相等、LoaderState 四态与两层分离） |
 | `LaunchOptionsTests.swift` | 7 | 真实断言（默认值、uuid 每次新、javaPath 未赋值为 nil 与可赋值、字段独立、引用类型共享、yggdrasilArguments 可追加） |
 | `FabricManifestTests.swift` | 10 | 真实断言（嵌套字段解析、顶层同名字段不参与、空数组、缺字段默认、非法 JSON 抛出、非数组顶层为空、id 唯一且可变、引用类型、按 stable 过滤） |
-| **合计** | **653** | 其中 2 条默认跳过 |
+| `ForgeInstallProfileTests.swift` | 12 | 真实断言（data 只取 client 子字段与缺省空串、isAvailableOnClient 五种 sides 组合、jarPath 是解析后路径、classpath 尾追 jar、无 classpath 只有 jar、args 原样含占位符、libraries 丢弃空坐标、空 profile） |
+| `ModSearchResultTests.swift` | 8 | 真实断言（hasMore 的三类边界、恰好填满即结束、按 items.count 而非 limit、空页行为、无命中、.empty 常量、全字段参与相等） |
+| `ModrinthSectionTypeTests.swift` | 5 | 真实断言（四类映射逐字、.game 为 nil、五分类恰好四个有值、拼写与接口一致、与 ModProjectType.rawValue 同集合） |
+| **合计** | **682** | 其中 2 条默认跳过 |
 
 > **用例数的正确数法（2026-10-02 踩坑后补记）**
 >
