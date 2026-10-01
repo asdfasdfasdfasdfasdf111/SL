@@ -16,7 +16,7 @@
   的结论已作废，根因就是调用方沙箱。
 - **接线记录**：见 `REFACTOR_PLAN.md` 第 15 项（`8172dbf`，TEST BUILD SUCCEEDED，14 文件 181 用例可编译）。
 
-测试文件清单（共 **24** 个，目录自动同步，无需手工加入 target）：
+测试文件清单（共 **25** 个，目录自动同步，无需手工加入 target）：
 
 | 文件 | 被测对象 | 备注 |
 | --- | --- | --- |
@@ -24,6 +24,7 @@
 | `DownloadVerifierTests.swift` | CryptoKitDownloadVerifier | 临时目录造真实文件，不依赖网络 |
 | `ArtifactVersionMapperTests.swift` | `SLCore/Minecraft/Download/ArtifactVersionMapper.swift`（Apple Silicon 兼容适配） | 8 条替换规则 + 2 个架构分支逐条钉住；夹具经公开入口 `ClientManifest.parse(url:)` 由临时文件构造，**无需任何生产代码改动**（见 §4.20） |
 | `ClientManifestArgumentsTests.swift` | `SLCore/Minecraft/ClientManifestArguments.swift`（启动参数模型） | 新版 `arguments` 与旧版 `minecraftArguments` 两条格式；规则组命中/不命中/否决/特性开关；畸形输入与 `value` 归一化。同样走 `parse(url:)`，**不 import SwiftyJSON** |
+| `ClientManifestRuleTests.swift` | `SLCore/Minecraft/ClientManifestRule.swift`（`Rule`/`OSRule`/`Features`） | 顺序叠加语义逐条钉住；含源码注释点名的 `allSatisfy` 误实现反例。经 `parse` 时对 `libraries` 的筛选结果反推判定，**不 import SwiftyJSON** |
 | `DownloadStateTests.swift` | DownloadProgress / DownloadState / DownloadError | 纯值类型，重点覆盖「大小未知」时的 NaN/除零边界 |
 | `DownloadSliceBudgetTests.swift` | `NetManager.sliceBudget`（分片总超时预算） | 纯函数：验证超时随剩余量与实测速度缩放，慢而健康的下载不再被判失败 |
 | `InstallTaskProgressTests.swift` | InstallTask.getProgress / InstallTasks.getProgress | 纯值类型；同名的两个 `getProgress()` 边界口径必须一致（空任务组 0/0 → 曾显示字面量「nan %」，见 §4.15） |
@@ -181,7 +182,8 @@ func preScan() {
 | `GameSessionStoreTests.swift` | 6 | 真实断言（多订阅者 / 终态收口 / 回放 / 终态后不投递；限时收集防挂死，见 §4.19） |
 | `ArtifactVersionMapperTests.swift` | 11 | 真实断言（逐条 switch 分支：`.x64` 只钉 natives 不动 url/path、`.arm64` 无 natives 早退、LWJGL 3.x 钉 3.3.2、3.3.3 不降级、JNA 4.4.0→5.14.0、objc-bridge 换 Maven Central、LWJGL2 natives 换 glavo、无关 groupId 不动、幂等、artifact 为 nil 不崩） |
 | `ClientManifestArgumentsTests.swift` | 14 | 真实断言（裸字符串透传、规则组命中/不命中/否决、无 os 条件放行、特性开关排除、`value` 字符串与数组两形态、数组内非字符串丢弃、非字符串 value 归一成空、畸形数字条目静默不生效、旧版兜底切分 + 硬编码 10 项 jvm、`arguments` 优先于旧字段、两者皆无返回空、jvm 与 game 同逻辑） |
-| **合计** | **278** | 其中 2 条默认跳过 |
+| `ClientManifestRuleTests.swift` | 12 | 真实断言（空规则恒放行、allow 命中/不命中/`unknown` 通用、`allow`+不匹配 `disallow` 必须保留（`allSatisfy` 反例）、匹配 `disallow` 否决、孤立 `disallow` 默认 false、后出现的 allow 覆盖先前 disallow、`features` 为 `true` 不命中而为 `false` 命中、多条库独立筛选且保序） |
+| **合计** | **290** | 其中 2 条默认跳过 |
 
 > **本次实测口径（含提交锚点，便于复核）**
 >
@@ -610,6 +612,7 @@ rm /tmp/sl-real-launch.enabled
 - ~~`Features/Launch/GameSessionStore.swift`（133 行，fix×2）~~ → §4.19，已完成
 - ~~`SLCore/Minecraft/Download/ArtifactVersionMapper.swift`（159 行，fix×1）~~ → 本节，已完成
 - ~~`SLCore/Minecraft/ClientManifestArguments.swift`（125 行，fix×1）~~ → 已完成（14 条，见文件清单）
+- ~~`SLCore/Minecraft/ClientManifestRule.swift`（92 行）~~ → 已完成（12 条）
 - `SLCore/Download/NetDownloadState.swift`（147 行，fix×1）
 - `Features/Launch/LauncherError.swift`（52 行，fix×1）
 - `Services/DragDropHandler.swift`（61 行，fix×1）
@@ -632,12 +635,54 @@ rm /tmp/sl-real-launch.enabled
 > `MinecraftInstanceLaunchService.swift`（401 行）标成 A 档，实际需要真实 `MinecraftLauncher`）。
 > 判据 D 的下降只能靠**逐个文件读完再写**。
 
+### 4.21 `ArtifactVersionMapper` 的 LWJGL 3.3.3 守卫是**死代码**（2026-10-02 首轮实测抓到，**待决策**）
+
+**怎么发现的**：`ArtifactVersionMapperTests` 首轮实跑 290 条、**4 条断言失败**。
+其中 2 条是本套件**自己的夹具错误**（见本节末），另 1 条用例（2 处断言）是**真缺陷**。
+
+**缺陷**：`.arm64` 分支的 natives 循环里，`!= 3.3.3` 守卫只拦得住 `changeVersion`，
+紧随其后的一行却把版本**硬写成常量**：
+
+```swift
+if library.version.starts(with: "3.") && library.version != lwjglNativeArm64Version {
+    changeVersion(library, lwjglPinnedVersion)      // 守卫只拦得住这一行
+}
+library.name = "org.lwjgl:\(library.artifactId):\(lwjglPinnedVersion):natives-macos-arm64"
+//                                ^^^^^^^^^^^^^^^^^^ 硬编码常量 ⇒ 守卫被作废
+// 下一行的 url 又用 library.version 拼接，而它已被上面这行重新推导成 3.3.2
+```
+
+**后果**：3.3.3 的 natives 仍被钉到 3.3.2；而**核心 jar 因另一个循环里同一个守卫保持 3.3.3**
+⇒ core 与 natives **版本不一致**（LWJGL 的 natives 与 core 强耦合）。
+`ArtifactVersionMapper.swift` 文件头也明说「对 **< 3.3.3** 的版本统一钉到 3.3.2」，
+即 3.3.3 本不该被钉 —— **行为与自述矛盾**。
+
+**可达性**：需同时满足「清单里有 natives 条目」且「LWJGL 版本 == 3.3.3」。
+文件头指出多数现代版本走 `-cp` 本地库路径（`getNeededNatives().isEmpty` ⇒ 早退），
+故属**潜在缺陷而非必然触发**，但可达。
+
+**修法（一行）**：该行改用 `library.version` ——
+`library.name = "org.lwjgl:\(library.artifactId):\(library.version):natives-macos-arm64"`
+对 <3.3.3 无影响（`changeVersion` 已把 version 改成 3.3.2），**只影响 3.3.3 这一种输入**。
+
+**当前处置**：**未改生产代码** —— 这是改游戏启动行为的变更，而本机没有端到端验证通道（跑不起游戏）。
+用例 `testArm64DoesNotDowngradeLWJGL333` 按**预期行为**断言并用 `XCTExpectFailure` 标记：
+修好后它会报 "expected failure did not occur" 而**变红**，提醒移除标记 —— 自清理，不靠人记。
+
+**同轮修掉的 2 条夹具错误（本套件自己的错，非生产缺陷）**：
+`.arm64` 分支开头有 `if manifest.getNeededNatives().isEmpty { return }` 的**早退**；
+`testArm64UpgradesLegacyJNA` 与 `testArm64ReplacesObjcBridgeToMavenCentral` 的夹具里
+**没有 natives 库**，于是整段替换逻辑根本没执行，「查不到改后的坐标」被误报成失败。
+⇒ 已给两个夹具各加一个 natives 库，并在测试文件头写明这条坑：
+**凡验证 `.arm64` 替换规则的夹具，必须至少含一个 natives 库。**
+
 ## 五、必须遵守：用例一律写成 `async`（Xcode 26.2 隔离析构缺陷）
 
 **结论**：`qwqTests` 里**每个 `test…()` 方法都必须写成 `async`**。这不是为了等待什么，
-而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 **21** 个测试文件、**247** 个用例已全部统一
-（`247` 系 2026-10-01 删除两个「为不存在之物而写」的测试文件后由 268 − 21 推算，见 §三顶部；
-最后一次真实实测为 2026-09-25 的 `Executed 268 tests, with 2 tests skipped and 0 failures`。
+而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 **25** 个测试文件、**290** 个用例已全部统一
+（2026-10-02 实测：`Executed 290 tests, with 2 tests skipped and 4 failures` —— 那 4 条是
+`ArtifactVersionMapperTests` 首轮暴露的问题，其中 2 条为本套件夹具错误、1 条为真缺陷见 §4.21，
+均已处置；最后一次**全绿**实测为 2026-09-25 的 `Executed 268 tests, with 2 tests skipped and 0 failures`。
 **用例数以 CI 为准**，新增测试文件时不必再手工同步上面的数字）。
 
 ### 现象

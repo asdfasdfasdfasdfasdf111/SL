@@ -18,11 +18,22 @@
 //  | `.x64` | 只把 natives 钉到 `natives-macos`，**不动** url / path |
 //  | `.arm64` 且 `getNeededNatives().isEmpty` | 直接返回，**一个字段都不改** |
 //  | `org.lwjgl` + 版本 3.x ≠ 3.3.3 | 钉到 3.3.2 |
-//  | `org.lwjgl` + 版本 == 3.3.3 | **不降级**（守卫 `!= lwjglNativeArm64Version`） |
+//  | `org.lwjgl` + 版本 == 3.3.3 | **应不降级**（守卫 `!= lwjglNativeArm64Version`）—— ⚠️ 实测该守卫是**死代码** |
 //  | `net.java.dev.jna` + 4.4.0 | 升到 5.14.0 |
 //  | `ca.weblite:java-objc-bridge` | 换成 `org.glavo.hmcl.mmachina:...` + Maven Central |
 //  | `org.lwjgl.lwjgl:lwjgl-platform`（natives） | 换成 glavo 重打包制品 + 固定 path |
 //  | 其它 groupId | `default: continue`，不改 |
+//
+//  ⚠️ **首轮实测抓到一处真缺陷**：`.arm64` 的 natives 循环里，`!= 3.3.3` 守卫只拦得住
+//  `changeVersion`，紧随其后的一行却把版本硬写成常量 `lwjglPinnedVersion`，于是守卫被作废 ——
+//  3.3.3 的 natives 仍被降级到 3.3.2，而核心 jar 保持 3.3.3 ⇒ **core 与 natives 版本不一致**。
+//  详见 `testArm64DoesNotDowngradeLWJGL333` 的注释（内含一行修法）。该用例以
+//  `XCTExpectFailure` 标记，修好后会自动变红提醒移除标记。
+//
+//  ⚠️ **写夹具的坑（本套件初版踩过，2 条用例因此变红）**：`.arm64` 分支开头有
+//  `if manifest.getNeededNatives().isEmpty { return }` 的**早退**。夹具里若没有 natives 库，
+//  整段替换逻辑根本不执行，测出来的「没改」会被误读成「规则不生效」。
+//  ⇒ 凡是验证 `.arm64` 替换规则的夹具，**必须至少含一个 natives 库**。
 //
 //  另外钉住两条**源码注释里自认的**性质（不是新需求，是防止将来无声改变）：
 //  1. 幂等性「恰好成立」——重复调用是空操作（注释明说「不是设计保证」）；
@@ -147,20 +158,48 @@ final class ArtifactVersionMapperTests: XCTestCase {
                        "url 必须按改后的版本与 arm64 分类器重拼")
     }
 
-    /// LWJGL **3.3.3** 官方已带 arm64 natives ⇒ **不得降级**（守卫 `!= lwjglNativeArm64Version`）。
+    /// LWJGL **3.3.3** 官方已带 arm64 natives ⇒ 按注释**不得降级**。
+    ///
+    /// ⚠️ **本用例首次运行就抓到一处真缺陷（2026-10-02）**：natives 循环里的守卫是**死代码**——
+    /// ```swift
+    /// if library.version.starts(with: "3.") && library.version != lwjglNativeArm64Version {
+    ///     changeVersion(library, lwjglPinnedVersion)      // 守卫只拦得住这一行
+    /// }
+    /// library.name = "org.lwjgl:\(library.artifactId):\(lwjglPinnedVersion):natives-macos-arm64"
+    /// //                                ^^^^^^^^^^^^^^^^^^ 下一行把版本硬写成常量 ⇒ 守卫被作废
+    /// ```
+    /// 后果：3.3.3 的 natives 仍被钉到 3.3.2，而**核心 jar 因另一个循环里同一个守卫保持 3.3.3**
+    /// ⇒ core 与 natives **版本不一致**（LWJGL 的 natives 与 core 是强耦合的）。
+    /// 文件头也明说「对 **< 3.3.3** 的版本统一钉到 3.3.2」，即 3.3.3 本不该被钉。
+    ///
+    /// 修法（一行）：该行改用 `library.version` ——
+    /// `library.name = "org.lwjgl:\(library.artifactId):\(library.version):natives-macos-arm64"`
+    /// 对 <3.3.3 无影响（`changeVersion` 已把 version 改成 3.3.2），**只影响 3.3.3 这一种输入**。
+    ///
+    /// 本用例按**预期行为**断言，并用 `XCTExpectFailure` 标记已知缺陷：
+    /// 一旦修好，它会报 "expected failure did not occur" 而**变红**，提醒移除标记 —— 自清理，不靠人记。
     func testArm64DoesNotDowngradeLWJGL333() async throws {
         let manifest = try makeManifest(manifestJSON([nativeLibrary("org.lwjgl:lwjgl:3.3.3")]))
 
         ArtifactVersionMapper.map(manifest, arch: .arm64)
 
         let entry = try XCTUnwrap(manifest.getNeededNatives().first)
+
+        XCTExpectFailure("已知缺陷：natives 循环的 `!= 3.3.3` 守卫被下一行的硬编码版本作废（见本用例注释）")
         XCTAssertEqual(entry.key.version, "3.3.3", "3.3.3 已是官方 arm64 版本，不得降级到 3.3.2")
         XCTAssertEqual(entry.key.name, "org.lwjgl:lwjgl:3.3.3:natives-macos-arm64")
     }
 
     /// JNA 老版本 4.4.0 无 arm64 natives ⇒ 升到 5.14.0，并重拼 url / path。
+    ///
+    /// ⚠️ 夹具必须**同时放一个 natives 库**：`.arm64` 分支开头有
+    /// `if manifest.getNeededNatives().isEmpty { return }` 的早退，
+    /// 只放普通库时整段替换逻辑根本不会执行（本用例初版就踩了这个坑，实测变红）。
     func testArm64UpgradesLegacyJNA() async throws {
-        let manifest = try makeManifest(manifestJSON([plainLibrary("net.java.dev.jna:jna:4.4.0")]))
+        let manifest = try makeManifest(manifestJSON([
+            nativeLibrary("org.lwjgl:lwjgl:3.3.2"),   // 保证不早退
+            plainLibrary("net.java.dev.jna:jna:4.4.0"),
+        ]))
 
         ArtifactVersionMapper.map(manifest, arch: .arm64)
 
@@ -182,8 +221,12 @@ final class ArtifactVersionMapperTests: XCTestCase {
 
     /// `ca.weblite:java-objc-bridge` 无 arm64 制品 ⇒ 换成 glavo 重打包版，
     /// **且 url 必须指向 Maven Central**（该坐标不在 Mojang 库仓库里）。
+    /// 同样需要夹具里有一个 natives 库以避免早退（见 `testArm64UpgradesLegacyJNA`）。
     func testArm64ReplacesObjcBridgeToMavenCentral() async throws {
-        let manifest = try makeManifest(manifestJSON([plainLibrary("ca.weblite:java-objc-bridge:1.0.0")]))
+        let manifest = try makeManifest(manifestJSON([
+            nativeLibrary("org.lwjgl:lwjgl:3.3.2"),   // 保证不早退
+            plainLibrary("ca.weblite:java-objc-bridge:1.0.0"),
+        ]))
 
         ArtifactVersionMapper.map(manifest, arch: .arm64)
 
