@@ -16,7 +16,7 @@
   的结论已作废，根因就是调用方沙箱。
 - **接线记录**：见 `REFACTOR_PLAN.md` 第 15 项（`8172dbf`，TEST BUILD SUCCEEDED，14 文件 181 用例可编译）。
 
-测试文件清单（共 **32** 个，目录自动同步，无需手工加入 target）：
+测试文件清单（共 **33** 个，目录自动同步，无需手工加入 target）：
 
 | 文件 | 被测对象 | 备注 |
 | --- | --- | --- |
@@ -32,6 +32,7 @@
 | `ModpackVersionGroupingTests.swift` | `Features/Download/ModpackVersionGrouping.swift` | 只用 `game_versions.first` 当键、`game_versions` 为空整条跳过、降序用语义比较（`1.10` 在 `1.9` 前） || `DownloadStateTests.swift` | DownloadProgress / DownloadState / DownloadError | 纯值类型，重点覆盖「大小未知」时的 NaN/除零边界 |
 | `NetDownloadStateTests.swift` | `SLCore/Download/NetDownloadState.swift`（`NetManager.Slice` / `FileRecord`） | 分片剩余量、文件完成度、源是否全判死。钉住源码自认的三处问题：`end` 找不到自己时兜底成文件末尾、`fileSize == -2` 未特判得 0、`isAllSourcesFailed` 分界是 `<` |
 | `DetailVersionDecisionTests.swift` | `Features/Game/DetailVersionDecision.swift` | 详情页「默认选中哪个版本」的完整规则；重点守住两处反直觉设计：游戏版本页 `itemName` 缺失时**返回 nil 不回退**、两个函数的 nil 语义分别是「不决定」与「保持现状」 |
+| `LoaderNameResolverTests.swift` | `Features/ModBrowser/ModLoader.swift` + `Features/Download/LoaderNameResolver.swift` | `displayName`/`assetName` 映射；钉住注释点名的三条：rawValue 全小写而 assetName 混排、assetName **非单射**（rift/unknown 都→fabric）、子串匹配 **neoforge 先于 forge** |
 | `DownloadSliceBudgetTests.swift` | `NetManager.sliceBudget`（分片总超时预算） | 纯函数：验证超时随剩余量与实测速度缩放，慢而健康的下载不再被判失败 |
 | `InstallTaskProgressTests.swift` | InstallTask.getProgress / InstallTasks.getProgress | 纯值类型；同名的两个 `getProgress()` 边界口径必须一致（空任务组 0/0 → 曾显示字面量「nan %」，见 §4.15） |
 | `LaunchStateTests.swift` | LaunchState / LaunchError / LaunchResult | 纯值类型 |
@@ -196,7 +197,8 @@ func preScan() {
 | `ModpackVersionGroupingTests.swift` | 8 | 真实断言（首现保留、多游戏版本只用第一个、空 `game_versions` 跳过、空输入、语义降序、原字符串去重键、结果取自入参） |
 | `NetDownloadStateTests.swift` | 25 | 真实断言（`end` 中间/末尾/乱序/找不到自己、`undone` 正常与夹 0 与未知大小 `-1` 与未获取大小 `-2`、活跃分片含 resumed、`merging` 非终止、进度在 done/非正大小/正常/夹 1 四种情形、`isAllSourcesFailed` 的 `<` 边界与 `sourcesOnce` 排除与空真） |
 | `DetailVersionDecisionTests.swift` | 19 | 真实断言（游戏版本页 vs 其他页 × 首次加载/就绪后决议的全部分支；nil 的两种含义分列） |
-| **合计** | **409** | 其中 2 条默认跳过 |
+| `LoaderNameResolverTests.swift` | 19 | 真实断言（displayName/assetName 全表、rawValue 小写与往返、assetName 非单射、assetName(for:) 大小写与未知回退、name(forVersion:) 的本地优先/后缀从后往前/子串顺序/各级回退） |
+| **合计** | **428** | 其中 2 条默认跳过 |
 
 > **本次实测口径（含提交锚点，便于复核）**
 >
@@ -633,7 +635,8 @@ rm /tmp/sl-real-launch.enabled
 - ~~`Features/Download/ModpackVersionGrouping.swift`（31 行）~~ → 已完成（8 条）
 - ~~`SLCore/Download/NetDownloadState.swift`（147 行，fix×1）~~ → 已完成（25 条）
 - ~~`Features/Game/DetailVersionDecision.swift`（54 行）~~ → 已完成（19 条）
-- `Features/Launch/LauncherError.swift`（52 行，fix×1）
+- ~~`Features/ModBrowser/ModLoader.swift` + `Features/Download/LoaderNameResolver.swift`~~ → 已完成（19 条）
+- `Features/Launch/LauncherError.swift`（52 行，fix×1，**已评估为差目标**：7 个 case 里 5 个是死枚举、live 的只是中文文案映射，测它是镜像测试）
 - `Services/DragDropHandler.swift`（61 行，fix×1）
 - `App/CrashReporter.swift`（198 行，fix×1，走信号路径，改动前先读 `signal-handler-alloc-audit`）
 
