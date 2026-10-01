@@ -16,7 +16,7 @@
   的结论已作废，根因就是调用方沙箱。
 - **接线记录**：见 `REFACTOR_PLAN.md` 第 15 项（`8172dbf`，TEST BUILD SUCCEEDED，14 文件 181 用例可编译）。
 
-测试文件清单（共 **25** 个，目录自动同步，无需手工加入 target）：
+测试文件清单（共 **30** 个，目录自动同步，无需手工加入 target）：
 
 | 文件 | 被测对象 | 备注 |
 | --- | --- | --- |
@@ -25,7 +25,11 @@
 | `ArtifactVersionMapperTests.swift` | `SLCore/Minecraft/Download/ArtifactVersionMapper.swift`（Apple Silicon 兼容适配） | 8 条替换规则 + 2 个架构分支逐条钉住；夹具经公开入口 `ClientManifest.parse(url:)` 由临时文件构造，**无需任何生产代码改动**（见 §4.20） |
 | `ClientManifestArgumentsTests.swift` | `SLCore/Minecraft/ClientManifestArguments.swift`（启动参数模型） | 新版 `arguments` 与旧版 `minecraftArguments` 两条格式；规则组命中/不命中/否决/特性开关；畸形输入与 `value` 归一化。同样走 `parse(url:)`，**不 import SwiftyJSON** |
 | `ClientManifestRuleTests.swift` | `SLCore/Minecraft/ClientManifestRule.swift`（`Rule`/`OSRule`/`Features`） | 顺序叠加语义逐条钉住；含源码注释点名的 `allSatisfy` 误实现反例。经 `parse` 时对 `libraries` 的筛选结果反推判定，**不 import SwiftyJSON** |
-| `DownloadStateTests.swift` | DownloadProgress / DownloadState / DownloadError | 纯值类型，重点覆盖「大小未知」时的 NaN/除零边界 |
+| `PropertiesParserTests.swift` | `SLCore/Utils/PropertiesParser.swift` | 逐条钉住源码自列的「与 `java.util.Properties` 的 3 处差异」+ 静默降级（读不到 ⇒ 空字典）；含空值/多 `=`/引号剥离等边界 |
+| `AssetIndexTests.swift` | `SLCore/Minecraft/AssetIndex.swift` | 解析、`appendTo` 的分桶布局 `<base>/<hash 前两位>/<hash>`；钉住「丢弃逻辑路径 key ⇒ 同 hash 两条目不去重」。**断言不依赖 `objects` 顺序**（来自字典 values） |
+| `OfflineUsernameValidatorTests.swift` | `Features/Skin/OfflineUsernameValidator.swift` | 长度上限 16 的**边界两侧**、`utf16.count` 语义（emoji 记 2）、trim 发生在长度判定之前、长度提示优先于字符提示 |
+| `GameVersionHelperTests.swift` | `Features/Game/GameVersionHelper.swift` | `compare` 的数值序（非字符串序）、缺位补 0、**非数字段被丢弃**（`1.20.1-rc1` 与 `1.20` 判等、`1.20-pre` 小于 `1.19`）；`sortForDisplay` 置顶；`isAprilFoolVersion` 的列表命中先于 type 守卫、`point→.` 归一化、新旧快照格式 |
+| `ModpackVersionGroupingTests.swift` | `Features/Download/ModpackVersionGrouping.swift` | 只用 `game_versions.first` 当键、`game_versions` 为空整条跳过、降序用语义比较（`1.10` 在 `1.9` 前） || `DownloadStateTests.swift` | DownloadProgress / DownloadState / DownloadError | 纯值类型，重点覆盖「大小未知」时的 NaN/除零边界 |
 | `DownloadSliceBudgetTests.swift` | `NetManager.sliceBudget`（分片总超时预算） | 纯函数：验证超时随剩余量与实测速度缩放，慢而健康的下载不再被判失败 |
 | `InstallTaskProgressTests.swift` | InstallTask.getProgress / InstallTasks.getProgress | 纯值类型；同名的两个 `getProgress()` 边界口径必须一致（空任务组 0/0 → 曾显示字面量「nan %」，见 §4.15） |
 | `LaunchStateTests.swift` | LaunchState / LaunchError / LaunchResult | 纯值类型 |
@@ -183,7 +187,12 @@ func preScan() {
 | `ArtifactVersionMapperTests.swift` | 11 | 真实断言（逐条 switch 分支：`.x64` 只钉 natives 不动 url/path、`.arm64` 无 natives 早退、LWJGL 3.x 钉 3.3.2、3.3.3 不降级、JNA 4.4.0→5.14.0、objc-bridge 换 Maven Central、LWJGL2 natives 换 glavo、无关 groupId 不动、幂等、artifact 为 nil 不崩） |
 | `ClientManifestArgumentsTests.swift` | 14 | 真实断言（裸字符串透传、规则组命中/不命中/否决、无 os 条件放行、特性开关排除、`value` 字符串与数组两形态、数组内非字符串丢弃、非字符串 value 归一成空、畸形数字条目静默不生效、旧版兜底切分 + 硬编码 10 项 jvm、`arguments` 优先于旧字段、两者皆无返回空、jvm 与 game 同逻辑） |
 | `ClientManifestRuleTests.swift` | 12 | 真实断言（空规则恒放行、allow 命中/不命中/`unknown` 通用、`allow`+不匹配 `disallow` 必须保留（`allSatisfy` 反例）、匹配 `disallow` 否决、孤立 `disallow` 默认 false、后出现的 allow 覆盖先前 disallow、`features` 为 `true` 不命中而为 `false` 命中、多条库独立筛选且保序） |
-| **合计** | **290** | 其中 2 条默认跳过 |
+| `PropertiesParserTests.swift` | 21 | 真实断言（基本解析 / 空值与多 `=` / 空行与两类注释 / `:` 不作分隔符 / 值内 `#`·`!` 截断 / 不处理转义与续行 / 键值 trim / 引号剥一层 / 读不到即空字典） |
+| `AssetIndexTests.swift` | 13 | 真实断言（解析 hash+size、空与缺失 `objects`、非法 JSON 抛出、缺字段默认值、同 hash 两条目、`appendTo` 分桶、单字符与空 hash 不崩、`appendTo` 与 size 无关） |
+| `OfflineUsernameValidatorTests.swift` | 10 | 真实断言（合法/空/纯空白、trim 前置、16 边界两侧、utf16 计数、非法字符、长度优先、emoji 落在字符提示） |
+| `GameVersionHelperTests.swift` | 23 | 真实断言（数值序、缺位补 0、返回差值、非数字段丢弃的三种表现、降序与置顶、列表命中先于 type 守卫、`point→.`、新旧快照格式、pre/rc 排除、兜底 true） |
+| `ModpackVersionGroupingTests.swift` | 8 | 真实断言（首现保留、多游戏版本只用第一个、空 `game_versions` 跳过、空输入、语义降序、原字符串去重键、结果取自入参） |
+| **合计** | **365** | 其中 2 条默认跳过 |
 
 > **本次实测口径（含提交锚点，便于复核）**
 >
@@ -613,6 +622,11 @@ rm /tmp/sl-real-launch.enabled
 - ~~`SLCore/Minecraft/Download/ArtifactVersionMapper.swift`（159 行，fix×1）~~ → 本节，已完成
 - ~~`SLCore/Minecraft/ClientManifestArguments.swift`（125 行，fix×1）~~ → 已完成（14 条，见文件清单）
 - ~~`SLCore/Minecraft/ClientManifestRule.swift`（92 行）~~ → 已完成（12 条）
+- ~~`SLCore/Utils/PropertiesParser.swift`（81 行）~~ → 已完成（21 条）
+- ~~`SLCore/Minecraft/AssetIndex.swift`（76 行）~~ → 已完成（13 条）
+- ~~`Features/Skin/OfflineUsernameValidator.swift`（23 行）~~ → 已完成（10 条）
+- ~~`Features/Game/GameVersionHelper.swift`（57 行）~~ → 已完成（23 条）
+- ~~`Features/Download/ModpackVersionGrouping.swift`（31 行）~~ → 已完成（8 条）
 - `SLCore/Download/NetDownloadState.swift`（147 行，fix×1）
 - `Features/Launch/LauncherError.swift`（52 行，fix×1）
 - `Services/DragDropHandler.swift`（61 行，fix×1）
