@@ -16,7 +16,7 @@
   的结论已作废，根因就是调用方沙箱。
 - **接线记录**：见 `REFACTOR_PLAN.md` 第 15 项（`8172dbf`，TEST BUILD SUCCEEDED，14 文件 181 用例可编译）。
 
-测试文件清单（共 **42** 个，目录自动同步，无需手工加入 target）：
+测试文件清单（共 **45** 个，目录自动同步，无需手工加入 target）：
 
 | 文件 | 被测对象 | 备注 |
 | --- | --- | --- |
@@ -42,6 +42,9 @@
 | `ModProjectTests.swift` | `Features/ModBrowser/Module/ModProject.swift` | 四个转换 init **各自丢哪些字段**（搜索命中无分类、详情响应无简介/图标/下载量且 title 回落 id、本地目录无 slug、分类页单元无下载量与版本列表）；`primaryFile` 取值顺序 |
 | `ArchiveUtilTests.swift` | `SLCore/Utils/ArchiveUtil.swift` | 三个方法**三种失败表达**（`hasEntry`/`getEntry` 把「归档打不开」与「条目不存在」合并；`getEntryOrThrow` 可区分）；夹具用 ZIPFoundation 现造真 zip |
 | `MinecraftLauncherLogTests.swift` | `SLCore/Minecraft/Launch/MinecraftLauncherLog.swift` | 两个**已修 bug** 的回归守卫：`close()` 补刷无换行的残行、`drainPipe` 在写端被孙进程持有时**有时限返回**；另覆盖丢弃模式与跨回调多字节字符 |
+| `ShaderLoaderFilterTests.swift` | `Features/Download/ShaderLoaderFilter.swift` | 光影页加载器白名单与**空则回退默认**；钉住「去重走 `Set` ⇒ 结果顺序不确定」与「回退列表须与白名单同集合」 |
+| `ItemFilterTests.swift` | `Features/ModBrowser/ItemFilter.swift` | 搜索谓词四分支；重点是**中文译名反向匹配**（输「科技」须经 `ModrinthTagMap` 反查到 `technology`），且该分支是**精确相等**而非包含 |
+| `GameVersionFilterTests.swift` | `Features/Game/GameVersionFilter.swift` | 适配层的取舍：`id` 缺失**静默丢弃**、`type` 缺失不落入任何分类、保序；并与 `VersionFilterUseCase` 逐子分类对齐 |
 | `DownloadSliceBudgetTests.swift` | `NetManager.sliceBudget`（分片总超时预算） | 纯函数：验证超时随剩余量与实测速度缩放，慢而健康的下载不再被判失败 |
 | `InstallTaskProgressTests.swift` | InstallTask.getProgress / InstallTasks.getProgress | 纯值类型；同名的两个 `getProgress()` 边界口径必须一致（空任务组 0/0 → 曾显示字面量「nan %」，见 §4.15） |
 | `LaunchStateTests.swift` | LaunchState / LaunchError / LaunchResult | 纯值类型 |
@@ -216,7 +219,10 @@ func preScan() {
 | `ModProjectTests.swift` | 21 | 真实断言（type 全表与展示名与往返、sha1 取 hashes 与两类缺失、hashes nil 归一空字典、primaryFile 四种情形、四个 init 的字段得失与 title 回落 id 与未知 projectType 为 nil、可哈希） |
 | `ArchiveUtilTests.swift` | 14 | 真实断言（存在/缺失条目、不可打开归档同样 false、重载版本、取内容、缺失抛 MyLocalizedError 且文案精确、不可打开抛底层错、静默版两类失败都 nil、二进制逐字节保真、空条目、多条目独立、条目名大小写敏感） |
 | `MinecraftLauncherLogTests.swift` | 21 | 真实断言（门控恰好一次与 32 并发只一个赢、完整行立即落盘、制表符展开、残行缓冲、**close 补刷残行**、残行展开、空缓冲不补行、非法 UTF-8 残字节原样落盘、close 幂等、关闭后丢弃、多字节跨回调拼接、非法整行丢弃不影响后续、丢弃模式、空 Data、drainPipe 正常/写端不关有时限/无数据有时限/排空后残行仍补刷）⚠️ 含 2 条各等约 3s 的用例 |
-| **合计** | **582** | 其中 2 条默认跳过 |
+| `ShaderLoaderFilterTests.swift` | 11 | 真实断言（非光影页小写去重与空不回退、Set 顺序不定、光影页白名单过滤与大小写不敏感、空则回退默认、回退与白名单同集合、回退顺序确定） |
+| `ItemFilterTests.swift` | 13 | 真实断言（标题/简介/标签三分支与大小写、中文译名反向匹配、反向匹配是精确相等、要求条目确有该标签、空 tags 退化、空查询恒真、无关查询不命中） |
+| `GameVersionFilterTests.swift` | 10 | 真实断言（三桶成员、id 缺失与空串被丢弃、type 缺失不落任何分类、保序、nil 子分类为空、空输入、只返回 id、与 UseCase 逐子分类一致） |
+| **合计** | **619** | 其中 2 条默认跳过 |
 
 > **用例数的正确数法（2026-10-02 踩坑后补记）**
 >
