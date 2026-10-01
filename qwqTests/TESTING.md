@@ -16,7 +16,7 @@
   的结论已作废，根因就是调用方沙箱。
 - **接线记录**：见 `REFACTOR_PLAN.md` 第 15 项（`8172dbf`，TEST BUILD SUCCEEDED，14 文件 181 用例可编译）。
 
-测试文件清单（共 **52** 个，目录自动同步，无需手工加入 target）：
+测试文件清单（共 **55** 个，目录自动同步，无需手工加入 target）：
 
 | 文件 | 被测对象 | 备注 |
 | --- | --- | --- |
@@ -49,6 +49,9 @@
 | `LoaderSupportStateTests.swift` | `SLCore/Minecraft/Mod/Loader/LoaderSupportState.swift` | `LoaderSupportResult` **三态不可合并**（`.notSupported` 可缓存、`.unavailable` 不得缓存，否则一次网络抖动被永久缓存成「不支持」） |
 | `LaunchOptionsTests.swift` | `SLCore/Minecraft/Launch/LaunchOptions.swift` | 默认值（尤其 `skipResourceCheck` 默认 false）；钉住 `javaPath` 是**隐式解包可选**这一危险声明 |
 | `FabricManifestTests.swift` | `SLCore/Minecraft/Mod/Loader/Fabric/FabricManifest.swift` | 只读**嵌套** `loader.version` / `loader.stable`（顶层同名字段不参与）；非法 JSON 抛出而非静默空数组 |
+| `GameLanguageSetterTests.swift` | `SLCore/Minecraft/Launch/GameLanguageSetter.swift` | 启动前强改 options.txt 语言为**小写 zh_cn**（大写会被 1.13+ 判无效切回英文）；就地替换/追加/建档三分支 + 正则只吃到行尾 |
+| `CardTranslationStoreTests.swift` | `Features/Translation/CardTranslationStore.swift` | 2000 条上限裁剪；`set` 只在**新 key** 且满限时才裁、`merge` 用 `count+batch>max` 判据且**先裁后并** |
+| `SidebarHighlightTests.swift` | `UI/SidebarHighlight.swift` | 高亮偏移表与 `index(for:)` 的**成对不变量**（文件头点名：两处不同步只表现为高亮歪一格，无报错）；单调递增 + 8 下标互异 |
 | `ForgeInstallProfileTests.swift` | `SLCore/Minecraft/Mod/Loader/Forge/ForgeInstallProfile.swift` | `Processor.isAvailableOnClient` 的规则（**只有恰好 `["server"]`** 才判否，双端通用仍为真）；`classpath` 尾部追加 jarPath；`jarPath` 是**已解析路径**而非坐标 |
 | `ModSearchResultTests.swift` | `Features/ModBrowser/Module/ModSearchResult.swift` | `hasMore` 用 **`offset + items.count`** 而非 `offset + limit`（服务端少返时的结论不同）；边界「相等即结束」 |
 | `ModrinthSectionTypeTests.swift` | `Features/ModBrowser/ModrinthSectionType.swift` | 五个侧边栏分类的 `project_type` 映射；`.game` 必须为 nil（走 Mojang 清单而非 Modrinth）；拼写与接口对齐 |
@@ -233,10 +236,13 @@ func preScan() {
 | `LoaderSupportStateTests.swift` | 9 | 真实断言（supported 空列表合法且不同于 notSupported、非 supported 的 loaders 恒空、只有 unavailable 是未知、三态互不相等、列表顺序参与相等、LoaderState 四态与两层分离） |
 | `LaunchOptionsTests.swift` | 7 | 真实断言（默认值、uuid 每次新、javaPath 未赋值为 nil 与可赋值、字段独立、引用类型共享、yggdrasilArguments 可追加） |
 | `FabricManifestTests.swift` | 10 | 真实断言（嵌套字段解析、顶层同名字段不参与、空数组、缺字段默认、非法 JSON 抛出、非数组顶层为空、id 唯一且可变、引用类型、按 stable 过滤） |
+| `GameLanguageSetterTests.swift` | 11 | 真实断言（就地替换/保序/只改 lang 行、小写 zh_cn 钉死、无 lang 行补换行追加、文件缺失与空建档、行中命中、正则不跨行、幂等、不可写目录不抛错） |
+| `CardTranslationStoreTests.swift` | 10 | 真实断言（未超限直写、覆盖已存在 key 不裁、超限裁至 active 再写、空 active 清空、恰 2000 不裁、merge 边界 1999+2、先裁后并、新值胜出、maxEntries=2000） |
+| `SidebarHighlightTests.swift` | 6 | 真实断言（8 项且首项 12、全部 index 落在合法下标、配对表本体、8 下标互异、偏移严格递增、累加值精确） |
 | `ForgeInstallProfileTests.swift` | 12 | 真实断言（data 只取 client 子字段与缺省空串、isAvailableOnClient 五种 sides 组合、jarPath 是解析后路径、classpath 尾追 jar、无 classpath 只有 jar、args 原样含占位符、libraries 丢弃空坐标、空 profile） |
 | `ModSearchResultTests.swift` | 8 | 真实断言（hasMore 的三类边界、恰好填满即结束、按 items.count 而非 limit、空页行为、无命中、.empty 常量、全字段参与相等） |
 | `ModrinthSectionTypeTests.swift` | 5 | 真实断言（四类映射逐字、.game 为 nil、五分类恰好四个有值、拼写与接口一致、与 ModProjectType.rawValue 同集合） |
-| **合计** | **682** | 其中 2 条默认跳过 |
+| **合计** | **709** | 其中 2 条默认跳过 |
 
 > **用例数的正确数法（2026-10-02 踩坑后补记）**
 >
