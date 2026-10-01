@@ -16,13 +16,14 @@
   的结论已作废，根因就是调用方沙箱。
 - **接线记录**：见 `REFACTOR_PLAN.md` 第 15 项（`8172dbf`，TEST BUILD SUCCEEDED，14 文件 181 用例可编译）。
 
-测试文件清单（共 **23** 个，目录自动同步，无需手工加入 target）：
+测试文件清单（共 **24** 个，目录自动同步，无需手工加入 target）：
 
 | 文件 | 被测对象 | 备注 |
 | --- | --- | --- |
 | `JavaResolverTests.swift` | JavaRequirement / DefaultJavaResolver / JavaInstallation | 经 `JavaRepository` 协议注入 fake，无需真实扫描 |
 | `DownloadVerifierTests.swift` | CryptoKitDownloadVerifier | 临时目录造真实文件，不依赖网络 |
 | `ArtifactVersionMapperTests.swift` | `SLCore/Minecraft/Download/ArtifactVersionMapper.swift`（Apple Silicon 兼容适配） | 8 条替换规则 + 2 个架构分支逐条钉住；夹具经公开入口 `ClientManifest.parse(url:)` 由临时文件构造，**无需任何生产代码改动**（见 §4.20） |
+| `ClientManifestArgumentsTests.swift` | `SLCore/Minecraft/ClientManifestArguments.swift`（启动参数模型） | 新版 `arguments` 与旧版 `minecraftArguments` 两条格式；规则组命中/不命中/否决/特性开关；畸形输入与 `value` 归一化。同样走 `parse(url:)`，**不 import SwiftyJSON** |
 | `DownloadStateTests.swift` | DownloadProgress / DownloadState / DownloadError | 纯值类型，重点覆盖「大小未知」时的 NaN/除零边界 |
 | `DownloadSliceBudgetTests.swift` | `NetManager.sliceBudget`（分片总超时预算） | 纯函数：验证超时随剩余量与实测速度缩放，慢而健康的下载不再被判失败 |
 | `InstallTaskProgressTests.swift` | InstallTask.getProgress / InstallTasks.getProgress | 纯值类型；同名的两个 `getProgress()` 边界口径必须一致（空任务组 0/0 → 曾显示字面量「nan %」，见 §4.15） |
@@ -179,7 +180,8 @@ func preScan() {
 | `AccountPersistenceCompatTests.swift` | 13 | 真实断言（历史 JSON 字面量解码 / 编码器形状 / 往返 / 包装器机制 / 身份语义 / 安全护栏） |
 | `GameSessionStoreTests.swift` | 6 | 真实断言（多订阅者 / 终态收口 / 回放 / 终态后不投递；限时收集防挂死，见 §4.19） |
 | `ArtifactVersionMapperTests.swift` | 11 | 真实断言（逐条 switch 分支：`.x64` 只钉 natives 不动 url/path、`.arm64` 无 natives 早退、LWJGL 3.x 钉 3.3.2、3.3.3 不降级、JNA 4.4.0→5.14.0、objc-bridge 换 Maven Central、LWJGL2 natives 换 glavo、无关 groupId 不动、幂等、artifact 为 nil 不崩） |
-| **合计** | **264** | 其中 2 条默认跳过 |
+| `ClientManifestArgumentsTests.swift` | 14 | 真实断言（裸字符串透传、规则组命中/不命中/否决、无 os 条件放行、特性开关排除、`value` 字符串与数组两形态、数组内非字符串丢弃、非字符串 value 归一成空、畸形数字条目静默不生效、旧版兜底切分 + 硬编码 10 项 jvm、`arguments` 优先于旧字段、两者皆无返回空、jvm 与 game 同逻辑） |
+| **合计** | **278** | 其中 2 条默认跳过 |
 
 > **本次实测口径（含提交锚点，便于复核）**
 >
@@ -594,28 +596,41 @@ rm /tmp/sl-real-launch.enabled
 
 #### 配套：零测试触达文件的「可测性普查」
 
-判据 D 显示 **162/234 个生产文件从未被测试提及**。但「没测」不等于「不能测」——
-把可测性按「是否依赖单例 / 文件IO / 网络 / 进程 / AppKit / SwiftUI」分档后：
+判据 D 显示 **172/234 个生产文件（73%）从未被测试提及**（按行数 23,161/30,752 = 75%）。
+但「没测」不等于「不能测」——把可测性按「是否依赖单例 / 文件IO / 网络 / 进程 / AppKit / SwiftUI」分档后：
 
 | 档 | 含义 | 规模 |
 | --- | --- | --- |
-| **A** | **零硬依赖 ⇒ 现在就能测**（加测试不改生产代码） | **54 个文件 / 4,459 行** |
-| B | 只依赖文件IO/网络/进程/UI ⇒ 通常可注入，但需要开缝 | ~40 个文件 |
-| C | 抓 `static let shared` 单例 ⇒ 开缝 = 改行为，须先有别的测试兜着 | ~68 个文件 |
+| **A** | **零硬依赖 ⇒ 现在就能测**（加测试不改生产代码） | **47 个文件 / 3,538 行** |
+| B | 只依赖文件IO/网络/进程/UI ⇒ 通常可注入，但需要开缝 | 其余 |
+| C | 抓 `static let shared` 单例 ⇒ 开缝 = 改行为，须先有别的测试兜着 | 其余 |
 
-**A 档是当前性价比最高的施力点**，也是本次选 `ArtifactVersionMapper` 的依据。
-A 档内按「fix 历史 × 行数」排序的优先项（已完成的划掉）：
+**A 档是当前性价比最高的施力点**。A 档内按「fix 历史 × 行数」排序的优先项（已完成的划掉）：
 
 - ~~`Features/Launch/GameSessionStore.swift`（133 行，fix×2）~~ → §4.19，已完成
 - ~~`SLCore/Minecraft/Download/ArtifactVersionMapper.swift`（159 行，fix×1）~~ → 本节，已完成
-- `Features/Skin/Module/SkinDecoder.swift`（105 行，fix×1）
-- `Features/ModBrowser/ModrinthModels.swift`（84 行，fix×1）
+- ~~`SLCore/Minecraft/ClientManifestArguments.swift`（125 行，fix×1）~~ → 已完成（14 条，见文件清单）
+- `SLCore/Download/NetDownloadState.swift`（147 行，fix×1）
 - `Features/Launch/LauncherError.swift`（52 行，fix×1）
-- `App/CrashReporter.swift`（198 行，fix×1，但涉信号路径，见 `signal-handler-alloc-audit`）
+- `Services/DragDropHandler.swift`（61 行，fix×1）
+- `App/CrashReporter.swift`（198 行，fix×1，走信号路径，改动前先读 `signal-handler-alloc-audit`）
 
-> ⚠️ 该普查是**行数与依赖的粗筛**，不是结论。挑中一个文件后仍须**读源码确认它真的可测**
-> （本轮就踩过：粗筛把 `MinecraftInstanceLaunchService.swift`（401 行）标成 A 档，
-> 但它需要真实 `MinecraftLauncher`，实际不可单测）。判据 D 的下降只能靠**逐个文件读完再写**。
+> ⚠️ **该普查是粗筛，不是结论**，且它出过两次错，都已修正 —— 记录在此以避免重犯：
+>
+> 1. **单位错（最严重）**：初版把「文件内**任一**类型未被提及」当作零触达，
+>    于是 `Features/Skin/Module/SkinDecoder.swift`（被 `SkinDecoderTests` 覆盖）也被算进去。
+>    正确口径是「文件内**所有**类型都未被提及」。修正后零触达数由 162 升到 **172**
+>    —— 即**问题比初版报的更严重**，不是更轻。
+> 2. **同名类型归属错**：中途改用「全局 `类型名→文件` 映射」，同名类型只归属第一个文件，
+>    使「类型名被别的文件顶掉」的文件被误判零触达（172→173 那次）。
+>    正确写法是**逐文件收集自己的类型名**，不做全局去重。
+>
+> 另有两个已知口径边界：**27 个文件没有顶层类型声明**（纯 extension 文件），按定义计入零触达，
+> 但它们可能被间接覆盖；**同名文件/类型跨目录**时按完整路径区分。
+>
+> ⚠️ 即便归入 A 档，挑中后仍须**读源码确认真的可测**（粗筛曾把
+> `MinecraftInstanceLaunchService.swift`（401 行）标成 A 档，实际需要真实 `MinecraftLauncher`）。
+> 判据 D 的下降只能靠**逐个文件读完再写**。
 
 ## 五、必须遵守：用例一律写成 `async`（Xcode 26.2 隔离析构缺陷）
 
