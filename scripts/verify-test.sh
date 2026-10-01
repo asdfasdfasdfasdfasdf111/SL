@@ -48,11 +48,16 @@ echo "--- 编译测试 bundle ---"
 BUILD_EXIT=$?
 
 grep -E "BUILD SUCCEEDED|BUILD FAILED|TEST BUILD SUCCEEDED" "$LOG" | head -2
-ERR_COUNT=$(grep -c "error:" "$LOG")
-echo "编译错误数: $ERR_COUNT"
+# ⚠️ 不要用裸 `grep -c "error:"` 统计错误数：swiftc / xcodebuild 打印诊断时会附上**被引用处的源码原文**，
+# 若那行本身含 `error:` 字样（本工程有 `var error: Error?`），它就会被算成一条「错误」。
+# 真诊断的形态是 `path/file.swift:行:列: error: 消息` ⇒ 用带位置信息的精确模式。
+# （同类坑在 `scripts/typecheck.sh` 头部已记录过一次，此处补齐。）
+ERR_COUNT=$(grep -cE '\.swift:[0-9]+:[0-9]+: error:' "$LOG")
+ERR_COUNT_LOOSE=$(grep -c "error:" "$LOG")
+echo "编译错误数: $ERR_COUNT（裸 grep 'error:' 上界 $ERR_COUNT_LOOSE，含源码上下文行，不作判据）"
 if [ "$ERR_COUNT" -gt 0 ]; then
   echo "错误明细（最多 20 条）:"
-  grep "error:" "$LOG" | head -20
+  grep -E '\.swift:[0-9]+:[0-9]+: error:' "$LOG" | head -20
 fi
 
 if [ "$BUILD_EXIT" -ne 0 ]; then
@@ -82,12 +87,41 @@ TEST_EXIT=$?
 grep -E "Test Suite .* (passed|failed)|Executed [0-9]+ test|Testing failed|\*\* TEST" "$LOG" | tail -20
 
 echo ""
-if [ "$TEST_EXIT" -eq 0 ]; then
-  echo "结果: 测试全部通过"
-else
-  echo "结果: 存在失败用例（退出码 $TEST_EXIT）"
+# ⚠️ 必须把「断言失败」与「已知工具链 abort」分开报，否则 `** TEST EXECUTE FAILED **` 会被误读成
+#    「用例没通过」。本工程有一条已登记的 Xcode 26.2 工具链缺陷（见 qwqTests/TESTING.md §五）：
+#    套件约 1/4 概率在某用例处 abort（`pointer being freed was not allocated`），
+#    进程重启后**所有断言仍然通过**，但 xcodebuild 仍报 `TEST EXECUTE FAILED`。
+ASSERT_FAILS=$(grep -cE 'error: -\[qwqTests\.' "$LOG")
+ABORTS=$(grep -c "Restarting after unexpected exit" "$LOG")
+EXECUTED=$(grep -oE "Executed [0-9]+ tests, with [0-9]+ tests? skipped and [0-9]+ failures" "$LOG" | tail -1)
+
+echo "断言失败 : $ASSERT_FAILS 条"
+if [ "$ABORTS" -gt 0 ]; then
+  echo "⚠️ 已知工具链 abort: $ABORTS 次（TESTING.md §五，非本次改动所致；断言仍可能全绿）"
+fi
+if [ -n "$EXECUTED" ]; then
+  echo "末次汇总 : $EXECUTED"
+fi
+echo "（口径提醒：abort 会重启进程，故 `Executed N tests` 只是**最后一次 launch** 的汇总，"
+echo "  不是全部用例数；要总数须逐 suite 求和。）"
+
+if [ "$ASSERT_FAILS" -gt 0 ]; then
+  echo ""
+  echo "结果: 存在**断言失败**（这是代码问题）"
   echo "失败用例（最多 20 条）:"
-  grep -E "error:.*XCTAssert|failed -|Test Case .* failed" "$LOG" | head -20
+  grep -E 'error: -\[qwqTests\.' "$LOG" | head -20
+  exit 1
 fi
 
+if [ "$TEST_EXIT" -eq 0 ]; then
+  echo ""
+  echo "结果: 测试全部通过"
+  exit 0
+fi
+
+echo ""
+echo "结果: xcodebuild 报失败（退出码 $TEST_EXIT），但**没有任何断言失败** ——"
+echo "      成因是上方的已知 abort 或环境问题（logarchive 收集失败等），不是用例没通过。"
+echo "      处置：换全新 SL_DERIVED 重试（abort 后派生目录会退化）；退出码仍按 xcodebuild 返回，"
+echo "      便于 CI 与调用方自行决定是否把这一项当门禁。"
 exit "$TEST_EXIT"
