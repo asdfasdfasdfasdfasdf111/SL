@@ -16,7 +16,7 @@
   的结论已作废，根因就是调用方沙箱。
 - **接线记录**：见 `REFACTOR_PLAN.md` 第 15 项（`8172dbf`，TEST BUILD SUCCEEDED，14 文件 181 用例可编译）。
 
-测试文件清单（共 **41** 个，目录自动同步，无需手工加入 target）：
+测试文件清单（共 **42** 个，目录自动同步，无需手工加入 target）：
 
 | 文件 | 被测对象 | 备注 |
 | --- | --- | --- |
@@ -41,6 +41,7 @@
 | `SpeedMeterTests.swift` | `SLCore/Download/SpeedMeter.swift` 的 `CounterActor` | `takeInterval` 的**单次消费**语义（第二次必为 0）、`&+=` 溢出回绕不崩、actor 串行化下并发加减与取值守恒 |
 | `ModProjectTests.swift` | `Features/ModBrowser/Module/ModProject.swift` | 四个转换 init **各自丢哪些字段**（搜索命中无分类、详情响应无简介/图标/下载量且 title 回落 id、本地目录无 slug、分类页单元无下载量与版本列表）；`primaryFile` 取值顺序 |
 | `ArchiveUtilTests.swift` | `SLCore/Utils/ArchiveUtil.swift` | 三个方法**三种失败表达**（`hasEntry`/`getEntry` 把「归档打不开」与「条目不存在」合并；`getEntryOrThrow` 可区分）；夹具用 ZIPFoundation 现造真 zip |
+| `MinecraftLauncherLogTests.swift` | `SLCore/Minecraft/Launch/MinecraftLauncherLog.swift` | 两个**已修 bug** 的回归守卫：`close()` 补刷无换行的残行、`drainPipe` 在写端被孙进程持有时**有时限返回**；另覆盖丢弃模式与跨回调多字节字符 |
 | `DownloadSliceBudgetTests.swift` | `NetManager.sliceBudget`（分片总超时预算） | 纯函数：验证超时随剩余量与实测速度缩放，慢而健康的下载不再被判失败 |
 | `InstallTaskProgressTests.swift` | InstallTask.getProgress / InstallTasks.getProgress | 纯值类型；同名的两个 `getProgress()` 边界口径必须一致（空任务组 0/0 → 曾显示字面量「nan %」，见 §4.15） |
 | `LaunchStateTests.swift` | LaunchState / LaunchError / LaunchResult | 纯值类型 |
@@ -214,7 +215,8 @@ func preScan() {
 | `SpeedMeterTests.swift` | 12 | 真实断言（初始 0、累加、读取即清零、清零后再累计、加 0、负值与负累计、上下溢回绕、20×50 并发不丢计数、8 次并发取用恰好一次命中、逐轮取值总和守恒） |
 | `ModProjectTests.swift` | 21 | 真实断言（type 全表与展示名与往返、sha1 取 hashes 与两类缺失、hashes nil 归一空字典、primaryFile 四种情形、四个 init 的字段得失与 title 回落 id 与未知 projectType 为 nil、可哈希） |
 | `ArchiveUtilTests.swift` | 14 | 真实断言（存在/缺失条目、不可打开归档同样 false、重载版本、取内容、缺失抛 MyLocalizedError 且文案精确、不可打开抛底层错、静默版两类失败都 nil、二进制逐字节保真、空条目、多条目独立、条目名大小写敏感） |
-| **合计** | **561** | 其中 2 条默认跳过 |
+| `MinecraftLauncherLogTests.swift` | 21 | 真实断言（门控恰好一次与 32 并发只一个赢、完整行立即落盘、制表符展开、残行缓冲、**close 补刷残行**、残行展开、空缓冲不补行、非法 UTF-8 残字节原样落盘、close 幂等、关闭后丢弃、多字节跨回调拼接、非法整行丢弃不影响后续、丢弃模式、空 Data、drainPipe 正常/写端不关有时限/无数据有时限/排空后残行仍补刷）⚠️ 含 2 条各等约 3s 的用例 |
+| **合计** | **582** | 其中 2 条默认跳过 |
 
 > **用例数的正确数法（2026-10-02 踩坑后补记）**
 >
