@@ -261,6 +261,18 @@ enum LocalModCatalog {
         //   · `JSONSerialization` + 手工搬运 → 249.6 MB
         //   · `JSONDecoder` 直解（本实现）   → 174.4 MB      ⇒ 省 75 MB（约 30%）
         // 耗时同为 0.4 s 量级、解析结果逐条一致（首/末条 title 比对相同）。
+        //
+        // ⚠️ 2026-10-02 复测（同机、同数据、两种写法各独立进程跑 3 轮）：
+        //   · `JSONSerialization` → 250.7 / 250.3 / 249.6 MB（与上面记的 249.6 **精确吻合**）
+        //   · `JSONDecoder`       → 196.0 / 202.8 / 199.7 MB（比上面记的 174.4 **高约 25 MB**）
+        //   ⇒ 实测净省 **约 50 MB（约 20%）**，不是 75 MB（30%）。
+        //   耗时与结论方向不变（0.41 s vs 0.38 s，`JSONSerialization` 反而略快；
+        //   条数 122477、首末条 title 均一致）。
+        // 也就是说：**换 `JSONDecoder` 的收益是真的，但上面那句「省 75 MB / 30%」偏乐观**。
+        // 复测方法（拦截无用，这里是纯 RSS）：`getrusage(RUSAGE_SELF).ru_maxrss`，
+        // 每个策略编成**独立可执行文件**分别跑（峰值 RSS 是进程级累积量，同进程比会污染）；
+        // 基线（仅读入 37 MB 原始 JSON）为 37.9 MB，故上表按**净增**比较。
+        // 细节与三轮原始数字见 `qwqTests/TESTING.md` §4.23。
         } else if let url = Bundle.main.url(forResource: "modrinth_catalog", withExtension: "json.gz"),
                   let compressed = try? Data(contentsOf: url),
                   let data = inflateGzipData(compressed),
