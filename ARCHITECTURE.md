@@ -1,44 +1,72 @@
-# SL 架构与重构路线
+# SL 架构
 
-## 一、目标
+> **本文档的定位**：描述**当前真实存在**的结构。
+> 不写"目标结构"，不写"待接线"的蓝图 —— 那些内容曾让本文件长期描述一个运行时不存在
+> 的架构（详见 §三）。要提改进设想，请开 issue 或写进提交信息，不要写进本文档。
 
-把项目从"功能堆叠 + 全局单例 + 兼容桩"的状态，收敛成**职责边界清晰、可独立维护、可测试**的模块化结构。
-
-一句话：**每个模块只负责一类能力，对外只有稳定接口，内部允许自由修改。**
-
-## 二、方向：编译期模块化
-
-明确**不做**以下事情（至少当前阶段不做）：
-
-- 动态 `.bundle` 加载
-- `NSClassFromString` 运行时扫描
-- XPC / 独立进程插件
-- 插件市场、`Plugin.json` 清单机制
-- Objective-C runtime 黑魔法
-
-动态插件会带来代码签名、沙盒权限、Swift ABI 兼容、崩溃隔离等一整套成本，在工程边界尚未稳定时引入只会加剧混乱。
-
-**做法**：Swift 模块 + 稳定协议 + 能力注册。
-
-分层：
+## 一、分层
 
 ```
-View → ViewModel → UseCase → Service → Infrastructure
+View → ViewModel → UseCase / Service → Infrastructure（SLCore/、Core/）
 ```
 
-跨模块只依赖协议与值类型，禁止直接访问其他模块的内部单例。
+目录即分层：
 
-## 三、模块内核
+| 目录 | 职责 |
+| --- | --- |
+| `qwq/App/` | 应用入口、装配根、全局导航/面板状态 |
+| `qwq/Features/` | 按功能切分（Download/Game/Java/Launch/ModBrowser/Settings/Skin/Theme/Translation） |
+| `qwq/Core/` | 跨功能的领域模型与抽象（Download 的引擎门面、Events） |
+| `qwq/SLCore/` | 基础设施实现（账号、下载引擎、Java、Minecraft、存储、日志、通知） |
+| `qwq/UI/` | 可复用视图组件与窗口修饰器 |
+| `qwq/Models/` | 纯数据模型 |
 
-- `qwq/Core/Module/SLModule.swift`
-  - `SLModule`：模块注册入口
-  - `ModuleCapabilityKey<Value>`：能力的类型化键
-  - `ModuleContext`：**引用类型**。若改为值类型，模块内注册的能力只会写进副本，注册不生效
-- `qwq/Core/Module/ModuleRegistry.swift`
-  - `ModuleRegistry`：持有唯一 `ModuleContext`，登记模块
-  - `AppModuleBootstrap`：模块装配清单，新增模块在此登记
+## 二、依赖注入的实际形态：构造器默认参数
 
-新增模块的步骤：实现 `SLModule` → 在 `AppModuleBootstrap.makeRegistry()` 里加入列表 → 从 `ModuleContext` 解析使用。
+本项目**不用** DI 容器。跨模块取用依赖的统一写法是构造器默认参数：
+
+```swift
+// qwq/Features/Game/ViewModels/DownloadCategoryViewModel.swift
+init(versionCatalog: VersionCatalogService = DefaultVersionCatalogService(),
+     versionFilter: VersionFilterUseCase = VersionFilterUseCase()) {
+```
+
+选它的理由（对比已废弃的注册表方案）：
+
+| | 构造器默认参数 | 运行时注册表（已废弃） |
+| --- | --- | --- |
+| 拼错依赖名 | 编译失败 | 运行期才发现 |
+| 缺依赖 | 编译失败 | 静默降级（曾用 `NSLog` 吞掉） |
+| 测试注入 | 直接传替身 | 需先建注册表 |
+| 阅读依赖 | 看 init 签名 | 全局搜字符串键 |
+| 额外代码量 | 0 | 注册表 + 各模块 register() + 专属测试 |
+
+**约定**：新增可替换的服务时，定义协议 + 默认实现，在**使用方的 init 默认值**里注入。
+不要引入容器、不要用字符串键解析能力。
+
+### 仍然存在的单例
+
+`static let shared` 目前有 20 余处，集中在两类，暂不清理：
+
+- **进程级基础设施**：`AppContext`（URLSession/进程池/缓存根，28 处真实使用）、
+  `LogStore`、`MemoryPressureBroadcaster`、`PopupManager`、`NoticeCenter`
+- **全局 UI 状态**：`NavigationIntent`、`LaunchPanelState`、`DownloadDetailManager`
+
+它们是**有意的全局状态**，不是待迁移的遗留物。要收敛的是"业务服务藏在单例里"，
+而不是"进程只有一个缓存根"。
+
+## 三、已放弃：`ModuleContext` 模块内核（2026-10 删除）
+
+**曾做过的**：`SLModule` / `ModuleCapabilityKey` / `ModuleContext` / `ModuleRegistry` /
+`AppModuleBootstrap`，8 个模块注册 10 项能力，配套 244 行专属测试。
+
+**为什么删**：全库**没有任何一处从 `ModuleContext` 解析能力**。26 个单例一个没少，
+注册表在生产代码里零调用方（只有测试在调），**真实运行时不存在这个注册表**。
+它带来的是一套与 `AppContext` 并行的第二套 DI，以及"结构已完成、待接线"的持续幻觉。
+
+**删除即结论**：不是"暂时搁置"，是**判定该方案不适用于本项目**。
+若要重提模块化，请先回答：它比构造器默认参数多解决什么问题？
+（净删除 1231 行，见提交 `cdf9dee`。）
 
 ## 四、设置层收口
 
@@ -46,69 +74,110 @@ View → ViewModel → UseCase → Service → Infrastructure
   - 只负责设置数据的持有与持久化
   - 不持有 Java、下载、启动等业务状态
   - 复用项目既有的 `UDK` 键名，保证与旧数据兼容
-- `ThemeManager` / `LauncherSettings`：暂时保留为**兼容层**，不再新增字段，逐步收窄后移除
-  - **两者均已完成向 `AppSettingsStore` 的转发收敛**（不再自持持久化字段、不再各自写 `UserDefaults`）：
-    `accentColor` 更早一轮收口；`LauncherSettings` 的 9 个持久化字段已于 2026-09-25 改为计算属性转发。
+- `ThemeManager` / `LauncherSettings`：**兼容层**，不再新增字段，逐步收窄后移除
+  - 两者均已完成向 `AppSettingsStore` 的转发收敛（不再自持持久化字段、不再各自写 `UserDefaults`）
   - ⚠️ 两者各有一条 `AnyCancellable` 桥接订阅 `AppSettingsStore.objectWillChange` 并转发到自身
     `objectWillChange`。**这条订阅是功能必需的，不是优化**：转发字段已不是 `@Published`，
     订阅这些兼容层的视图（`ContentView` 等）只能靠它刷新，断掉后**静默不重绘**、编译期无提示。
-    契约用例：`qwqTests/LaunchPanelStateTests.swift`；改这两个文件的动因与反向验证见 `CHANGELOG.md`。
-  - 剩余的短生命周期 UI 状态（`showLaunchAlert` / `launchErrorMessage` / `showJavaPopup` /
+    契约用例：`qwqTests/LaunchPanelStateTests.swift`
+  - 剩余短生命周期 UI 状态（`showLaunchAlert` / `launchErrorMessage` / `showJavaPopup` /
     `javaPopupMessage` / `availableJavaList` / `isJavaScanning`）**不是设置**，不入库、不转发。
 
-## 五、Java 模块
+## 五、Java
 
-问题：Java 数据源此前分裂成四套（`DataManager.javaVirtualMachines`、`LauncherSettings.availableJavaList`、`JavaManager`、`MinecraftInstance.findSuitableJava`），`SLLaunchBridge` 里还有一条四级降级链。
+问题背景：Java 数据源曾分裂成四套（`DataManager.javaVirtualMachines`、
+`LauncherSettings.availableJavaList`、`JavaManager`、`MinecraftInstance.findSuitableJava`），
+`SLLaunchBridge` 里还有一条四级降级链。
 
-新增（`qwq/Features/Java/`）：
+现有（`qwq/Features/Java/`）：
 
 - `JavaInstallation`：统一的 Java 安装模型，可从 `JavaInfo` / `JavaVirtualMachine` 转换
 - `JavaRequirement`：版本需求，含 MC 版本 → Java 版本推导规则
-- `JavaRepository`：扫描与持久化（当前复用既有 `JavaManager` 扫描逻辑，仅做收口）
+- `JavaRepository`：扫描与持久化
 - `JavaResolver`：唯一选择入口 `resolve(_:)`
-- `JavaModule`：模块注册
+- `JavaResolverBridge`：桥接 `SLLaunchBridge` 的同步上下文
 
 目标：启动器只调用 `JavaResolver`，不再有多级 fallback。
 
-## 六、下载模块
+## 六、下载
 
-问题：`NetDownloader.swift` 原单文件同时承担预检、多源、分片、重试、黑名单、测速、合并、校验、调度、取消清理，现已按职责拆为 `Core/Download/` 下的多个分片文件（下载引擎、分片存储、合并、校验、调度等），单文件不再同时承担多类职责。
+**当前是双轨，且这是有意的**：
 
-新增（`qwq/Core/Download/`）：按职责拆分为 `DownloadRequest`、`DownloadProgress`、`DownloadState`、`DownloadError`、`DownloadTask`、`DownloadSourceResolver`、`DownloadSliceStore`、`DownloadMerger`、`DownloadVerifier`、`DownloadScheduler`、`DownloadEngine`。
+| | 位置 | 规模 | 角色 |
+| --- | --- | --- | --- |
+| 旧引擎 | `qwq/SLCore/Download/`（17 文件） | ~1983 行 | **实际下载算法**：预检、多源、分片、重试、黑名单、测速、合并、校验、取消清理 |
+| 新门面 | `qwq/Core/Download/`（10 文件） | ~765 行 | 对外抽象：`DownloadEngine` + 数据/错误/状态类型 + 适配器 |
 
-原则：**本阶段不改下载算法，只拆职责、定边界**，让测试能挂上去。
+关键事实：
 
-## 七、启动模块
+- `DownloadEngine` 是**对外唯一入口**，只有"提交 / 观测 / 取消"三件事。
+- 唯一实现 `NetDownloaderDownloadEngine` 是**适配器**，后端仍转发到
+  `SLCore/Download/NetDownloader.swift` 的 `NetManager`。它**已接入 5 处调用方**：
+  `ModFileDownloadTask`、`MinecraftLauncherDownload`、`MinecraftInstallerDownloads`、
+  `ForgeInstaller`、`FabricInstaller`（切换记录见 `Core/Download/Adapters/MIGRATION.md`）。
+- 尚未接入的：`MultiFileDownloader` 各调用点、以及绕过引擎直连 `URLSession` 的路径。
+- `Core/Download/` 里**只有真实使用的类型**。2026-10 已删除仅存协议声明、
+  零实现零调用的 `DownloadScheduler` / `DownloadSliceStore` / `DownloadMerger` / `DownloadTask`。
+  教训：**不要提交"先定协议、实现待补"的文件** —— 它们会长期留在树里冒充架构。
 
-问题：历史上存在两套并行的启动流程（`MinecraftInstance.launch()` 与 `slLaunchInternal()`）。前者经全库零调用方核实后已于 2026-09 整段删除（属「运行期不可达」的死代码），现只剩 `slLaunchInternal()` 一条。`LaunchFix` 仍是"什么缺了都由我修"的上帝对象（待拆）。
+已知坏味道（记录在案，未修）：
 
-新增（`qwq/Features/Launch/`）：`LaunchRequest`、`LaunchState`、`LaunchResult`、`LaunchError`、`LaunchPreflight`（含 client / library / asset / natives 四类校验的拆分）、`LaunchArgumentBuilder`、`GameProcessController`、`GameSessionStore`、`LaunchService`。
+- `NetDownloaderDownloadEngine.map(_:)` 用**中文字符串匹配**从错误描述还原结构化
+  `DownloadError`（`contains("哈希校验失败")` 等）。改一处文案即静默失效。
+  正解是让旧引擎直接抛结构化错误。
+- `syntheticTotalBytes = 1000`：旧引擎只上报 0…1 比例，未知总大小时用固定分母兜底。
 
-目标：`LaunchCoordinator` 只做"UI 意图 → 用例 → 状态映射"。原「合并两条流程」的目标已随旧流程删除而失去对象；真正遗留的是把 `LaunchFix` 按四类校验拆分。
+## 七、启动
 
-## 八、测试
+历史上存在两套并行启动流程（`MinecraftInstance.launch()` 与 `slLaunchInternal()`）。
+前者经全库零调用方核实后已于 2026-09 整段删除，现只剩 `slLaunchInternal()` 一条。
 
-- 目录：`qwqTests/`
-- 现有用例：Java 需求推导与选择策略、下载校验（SHA-1/SHA-256、大小、8MiB 流式）、分片合并、进度边界、状态与错误
-- 加入 target 的步骤见 `qwqTests/TESTING.md`
+- `qwq/Features/Launch/`：`LaunchRequest`、`LaunchState`、`LaunchResult`、`LaunchError`、
+  `LaunchPreflight`（client / library / asset / natives 四类校验拆分）、`LaunchArgumentBuilder`、
+  `GameProcessController`、`GameSessionStore`、`LaunchService`
+- `LaunchCoordinator` 只做"UI 意图 → 用例 → 状态映射"
 
-## 九、迁移顺序
+遗留：`LaunchFix` 仍是"什么缺了都由我修"的上帝对象，待按四类校验拆分。
 
-1. 冻结功能面（不新增主题、微软登录 UI、多目录、新动画）
-2. 模块内核与设置收口 —— **已完成**
-3. Java 模块 —— **结构已完成，待接线**
-4. 下载模块 —— **结构已完成，待接线**
-5. 启动模块 —— **结构已完成，待接线**
-6. 账号与伪实现治理（`Stubs` 中 `AnyAccount.microsoft` / `.yggdrasil` 实为 `OfflineAccount`，需改为明确报错）
-7. ModBrowser / Minecraft / Skin / Theme 模块化
-8. UI 收口（`ContentView` 只保留窗口壳、导航、全局任务入口）
-9. 工程配置清理（移除 `project.pbxproj` 中的 iOS / visionOS 配置，统一部署目标）
+## 八、测试与 CI
 
-## 十、接线前的前置条件
+- 目录：`qwqTests/`，当前 **21 文件 / 250 用例**
+- 跑法：`./scripts/verify-test.sh run`（真实 xcodebuild，编译 + 运行）
+- 快速反馈：`./scripts/typecheck.sh`（`swiftc -typecheck` 两口径，比 xcodebuild 快一个数量级）
+  - ⚠️ 它依赖 `/tmp/deps` 里由**上一次真实构建**产出的第三方 `.swiftmodule`；
+    CI 是干净环境，故 CI 跑真实构建而非本脚本
+- CI：`.github/workflows/test.yml`，push / PR 触发
 
-新模块目前是"只新增、未接线"状态：既有代码行为完全未变。接线需要满足：
+**用例数不再手写进文档与提交信息**，以 CI 结果为准。
 
-- 能对整个工程执行编译验证（当前受 Swift Package 依赖解析限制）
-- `SLLaunchBridge` 的 Java 选择段是同步上下文（内部用 `DispatchSemaphore` 忙等扫描），改成 async resolver 需要同步改造整个桥接函数
+⚠️ 用例必须一律写成 `async`（同步用例里创建并释放 `@MainActor` 类实例会让宿主
+abort，表现为"前几个测试类通过、之后无限重启"）。详见 `qwqTests/TESTING.md`。
 
-因此接线按模块逐步进行，每接一处跑一次编译验证。
+## 九、工程纪律
+
+### 重构的验收标准是减法
+
+拆分文件**不是**重构成果。每个 `refactor` 提交的 `git diff --stat` 净行数应 ≤ 0。
+
+反面教材（2026-09-21 `48ad4f4`）：提交标题为「NetDownloader 按职责拆分，889 行降至 166 行」，
+但下载相关代码从 4663 行涨到 7886 行（+69%），旧路径仍在生效。
+正确的成果指标是：**旧路径是否消失**、**净删多少行**、**调用方数量是否下降**。
+
+### 不写描述目标结构的文档
+
+文档只描述现状。`README-*.md` 若与实际不符，视为缺陷。
+
+### 注释记录"为什么"
+
+源码注释写约束与理由；考古过程（某个值历史上怎么丢的、哪个提交改的）写进 `docs/`。
+单文件头部注释不宜超过 15 行。
+
+## 十、遗留待办
+
+1. **`LaunchFix` 上帝对象拆分**（按四类校验）
+2. **下载双轨收口**：决定 `NetManager` 是保留为最终后端（则把 `Core/Download` 的协议注释
+   改为"这是终态"），还是真替换（则删旧引擎）。**不要继续维持"待接线"状态。**
+3. **`MultiFileDownloader` 与直连 `URLSession` 路径接入 `DownloadEngine`**（若选择收口）
+4. **账号伪实现**：`AnyAccount.microsoft` / `.yggdrasil` 实为 `OfflineAccount`，需改为明确报错
+5. **工程配置清理**：移除 `project.pbxproj` 中的 iOS / visionOS 配置，统一部署目标
+6. **UI 收口**：`ContentView` 只保留窗口壳、导航、全局任务入口

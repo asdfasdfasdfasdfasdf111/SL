@@ -1,5 +1,25 @@
 # 模块化盘点与优化清单
 
+> ## ⚠️ 部分作废（2026-10-01）
+>
+> 本文是 **2026-09-21/23 的历史快照**。以下范围已不再成立 —— **原文保留不改写**（不篡改历史记录），
+> 但阅读时请以 `ARCHITECTURE.md` 为准。
+>
+> **作废的部分**：所有涉及「`Module/` 模块内核」与 `ModuleContext` / `SLModule` / `AppModuleBootstrap` 的条目。
+> 该体系已于提交 `cdf9dee` 整体删除，理由是**全库零消费方**（10 项能力注册了，但没有一处解析），
+> 真实运行时并不存在这个注册表。据此：
+> - 第 6 项 **Minecraft** 的只读抽象 `Core/Minecraft/Module/MinecraftRepository.swift`：已删除
+> - 第 8 项 **Theme** 的 `ThemeService` / `ThemeRepository`：已删除（视图层零调用）
+> - 第 9 项 **Game** 的 `GameModule` 已删除；`VersionCatalogService` / `VersionFilterUseCase`
+>   **保留**（经构造器默认参数真实使用）
+> - `Core/Module/` 整个目录已删除
+>
+> **仍然成立的部分**：第 1/2/4 项的收口结论、第 3 项 Download 的「部分接线」判定
+> （适配器已接 5 处）、以及各项「未归口」的观察。
+>
+> 另：标题所称「14 个模块」的分法本身也已放弃 —— 本项目不采用模块内核，依赖注入形态是
+> **构造器默认参数**，见 `ARCHITECTURE.md` §二。
+
 日期：2026-09-21
 统计日期：2026-09-23（`qwq/` 下 Swift 文件数与行数由 `find qwq -name '*.swift'` 实测，会随每次改动漂移，以实测为准）
 统计口径（2026-09-23 实测）：`qwq/` 下 241 个 Swift 文件、26,610 行。文件数 / 行数会随每次改动漂移，复核请用 `find qwq -name '*.swift' | wc -l` 与 `find qwq -name '*.swift' -exec cat {} + | wc -l`，以实测为准。

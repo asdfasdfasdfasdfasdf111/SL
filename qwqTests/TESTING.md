@@ -1,6 +1,6 @@
 # qwq 单元测试说明
 
-本目录是给 `qwq` 工程补的单元测试，覆盖 `Core/`（下载、模块内核）、`Features/Java/`、
+本目录是给 `qwq` 工程补的单元测试，覆盖 `Core/`（下载抽象）、`Features/Java/`、
 `Features/Launch/`、`App/ViewModels/`、`UI/Notices/` 与下载适配器层。
 
 **当前状态：工程已包含 `qwqTests` unit-test target（`productType = com.apple.product-type.bundle.unit-test`）。`qwq.xcodeproj` 通过 `PBXFileSystemSynchronizedRootGroup` 自动同步整个 `qwqTests/` 目录，新增 / 删除测试文件无需手工加入 target；`qwq.xcscheme` 的 TestAction 已挂 `qwqTests.xctest`，直接 ⌘U 即可运行。详细进展见 `REFACTOR_PLAN.md`。**
@@ -16,13 +16,12 @@
   的结论已作废，根因就是调用方沙箱。
 - **接线记录**：见 `REFACTOR_PLAN.md` 第 15 项（`8172dbf`，TEST BUILD SUCCEEDED，14 文件 181 用例可编译）。
 
-测试文件清单（共 **22** 个，目录自动同步，无需手工加入 target）：
+测试文件清单（共 **21** 个，目录自动同步，无需手工加入 target）：
 
 | 文件 | 被测对象 | 备注 |
 | --- | --- | --- |
 | `JavaResolverTests.swift` | JavaRequirement / DefaultJavaResolver / JavaInstallation | 经 `JavaRepository` 协议注入 fake，无需真实扫描 |
 | `DownloadVerifierTests.swift` | CryptoKitDownloadVerifier | 临时目录造真实文件，不依赖网络 |
-| `DownloadMergerTests.swift` | DownloadMerger 契约 | 协议无默认实现，用测试替身验证契约 |
 | `DownloadStateTests.swift` | DownloadProgress / DownloadState / DownloadError | 纯值类型，重点覆盖「大小未知」时的 NaN/除零边界 |
 | `DownloadSliceBudgetTests.swift` | `NetManager.sliceBudget`（分片总超时预算） | 纯函数：验证超时随剩余量与实测速度缩放，慢而健康的下载不再被判失败 |
 | `InstallTaskProgressTests.swift` | InstallTask.getProgress / InstallTasks.getProgress | 纯值类型；同名的两个 `getProgress()` 边界口径必须一致（空任务组 0/0 → 曾显示字面量「nan %」，见 §4.15） |
@@ -30,7 +29,6 @@
 | `LaunchCancellationTests.swift` | `LaunchCancellationToken`（`SLCore/SLLaunchBridge.swift`） | 「进程还没起就别起了」这条语义的守卫；只覆盖令牌本身，不拉起进程 |
 | `GameLogRetentionTests.swift` | `Features/Launch/GameSession.swift` 的 `dropCount(forCount:)` 与 `maxLogLines` | 日志合并窗口 + 上限裁剪的边界 |
 | `GameScanGenerationTests.swift` | `Features/Game/ViewModels/GameCategoryViewModel.swift` | 扫描代际；含「超时不作废结果」的回归守卫 |
-| `ModuleRegistryTests.swift` | SLModule / ModuleContext / ModuleRegistry / ModuleCapabilityKey | 用 `SLModule` 替身，不触发真实模块副作用 |
 | `JavaResolverBridgeTests.swift` | JavaResolverBridge | 2026-09-25 起经 `makeResolver` 注入 resolver 替身。**调用线程是显式选择的**：覆盖解析结果 / 超时 / 失败 / 并发 / 入参透传的断言**一律在非主线程**调用（否则会被「主线程直接返回 nil」的早退分支整体短路 —— 这正是重写前那 8 条用例的假绿成因，见 §4.3）；**只有 `testMainThreadCallReturnsNilWithoutTouchingResolver` 一条在主线程上**调用，专测早退分支本身。 |
 | `NoticeCenterTests.swift` | NoticeCenter / Notice / NoticeLevel / NoticeButton | MainActor 单例，用例内复位承载者状态 |
 | `NavigationStateTests.swift` | NavigationState | 断言已复位 `DownloadDetailManager.shared` |
@@ -44,7 +42,7 @@
 | `RealLaunchIntegrationTests.swift` | （见 §4.14，默认跳过）真实启动链路集成用例 | 拉起真实 Minecraft 进程，靠 `/tmp/sl-real-launch.enabled` 开关默认跳过 |
 
 每个测试文件顶部都有 `@testable import qwq`，因为多数被测类型（`JavaInstallation`、
-`JavaRequirement`、`DefaultJavaResolver`、`SLModule`、`ModuleContext`、
+`JavaRequirement`、`DefaultJavaResolver`、
 `NetDownloaderDownloadEngine` 等）是 internal 或依赖 internal 类型，不加这一行编译不过。
 
 > 旧文档曾指导手工建 target、把测试文件拖进 Xcode 并逐个勾选 membership——该步骤已不适用，现由文件夹同步组自动完成。
@@ -129,9 +127,7 @@ func preScan() {
 
 - `DownloadStateTests.swift` → `Core/Download/DownloadState.swift`、`DownloadProgress.swift`、`DownloadError.swift`
 - `DownloadVerifierTests.swift` → `Core/Download/DownloadVerifier.swift`、`DownloadError.swift`
-- `DownloadMergerTests.swift` → `Core/Download/DownloadMerger.swift`、`DownloadSliceStore.swift`
 - `LaunchStateTests.swift` → `Features/Launch/LaunchState.swift`、`LaunchError.swift`、`LaunchResult.swift`
-- `ModuleRegistryTests.swift` → `Core/Module/SLModule.swift`、`ModuleRegistry.swift`、`Features/Settings/AppSettingsStore.swift`
 - `JavaResolverBridgeTests.swift` → `Features/Java/` 下 `JavaResolverBridge.swift`、`JavaResolver.swift`、
   `JavaRepository.swift`、`JavaRequirement.swift`、`JavaInstallation.swift`、`JavaInfo.swift`
 - `NoticeCenterTests.swift` → `UI/Notices/NoticeCenter.swift`、`SLCore/Notices/Hint.swift`、`SLCore/Notices/Popup.swift`
@@ -160,10 +156,8 @@ func preScan() {
 | --- | --- | --- |
 | `JavaResolverTests.swift` | 24 | 真实断言（注入 fake 仓储） |
 | `DownloadVerifierTests.swift` | 14 | 真实断言（临时目录真实文件） |
-| `DownloadMergerTests.swift` | 8 | 契约断言（测试替身） |
 | `DownloadStateTests.swift` | 10 | 真实断言（纯值类型） |
 | `LaunchStateTests.swift` | 9 | 真实断言（纯值类型） |
-| `ModuleRegistryTests.swift` | 13 | 真实断言（`SLModule` 替身 + 真实 `AppModuleBootstrap`） |
 | `JavaResolverBridgeTests.swift` | 12 | 真实断言（注入 resolver 替身；调用线程显式选择：非主线程走真实路径、主线程专测早退分支） |
 | `NoticeCenterTests.swift` | 22 | 真实断言 |
 | `NavigationStateTests.swift` | 16 | 真实断言 |
@@ -181,7 +175,7 @@ func preScan() {
 | `MemoryPressureTests.swift` | 12 | 真实断言（主线程同步送达 / 等级透传 / 注销与闭包释放 / 生产同构的 dispatch source 上下文 / 装配根接线（§4.17）/ 首次注册 +1 与重复注册 +0 / 端到端清缓存） |
 | `RealLaunchIntegrationTests.swift` | 1 | 默认跳过：真实拉起 Minecraft 进程验证启动链路健康（见 §4.14） |
 | `AccountPersistenceCompatTests.swift` | 13 | 真实断言（历史 JSON 字面量解码 / 编码器形状 / 往返 / 包装器机制 / 身份语义 / 安全护栏） |
-| **合计** | **268** | 其中 2 条默认跳过 |
+| **合计** | **247** | 其中 2 条默认跳过 |
 
 > **本次实测口径（含提交锚点，便于复核）**
 >
@@ -192,6 +186,15 @@ func preScan() {
 > Date:   2026-09-25
 > Branch: refactor/modular
 > ```
+>
+> ⚠️ **2026-10-01 变更（净减 21 条，尚未重新实测）**：提交 `cdf9dee` 删除两个**为不存在之物而写**的测试文件：
+> - `ModuleRegistryTests.swift`（13 条）—— 测的是生产中零调用方的模块注册表（`ModuleContext` 体系整体删除，见 `ARCHITECTURE.md` §三）
+> - `DownloadMergerTests.swift`（8 条）—— 该文件自认「`DownloadMerger` 只有协议声明，工程内尚无默认实现」，
+>   故自定义测试替身 `OffsetOrderingMerger` 再测该替身
+>
+> 故当前应为 **247 条 / 21 文件**。上面的 268 是**删除前的最后一次真实实测**，保留作为对照。
+> 247 系由 268 − 21 推算，**尚未经 `verify-test.sh run` 实测**（删除当次的执行环境无法嵌套 xcodebuild）。
+> 请以 CI（`.github/workflows/test.yml`）或本地实测结果覆盖本行。
 >
 > ⚠️ **这道门是概率性的**（2026-09-25 实测，详见 §五末）：套件约 **1/4** 概率在
 > `LaunchCancellationTests.testUncancelledTokenPassesEntryGate` 处 **abort**
@@ -360,12 +363,14 @@ func preScan() {
 - 已覆盖的等价分支：`dismiss()` 走同一个 `choose(notice, index: 0)`。
 - 计划：把超时时长改为可注入（`init` 参数或 internal static var）后，用 0.05s 断言。
 
-### 4.7 `DownloadMerger` 的真实实现
+### 4.7 `DownloadMerger` 的真实实现 —— **已随删除闭合（2026-10-01）**
 
-- 协议注释已约定「单分片允许直接移动临时文件」，但工程内无实现（旧逻辑在 `NetManager.merge`）。
-- 计划：落地 `FileManagerDownloadMerger` 后，把 `DownloadMergerTests` 里的
-  `OffsetOrderingMerger` 替换为真实实现，保留现有断言（乱序/倒序拼接、目录自动创建、
-  分片缺失报错、空分片列表）。
+- `DownloadMerger` / `DownloadSliceStore` / `DownloadScheduler` / `DownloadTask` 都是
+  **只有协议声明、零实现、零调用**的文件，已于 `cdf9dee` 整体删除，`DownloadMergerTests.swift` 一并删除。
+- 结论：它从来不是「覆盖率缺口」，而是**为不存在的实现预留的抽象**。真实合并逻辑一直在
+  `SLCore/Download/NetMerger.swift`，由 `SLCore/Download/` 侧自己的测试覆盖。
+- 教训：不要提交「先定协议、实现待补」的文件 —— 它们会长期留在树里冒充架构，
+  还会牵出一整套测试替身来测这个空壳。
 
 ### 4.8 `LaunchService` 全链路
 
@@ -387,28 +392,25 @@ func preScan() {
 - 建议改造：把 `ManagedProcess` 抽成协议（如 `GameProcess`），
   或在测试中以 `/bin/sleep` 作为受控进程验证 register → observe → terminate。
 
-### 4.11 `JavaModule` 的注册结果
+### 4.11 `JavaModule` 的注册结果 —— **已随删除闭合（2026-10-01）**
 
-- `SLModule` / `ModuleContext` / `ModuleCapabilityKey` 已就位，`JavaModule` 现在可以编译了，
-  但注册结果仍无法有效断言：其 `register` 直接构造 `DefaultJavaRepository()` →
-  `JavaManager.shared.scanInstalledJava`，只能验证「上下文里存在一个 `DefaultJavaResolver`」，
-  无法验证解析是否可用，而真实磁盘扫描会 fork `java -version`。
-- 另外 `AppModuleBootstrap` 中 `JavaModule()` 目前处于注释状态，即使补测也不会被装配入口覆盖。
-- 计划：`JavaModule` 支持注入仓储后，补「注册后可从 ModuleContext 取到 java.resolver 且行为正确」。
+`JavaModule` 与整个 `ModuleContext` / `SLModule` 体系已于 `cdf9dee` 删除。
+原缺口（「注册结果无法有效断言」）不再存在，因为**没有任何调用方从上下文取能力**。
+`JavaResolver` / `JavaRepository` 本身保留并由 `JavaResolverBridgeTests` 覆盖。
 
-### 4.12 `ModuleRegistry` 的并发安全
+### 4.12 `ModuleRegistry` 的并发安全 —— **已随删除闭合（2026-10-01）**
 
-- `ModuleRegistry.register(_:)` 与 `ModuleContext.values` 都未加锁，
-  实现假定「装配期单线程、注册完成后只读」。
-- 该约定无法在不改源码的前提下用用例表达：用例若并发调用 `register`，
-  观测到的是数据竞争而非稳定结论，属于不确定性测试，因此**故意不写**。
+`ModuleRegistry.register(_:)` / `ModuleContext.values` 连同其「未加锁、假定装配期单线程」
+的隐患一并删除。无需再讨论其并发约定。
 
-### 4.13 CI
+### 4.13 CI —— **已落地（2026-10-01）**
 
-- 工程当前没有任何 CI。计划：target 建好后接一条
-  `xcodebuild -scheme qwq -destination 'platform=macOS' test` 的流水线，
-  并逐步给出覆盖率门禁。
-- 在此之前，`§2` 的 `swiftc -typecheck` 命令可作为低成本的前置门禁（实测退出码 0）。
+- `.github/workflows/test.yml`：push / PR / 手动触发，跑 `./scripts/verify-test.sh run`
+  （真实 `xcodebuild` build-for-testing + test-without-building），失败时上传 `/tmp/sl_test.log`。
+- 不跑 `scripts/typecheck.sh`：它依赖 `/tmp/deps` 里由**上一次真实构建**产出的第三方
+  `.swiftmodule`，CI 是干净环境。该脚本的定位始终是**本地即时反馈**。
+- **用例数自此以 CI 为准，不再手写进文档与提交信息。**
+- 未做：覆盖率门禁。
 
 ### 4.14 真实启动（已落地，默认跳过）
 
@@ -532,9 +534,10 @@ rm /tmp/sl-real-launch.enabled
 ## 五、必须遵守：用例一律写成 `async`（Xcode 26.2 隔离析构缺陷）
 
 **结论**：`qwqTests` 里**每个 `test…()` 方法都必须写成 `async`**。这不是为了等待什么，
-而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 **23** 个测试文件、**268** 个用例已全部统一
-（2026-09-25 实测：`Executed 268 tests, with 2 tests skipped and 0 failures`；
-新增测试文件时请同步上面的数字）。
+而是为了躲开一条会把整个测试进程打死的工具链缺陷。当前 **21** 个测试文件、**247** 个用例已全部统一
+（`247` 系 2026-10-01 删除两个「为不存在之物而写」的测试文件后由 268 − 21 推算，见 §三顶部；
+最后一次真实实测为 2026-09-25 的 `Executed 268 tests, with 2 tests skipped and 0 failures`。
+**用例数以 CI 为准**，新增测试文件时不必再手工同步上面的数字）。
 
 ### 现象
 

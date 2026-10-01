@@ -53,7 +53,7 @@ xcodebuild -project qwq.xcodeproj -scheme qwq -configuration Debug build
 SL/
 ├── qwq/                    # 应用源码
 │   ├── App/                # 入口与 App 级组件
-│   ├── Core/               # 重构核心产物（Download / Minecraft / Module）
+│   ├── Core/               # 跨功能领域抽象（Download 引擎门面 / Events）
 │   ├── Features/           # 按功能划分（Launch / Game / Download / ModBrowser / Translation / Skin / Java / Settings / Theme）
 │   ├── SLCore/            # 原生重写的启动核心（下载 / 安装 / 启动 / 加载器）
 │   ├── Models/  Services/  UI/

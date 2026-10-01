@@ -9,15 +9,16 @@
 > |---|---|
 > | **HANDOVER.md（本文）** | **怎么上手、怎么验、坑在哪** |
 > | `README.md` | 这是什么应用、功能状态、怎么构建、给用户看 |
-> | `ARCHITECTURE.md` | 重构的**方向**与分层原则（为什么这么做） |
-> | `REFACTOR_PLAN.md` | 重构的**计划与历史**（做到哪了、还剩什么） |
-> | `docs/MODULE-INVENTORY.md` | 14 个模块的**完成度盘点** |
+> | `ARCHITECTURE.md` | **当前真实存在**的结构与分层（不写目标结构） |
+> | `REFACTOR_PLAN.md` | 重构的**计划与历史**（做到哪了、还剩什么；部分内容已成历史） |
+> | `docs/MODULE-INVENTORY.md` | ⚠️ **2026-10 起部分过期**：其中的 `Module/` 模块内核盘点已作废（该体系已删除，见 `ARCHITECTURE.md` §三） |
 > | `qwqTests/TESTING.md` | 测试**怎么跑、覆盖了什么、哪些没覆盖** |
-> | `CHANGELOG.md` | 每一轮改了什么、为什么 |
+> | `CHANGELOG.md` | 每一轮改了什么、为什么（2026-10 起冻结，不再手写新条目） |
 > | `qwq/SLCore/STUBS_AUDIT.md` | 哪些是桩实现、哪些看着像桩其实是真代码 |
 >
-> 基线（2026-09-25）：分支 `refactor/modular`，HEAD `b045c61`，
-> `qwq/` 下 **251 个 Swift 文件 / 31,349 行**，测试 **23 文件 / 267 用例**。
+> 基线（2026-10-01）：分支 `refactor/modular`，
+> `qwq/` 下 **234 个 Swift 文件 / 30,493 行**，测试 **21 文件 / 250 用例**（`grep -c 'func test'` 口径）。
+> 用例数以 CI 为准（`.github/workflows/test.yml`）。
 
 ---
 
@@ -63,14 +64,14 @@ SL_DEBUG_AUTO_LAUNCH=1 SL_DEBUG_AUTO_LAUNCH_DELAY=4 \
 ```
 qwq/
 ├── App/           13 文件  应用入口、装配根、窗口壳、App 级组件（ContentView 等）
-├── Core/          20 文件  重构核心产物：Download 抽象 / Minecraft 只读抽象 / Module 内核
-├── Features/     126 文件  按功能划分（最大的一块）
+├── Core/          12 文件  跨功能领域抽象：Download 引擎门面 / Events
+├── Features/     117 文件  按功能划分（最大的一块）
 │   ├── Download/ Launch/ Game/ ModBrowser/
 │   └── Java/ Settings/ Skin/ Theme/ Translation/
 ├── SLCore/        78 文件  原生重写的启动核心（下载 / 安装 / 启动 / 加载器 / 账号 / 存储）
 ├── UI/            11 文件  Notices / Shell / Modifiers 等公共 UI
 ├── Models/  Services/      少量未归口文件
-└── qwqTests/      23 文件  单元测试（目录自动同步，新增 .swift 会自动进 target）
+└── qwqTests/      21 文件  单元测试（目录自动同步，新增 .swift 会自动进 target）
 ```
 
 **从哪读起**（按推荐顺序）：

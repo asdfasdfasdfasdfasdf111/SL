@@ -2,6 +2,42 @@
 
 本文件记录 SL 启动器（qwq）的重要变更，按版本发布记录。
 
+> ## ⚠️ 本文件自 2026-10-01 起冻结，不再手写新条目
+>
+> 原因：本文件已达 976 行 / 107 KB，而它记录的内容 `git log` 里本来就有，
+> 且**手工维护的它已经开始与实际漂移**。维护成本已经超过阅读价值。
+>
+> **替代做法**：变更看 `git log`（提交信息里已写明「背景 / 做了什么 / 怎么验的」）；
+> 面向交接的「现在是什么样」看 `HANDOVER.md` 与 `ARCHITECTURE.md`。
+>
+> 历史条目（下面那些）**保留不改**，作为重构过程的记录。
+
+## 删除模块内核与死协议（净 -1231 行）（2026-10-01）
+
+**背景**：`ModuleContext` / `SLModule` / `ModuleRegistry` 这套「编译期模块化」内核，
+8 个模块注册了 10 项能力，但**全库没有任何一处从 `ModuleContext` 解析能力**；
+26 个 `static let shared` 一个没少，`AppModuleBootstrap.makeRegistry()` 在生产代码里零调用方
+（只有它自己的测试在调）—— 也就是说**真实运行时并不存在这个注册表**。
+同时 `Core/Download/` 下有 4 个只有协议声明、零实现零调用的文件。
+
+**做了什么**：整体删除模块内核 + 8 个注册入口 + 3 个只为喂死注册表而存在的服务
++ 4 个死下载协议 + 2 个「为不存在之物而写」的测试文件，共 21 文件 / 净 -1231 行。
+`AppSettingsStore` 内的 `SettingsModule` 与 `extension ModuleContext` 一并移除。
+
+**明确保留**（核验为活代码）：`DefaultSkinService`（离线皮肤链路 4 处真实调用）、
+`VersionCatalogService` / `VersionFilterUseCase` / `ModBrowserService` /
+`JavaResolver` / `JavaRepository` —— 它们经**构造器默认参数**注入，是真实在用的依赖注入形态。
+
+**判定的依据**：这正是此前 `STUBS_AUDIT.md` 反复治理的同一个病 ——
+「类型/接口上看似支持、运行期实际不生效」。区别是这次不标注、不排期，**直接删**。
+
+**验证**：`scripts/typecheck.sh` 两口径 0 错误；告警集合逐条 diff 比对基线，
+口径二完全一致、口径一仅少 2 条（系被删测试文件的 `ignoring import` 脚本产物）。
+⚠️ 真实 xcodebuild 因**嵌套沙箱**（`confstr(DARWIN_USER_CACHE_DIR)` 被拦，表现为
+`Trace/BPT trap: 5`）无法在 AI 会话内运行，需本地跑 `./scripts/verify-test.sh run` 复核。
+
+**同轮新增**：`.github/workflows/test.yml` —— 此前工程没有任何 CI，用例只能人工本地跑。
+
 ## `LauncherSettings` 收敛为转发层（设置去双写，审计发现 ③ 收口）（2026-09-25）
 
 **背景**：设置模块有两份内存状态在写**同一批 `UserDefaults` 键** ——
