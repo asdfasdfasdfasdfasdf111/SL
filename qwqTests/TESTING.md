@@ -16,7 +16,7 @@
   的结论已作废，根因就是调用方沙箱。
 - **接线记录**：见 `REFACTOR_PLAN.md` 第 15 项（`8172dbf`，TEST BUILD SUCCEEDED，14 文件 181 用例可编译）。
 
-测试文件清单（共 **33** 个，目录自动同步，无需手工加入 target）：
+测试文件清单（共 **35** 个，目录自动同步，无需手工加入 target）：
 
 | 文件 | 被测对象 | 备注 |
 | --- | --- | --- |
@@ -33,6 +33,8 @@
 | `NetDownloadStateTests.swift` | `SLCore/Download/NetDownloadState.swift`（`NetManager.Slice` / `FileRecord`） | 分片剩余量、文件完成度、源是否全判死。钉住源码自认的三处问题：`end` 找不到自己时兜底成文件末尾、`fileSize == -2` 未特判得 0、`isAllSourcesFailed` 分界是 `<` |
 | `DetailVersionDecisionTests.swift` | `Features/Game/DetailVersionDecision.swift` | 详情页「默认选中哪个版本」的完整规则；重点守住两处反直觉设计：游戏版本页 `itemName` 缺失时**返回 nil 不回退**、两个函数的 nil 语义分别是「不决定」与「保持现状」 |
 | `LoaderNameResolverTests.swift` | `Features/ModBrowser/ModLoader.swift` + `Features/Download/LoaderNameResolver.swift` | `displayName`/`assetName` 映射；钉住注释点名的三条：rawValue 全小写而 assetName 混排、assetName **非单射**（rift/unknown 都→fabric）、子串匹配 **neoforge 先于 forge** |
+| `InstallProgressTests.swift` | `SLCore/Minecraft/Download/InstallProgress.swift` | 钉住「`rawValue` 是**排序键**不是序号」这条无编译期保护的不变量（0…7 连续、1000+/2000+ 分段、整体有序），以及全部用户可见中文文案 |
+| `MinecraftVersionInfoTests.swift` | `Features/Game/Module/MinecraftVersionInfo.swift` | `init?(manifestEntry:)` 的取舍（`id` 为空即丢、其余字段缺失只丢字段）；**并排钉住** `kind` 用可失败构造而非 `.release` 回落 |
 | `DownloadSliceBudgetTests.swift` | `NetManager.sliceBudget`（分片总超时预算） | 纯函数：验证超时随剩余量与实测速度缩放，慢而健康的下载不再被判失败 |
 | `InstallTaskProgressTests.swift` | InstallTask.getProgress / InstallTasks.getProgress | 纯值类型；同名的两个 `getProgress()` 边界口径必须一致（空任务组 0/0 → 曾显示字面量「nan %」，见 §4.15） |
 | `LaunchStateTests.swift` | LaunchState / LaunchError / LaunchResult | 纯值类型 |
@@ -198,7 +200,25 @@ func preScan() {
 | `NetDownloadStateTests.swift` | 25 | 真实断言（`end` 中间/末尾/乱序/找不到自己、`undone` 正常与夹 0 与未知大小 `-1` 与未获取大小 `-2`、活跃分片含 resumed、`merging` 非终止、进度在 done/非正大小/正常/夹 1 四种情形、`isAllSourcesFailed` 的 `<` 边界与 `sourcesOnce` 排除与空真） |
 | `DetailVersionDecisionTests.swift` | 19 | 真实断言（游戏版本页 vs 其他页 × 首次加载/就绪后决议的全部分支；nil 的两种含义分列） |
 | `LoaderNameResolverTests.swift` | 19 | 真实断言（displayName/assetName 全表、rawValue 小写与往返、assetName 非单射、assetName(for:) 大小写与未知回退、name(forVersion:) 的本地优先/后缀从后往前/子串顺序/各级回退） |
-| **合计** | **428** | 其中 2 条默认跳过 |
+| `InstallProgressTests.swift` | 10 | 真实断言（rawValue 分段与连续性、排序即执行序、分段整体有序、rawValue 唯一、13 条显示名与全非空、图标名的 Missingno 占位） |
+| `MinecraftVersionInfoTests.swift` | 19 | 真实断言（id 缺失/空/非字符串丢条目、type 缺失退化 unknown、releaseTime 缺失空串、URL 解析与非法 URL 只丢字段、kind 全表与未识别为 nil、与 rawVersionType 回落并排对比、isAprilFool 与 helper 逐字一致、attaching 不可变、快照缺省为 nil 与可哈希） |
+| **合计** | **457** | 其中 2 条默认跳过 |
+
+> **用例数的正确数法（2026-10-02 踩坑后补记）**
+>
+> ```bash
+> grep -h 'func test' qwqTests/*.swift | wc -l
+> ```
+>
+> 两个会让数字虚高的坑，都实际踩过：
+> 1. **`grep -r qwqTests/` 会把本文件自己算进去** —— TESTING.md 在 `qwqTests/` 目录下，
+>    而正文里有 `func test…` 的代码示例，于是"文中的示例"被当成真实用例；
+> 2. **编辑工具可能在 `qwqTests/` 下留隐藏的 `.xxx.tmpdir/` 备份**
+>    （内含 `<文件名>.swift.tmp` 副本），`-r` 一样会命中。
+>
+> 实测一次：逐文件求和 **457**、`grep -r` 全目录 **488**，差 31 = TESTING.md 的 3 + 两个 tmpdir 的 28。
+> ⇒ 数用例**只数 `*.swift`**，并在数之前确认目录里没有隐藏 tmpdir。
+> 上表逐行数字之和即总数，可交叉验证。
 
 > **本次实测口径（含提交锚点，便于复核）**
 >
