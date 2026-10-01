@@ -16,7 +16,7 @@
   的结论已作废，根因就是调用方沙箱。
 - **接线记录**：见 `REFACTOR_PLAN.md` 第 15 项（`8172dbf`，TEST BUILD SUCCEEDED，14 文件 181 用例可编译）。
 
-测试文件清单（共 **45** 个，目录自动同步，无需手工加入 target）：
+测试文件清单（共 **49** 个，目录自动同步，无需手工加入 target）：
 
 | 文件 | 被测对象 | 备注 |
 | --- | --- | --- |
@@ -45,6 +45,10 @@
 | `ShaderLoaderFilterTests.swift` | `Features/Download/ShaderLoaderFilter.swift` | 光影页加载器白名单与**空则回退默认**；钉住「去重走 `Set` ⇒ 结果顺序不确定」与「回退列表须与白名单同集合」 |
 | `ItemFilterTests.swift` | `Features/ModBrowser/ItemFilter.swift` | 搜索谓词四分支；重点是**中文译名反向匹配**（输「科技」须经 `ModrinthTagMap` 反查到 `technology`），且该分支是**精确相等**而非包含 |
 | `GameVersionFilterTests.swift` | `Features/Game/GameVersionFilter.swift` | 适配层的取舍：`id` 缺失**静默丢弃**、`type` 缺失不落入任何分类、保序；并与 `VersionFilterUseCase` 逐子分类对齐 |
+| `ModSearchRequestTests.swift` | `Features/ModBrowser/Module/ModSearchRequest.swift` | `nextPage()` 的偏移量顺推（连翻多页**不重叠不跳号**）；并用字段集合钉住「刻意没有 loader / 游戏版本过滤」的能力边界 |
+| `LoaderSupportStateTests.swift` | `SLCore/Minecraft/Mod/Loader/LoaderSupportState.swift` | `LoaderSupportResult` **三态不可合并**（`.notSupported` 可缓存、`.unavailable` 不得缓存，否则一次网络抖动被永久缓存成「不支持」） |
+| `LaunchOptionsTests.swift` | `SLCore/Minecraft/Launch/LaunchOptions.swift` | 默认值（尤其 `skipResourceCheck` 默认 false）；钉住 `javaPath` 是**隐式解包可选**这一危险声明 |
+| `FabricManifestTests.swift` | `SLCore/Minecraft/Mod/Loader/Fabric/FabricManifest.swift` | 只读**嵌套** `loader.version` / `loader.stable`（顶层同名字段不参与）；非法 JSON 抛出而非静默空数组 |
 | `DownloadSliceBudgetTests.swift` | `NetManager.sliceBudget`（分片总超时预算） | 纯函数：验证超时随剩余量与实测速度缩放，慢而健康的下载不再被判失败 |
 | `InstallTaskProgressTests.swift` | InstallTask.getProgress / InstallTasks.getProgress | 纯值类型；同名的两个 `getProgress()` 边界口径必须一致（空任务组 0/0 → 曾显示字面量「nan %」，见 §4.15） |
 | `LaunchStateTests.swift` | LaunchState / LaunchError / LaunchResult | 纯值类型 |
@@ -222,7 +226,11 @@ func preScan() {
 | `ShaderLoaderFilterTests.swift` | 11 | 真实断言（非光影页小写去重与空不回退、Set 顺序不定、光影页白名单过滤与大小写不敏感、空则回退默认、回退与白名单同集合、回退顺序确定） |
 | `ItemFilterTests.swift` | 13 | 真实断言（标题/简介/标签三分支与大小写、中文译名反向匹配、反向匹配是精确相等、要求条目确有该标签、空 tags 退化、空查询恒真、无关查询不命中） |
 | `GameVersionFilterTests.swift` | 10 | 真实断言（三桶成员、id 缺失与空串被丢弃、type 缺失不落任何分类、保序、nil 子分类为空、空输入、只返回 id、与 UseCase 逐子分类一致） |
-| **合计** | **619** | 其中 2 条默认跳过 |
+| `ModSearchRequestTests.swift` | 8 | 真实断言（默认值、翻页顺推、连翻五页区间首尾相接、自定义 limit、不改原值、全字段参与相等、可入集合） |
+| `LoaderSupportStateTests.swift` | 9 | 真实断言（supported 空列表合法且不同于 notSupported、非 supported 的 loaders 恒空、只有 unavailable 是未知、三态互不相等、列表顺序参与相等、LoaderState 四态与两层分离） |
+| `LaunchOptionsTests.swift` | 7 | 真实断言（默认值、uuid 每次新、javaPath 未赋值为 nil 与可赋值、字段独立、引用类型共享、yggdrasilArguments 可追加） |
+| `FabricManifestTests.swift` | 10 | 真实断言（嵌套字段解析、顶层同名字段不参与、空数组、缺字段默认、非法 JSON 抛出、非数组顶层为空、id 唯一且可变、引用类型、按 stable 过滤） |
+| **合计** | **653** | 其中 2 条默认跳过 |
 
 > **用例数的正确数法（2026-10-02 踩坑后补记）**
 >
