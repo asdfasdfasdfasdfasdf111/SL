@@ -31,6 +31,23 @@ enum CrashReporter {
 
         logPathC = strdup(NSHomeDirectory() + "/Library/Logs/SL_crash.log")
 
+        // 预热 `gmtime_r`（**必须在非信号上下文里做**）。
+        //
+        // 它在本进程**首次调用**时会惰性初始化时区数据 —— 实测该次调用产生 **5 次堆分配**
+        // （大小序列 `[1025, 41448, 18280, 1025, 41448]`）。若首次调用发生在信号处理器里，
+        // 就等于在崩溃路径上调用 malloc，正是本文件要消除的自死锁风险
+        // （崩溃点若在 malloc 内部，信号处理器再进 malloc 会死锁 → 日志静默写不出来）。
+        //
+        // ⚠️ 不能指望别的代码顺手预热：实测 `DateFormatter` 与 `ISO8601DateFormatter`
+        // **不会**预热它（走 ICU，不碰 libc 的时区表），调用后信号路径仍是 5 次分配。
+        // 而全库唯一的 `gmtime_r` 调用就在本文件的 `writeCrashLog` 里。
+        //
+        // 依据与实测方法见 `qwqTests/TESTING.md` §4.22（DYLD_INTERPOSE 拦截 malloc +
+        // 「Swift 地板值」对照：预热前 5 次 / 预热后 0 次，地板值本身为 0）。
+        var warmNow = time(nil)
+        var warmBroken = tm()
+        _ = gmtime_r(&warmNow, &warmBroken)
+
         let sigs: [Int32] = [SIGSEGV, SIGBUS, SIGILL, SIGABRT, SIGTRAP]
         for sig in sigs {
             signal(sig) { s in CrashReporter.handleSignal(s) }

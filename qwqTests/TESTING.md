@@ -771,6 +771,59 @@ library.name = "org.lwjgl:\(library.artifactId):\(lwjglPinnedVersion):natives-ma
 ⇒ 已给两个夹具各加一个 natives 库，并在测试文件头写明这条坑：
 **凡验证 `.arm64` 替换规则的夹具，必须至少含一个 natives 库。**
 
+### 4.22 `CrashReporter` 的信号路径**并非零分配**：`gmtime_r` 惰性初始化（2026-10-02 实测并修复）
+
+**背景**：`qwq/App/CrashReporter.swift` 的文件注释明确声称「现改为：路径在安装期 `strdup`，
+三个缓冲全部走 `withUnsafeTemporaryAllocation`（栈上）」。但**「看起来没有分配」不算数** ——
+必须能**被证明**。
+
+**方法**（`DYLD_INTERPOSE` 拦截 `malloc` + 地板值对照）：
+1. 拦截器发现 `/tmp/allocprobe/armed` 存在后才开始记录每次分配的大小；
+   被测程序在 `raise()` 前一行创建该文件 ⇒ 计到的全部在信号路径内；
+2. **地板值对照**：另编一个与 `CrashReporter` **同运行时**的探针
+   （Swift + Foundation、同样 `install()` 信号处理器与 `NSSetUncaughtExceptionHandler`，
+   但 handler 里**不写日志**）—— 它测到的是「Swift/Foundation + 信号投递」的地板值；
+3. **阳性对照**：一个 handler 里故意用 `[CChar](repeating:)` 与字符串插值的版本，
+   用来证明拦截器**确实能**测到分配（否则一串 0 可能只是探针坏了）。
+
+**实测（每项 3 轮，结果完全稳定）**：
+
+| 探针 | 信号路径内分配 |
+| --- | --- |
+| 纯 C（只 `signal`+`raise`） | 0 |
+| Swift 地板（装 handler 但不写日志） | **0** |
+| 阳性对照（故意分配） | 3（`[112, 16, 56]`） |
+| `CrashReporter`（修复前） | **5**（`[1025, 41448, 18280, 1025, 41448]`） |
+
+**归因**（逐个砍掉 `writeCrashLog` 的各段）：
+
+| 变体 | 分配 |
+| --- | --- |
+| `writeCrashLog` 立刻返回 | 0 |
+| 只 `writeLiteral` / 只 `writeSignalName` / 只 `writeInt` / 只 `backtrace` 块 | 全部 **0** |
+| 只 `time(nil)` | 0 |
+| 只 `tm()` | 0 |
+| **只 `gmtime_r`** | **5** |
+| 只 `writeTime` | 0 |
+
+⇒ **5 次分配全部来自 `gmtime_r` 的首次调用**（libc 惰性初始化时区数据）。
+反向验证：先在非信号上下文调一次 `gmtime_r` 再崩溃 ⇒ **0 次**。
+
+**为什么这是真问题**：全库唯一的 `gmtime_r` 调用就在本文件的 `writeCrashLog` 里，
+而实测 **`DateFormatter` 与 `ISO8601DateFormatter` 不会预热它**
+（走 ICU、不碰 libc 时区表；调用后信号路径仍是 5 次）。
+⇒ App 正常启动流程下，**第一次崩溃**就会在信号处理器里触发这 5 次堆分配 ——
+正是本文件要消除的自死锁风险（崩溃点若在 malloc 内部，信号处理器再进 malloc 会死锁，
+日志静默写不出来）。
+
+**修复**：在 `install()`（非信号上下文）里预热一次 `gmtime_r`。
+
+**修复后实测**：**0 次**（3 轮稳定），且崩溃日志仍正常写出
+（804 字节，含 `signal:` / `time(UTC):` / 带符号的完整 backtrace）。
+
+**留下的教训**：POSIX 的 async-signal-safe 清单把 `gmtime_r` 列为安全，
+但「清单在列」不等于「实现不分配」—— **这类结论只能实测，不能靠查表**。
+
 ## 五、必须遵守：用例一律写成 `async`（Xcode 26.2 隔离析构缺陷）
 
 **结论**：`qwqTests` 里**每个 `test…()` 方法都必须写成 `async`**。这不是为了等待什么，
