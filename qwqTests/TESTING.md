@@ -16,7 +16,7 @@
   的结论已作废，根因就是调用方沙箱。
 - **接线记录**：见 `REFACTOR_PLAN.md` 第 15 项（`8172dbf`，TEST BUILD SUCCEEDED，14 文件 181 用例可编译）。
 
-测试文件清单（共 **39** 个，目录自动同步，无需手工加入 target）：
+测试文件清单（共 **40** 个，目录自动同步，无需手工加入 target）：
 
 | 文件 | 被测对象 | 备注 |
 | --- | --- | --- |
@@ -39,6 +39,7 @@
 | `VersionFilterUseCaseTests.swift` | `Features/Game/Module/VersionFilterUseCase.swift` | 版本三分桶（测试版**排除**愚人节、远古版**包含**全部愚人节）；钉住「`subCategory: nil` 返回**空列表**而非不过滤」这条被注释特别强调的契约 |
 | `MinecraftInstanceInfoTests.swift` | `Core/Minecraft/Module/MinecraftInstanceInfo.swift` | 镜像映射规则：清单文本判定的**分支顺序**（neoforged 先于 forge）、**认不出 quilt**、判定大小写敏感；`id` 取标准化路径；`manifestPath`/`configPath` 派生 |
 | `SpeedMeterTests.swift` | `SLCore/Download/SpeedMeter.swift` 的 `CounterActor` | `takeInterval` 的**单次消费**语义（第二次必为 0）、`&+=` 溢出回绕不崩、actor 串行化下并发加减与取值守恒 |
+| `ModProjectTests.swift` | `Features/ModBrowser/Module/ModProject.swift` | 四个转换 init **各自丢哪些字段**（搜索命中无分类、详情响应无简介/图标/下载量且 title 回落 id、本地目录无 slug、分类页单元无下载量与版本列表）；`primaryFile` 取值顺序 |
 | `DownloadSliceBudgetTests.swift` | `NetManager.sliceBudget`（分片总超时预算） | 纯函数：验证超时随剩余量与实测速度缩放，慢而健康的下载不再被判失败 |
 | `InstallTaskProgressTests.swift` | InstallTask.getProgress / InstallTasks.getProgress | 纯值类型；同名的两个 `getProgress()` 边界口径必须一致（空任务组 0/0 → 曾显示字面量「nan %」，见 §4.15） |
 | `LaunchStateTests.swift` | LaunchState / LaunchError / LaunchResult | 纯值类型 |
@@ -210,7 +211,8 @@ func preScan() {
 | `VersionFilterUseCaseTests.swift` | 16 | 真实断言（.all 原样保序、未识别 kind 只在 .all、三分桶各自成员、pre-release/rc 不进桶、愚人节只归远古、三桶互斥且并集可枚举、保序、空输入、nil 子分类返回空、子分类映射与往返、rawValue 与 id） |
 | `MinecraftInstanceInfoTests.swift` | 21 | 真实断言（清单文本判定全表、neoforged 先于 forge、quilt 认不出、大小写敏感、空串 vanilla、displayName 的 NeoForge 特例、VersionKind 全表 rawValue 与回落 .release、id 标准化、manifestPath/configPath、Hashable 与 Sendable） |
 | `SpeedMeterTests.swift` | 12 | 真实断言（初始 0、累加、读取即清零、清零后再累计、加 0、负值与负累计、上下溢回绕、20×50 并发不丢计数、8 次并发取用恰好一次命中、逐轮取值总和守恒） |
-| **合计** | **526** | 其中 2 条默认跳过 |
+| `ModProjectTests.swift` | 21 | 真实断言（type 全表与展示名与往返、sha1 取 hashes 与两类缺失、hashes nil 归一空字典、primaryFile 四种情形、四个 init 的字段得失与 title 回落 id 与未知 projectType 为 nil、可哈希） |
+| **合计** | **547** | 其中 2 条默认跳过 |
 
 > **用例数的正确数法（2026-10-02 踩坑后补记）**
 >
