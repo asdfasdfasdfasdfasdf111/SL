@@ -143,18 +143,3 @@ final class AppSettingsStore: ObservableObject {
         return Color(nsColor)
     }
 }
-
-/// 设置模块：把设置存储注册进模块上下文，后续调用方从上下文取，而不是直接摸单例。
-final class SettingsModule: SLModule {
-    let identifier = "settings"
-
-    func register(in context: ModuleContext) throws {
-        context.register(AppSettingsStore.shared, for: ModuleCapabilityKey<AppSettingsStore>("settings.store"))
-    }
-}
-
-extension ModuleContext {
-    func appSettingsStore() -> AppSettingsStore? {
-        resolve(ModuleCapabilityKey<AppSettingsStore>("settings.store"))
-    }
-}
