@@ -189,14 +189,27 @@ func preScan() {
 > Branch: refactor/modular
 > ```
 >
-> ⚠️ **2026-10-01 变更（净减 21 条，尚未重新实测）**：提交 `cdf9dee` 删除两个**为不存在之物而写**的测试文件：
+> ⚠️ **2026-10-01 变更（净减 21 条）**：提交 `cdf9dee` 删除两个**为不存在之物而写**的测试文件：
 > - `ModuleRegistryTests.swift`（13 条）—— 测的是生产中零调用方的模块注册表（`ModuleContext` 体系整体删除，见 `ARCHITECTURE.md` §三）
 > - `DownloadMergerTests.swift`（8 条）—— 该文件自认「`DownloadMerger` 只有协议声明，工程内尚无默认实现」，
 >   故自定义测试替身 `OffsetOrderingMerger` 再测该替身
 >
-> 故当前应为 **247 条 / 21 文件**。上面的 268 是**删除前的最后一次真实实测**，保留作为对照。
-> 247 系由 268 − 21 推算，**尚未经 `verify-test.sh run` 实测**（删除当次的执行环境无法嵌套 xcodebuild）。
-> 请以 CI（`.github/workflows/test.yml`）或本地实测结果覆盖本行。
+> ✅ **2026-10-02 实测（本条覆盖此前基于推算的 247）**：提交 `b73df40` 新增
+> `GameSessionStoreTests`（6 条）后，本地 `./scripts/verify-test.sh run` 结果：
+>
+> ```text
+> 22 / 22 个 suite 全部执行
+> 总用例 253 = passed 250 + 按设计跳过 2 + 因工具链 abort 未重跑 1
+> 断言失败 0
+> ```
+>
+> **口径说明（不要直接抄日志里的 `Executed N tests`）**：本次运行中途在
+> `LaunchCancellationTests.testUncancelledTokenPassesEntryGate` 处 abort 并重启
+> （即下方那条概率性缺陷），**重启后该 suite 报 `Executed 0 tests`**；
+> 而末尾的 `Executed 101 tests` 只是**最后一次 launch** 的汇总，不是总数。
+> 上面的 253 由「逐 suite 的 `Executed` 行求和 + 补回崩溃前已完成项」得到，
+> 并用日志中 `Test Case … passed` 的**独立计数交叉验证**（250 条，与 253−2−1 吻合）。
+> `** TEST EXECUTE FAILED **` 的成因是 abort 与 logarchive 收集失败，**不是断言失败**。
 >
 > ⚠️ **这道门是概率性的**（2026-09-25 实测，详见 §五末）：套件约 **1/4** 概率在
 > `LaunchCancellationTests.testUncancelledTokenPassesEntryGate` 处 **abort**
