@@ -33,15 +33,12 @@ public struct ManagedProcess: Sendable {
     }
 }
 
-// MARK: - 进程退出观察的竞态结论（2026-10-02 死代码清理归档）
+// MARK: - 进程退出观察的竞态结论（约束，禁止重犯）
 
-/// 原 `waitForTermination()`（会话层等待进程退出）已删除：其唯一实现路径依赖未接线的
-/// `InMemoryGameSessionStore`，全库（含测试）无引用、从未执行。
-///
-/// 删除前验证到的竞态结论保留在此（接线会话观察时不可重犯）：
 /// 挂 `process.terminationHandler` 与检查 `process.isRunning` 之间存在竞态窗口——
 /// 进程恰好在两步之间退出时 handler 永不回调、continuation 永不 resume（调用方永久挂起）。
 /// 正确形态：**先挂 handler、再补检状态**，两条路径共用一次性门控，保证恰好 resume 一次。
+/// （「为什么会有这个结论、删掉的是什么」见 `docs/ARCHAEOLOGY-NOTES.md`。）
 
 /// 游戏进程控制器：把「参数 + 环境」变成可被跟踪的进程
 public protocol GameProcessController: Sendable {
