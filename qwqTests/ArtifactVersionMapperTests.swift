@@ -27,8 +27,8 @@
 //  ⚠️ **首轮实测抓到一处真缺陷**：`.arm64` 的 natives 循环里，`!= 3.3.3` 守卫只拦得住
 //  `changeVersion`，紧随其后的一行却把版本硬写成常量 `lwjglPinnedVersion`，于是守卫被作废 ——
 //  3.3.3 的 natives 仍被降级到 3.3.2，而核心 jar 保持 3.3.3 ⇒ **core 与 natives 版本不一致**。
-//  详见 `testArm64DoesNotDowngradeLWJGL333` 的注释（内含一行修法）。该用例以
-//  `XCTExpectFailure` 标记，修好后会自动变红提醒移除标记。
+//  已在 2026-10-02 修复（该行改用 `library.version`），`XCTExpectFailure` 标记同步移除；
+//  见 `testArm64DoesNotDowngradeLWJGL333` 的注释与断言。
 //
 //  ⚠️ **写夹具的坑（本套件初版踩过，2 条用例因此变红）**：`.arm64` 分支开头有
 //  `if manifest.getNeededNatives().isEmpty { return }` 的**早退**。夹具里若没有 natives 库，
@@ -172,12 +172,12 @@ final class ArtifactVersionMapperTests: XCTestCase {
     /// ⇒ core 与 natives **版本不一致**（LWJGL 的 natives 与 core 是强耦合的）。
     /// 文件头也明说「对 **< 3.3.3** 的版本统一钉到 3.3.2」，即 3.3.3 本不该被钉。
     ///
-    /// 修法（一行）：该行改用 `library.version` ——
+    /// 修法（一行，已于 2026-10-02 实施）：该行改用 `library.version` ——
     /// `library.name = "org.lwjgl:\(library.artifactId):\(library.version):natives-macos-arm64"`
     /// 对 <3.3.3 无影响（`changeVersion` 已把 version 改成 3.3.2），**只影响 3.3.3 这一种输入**。
     ///
-    /// 本用例按**预期行为**断言，并用 `XCTExpectFailure` 标记已知缺陷：
-    /// 一旦修好，它会报 "expected failure did not occur" 而**变红**，提醒移除标记 —— 自清理，不靠人记。
+    /// 本用例按**预期行为**断言，修复后此前的 `XCTExpectFailure` 标记已移除
+    /// （"expected failure did not occur" 变红提醒即自清理完成）。
     func testArm64DoesNotDowngradeLWJGL333() async throws {
         let manifest = try makeManifest(manifestJSON([nativeLibrary("org.lwjgl:lwjgl:3.3.3")]))
 
@@ -185,7 +185,6 @@ final class ArtifactVersionMapperTests: XCTestCase {
 
         let entry = try XCTUnwrap(manifest.getNeededNatives().first)
 
-        XCTExpectFailure("已知缺陷：natives 循环的 `!= 3.3.3` 守卫被下一行的硬编码版本作废（见本用例注释）")
         XCTAssertEqual(entry.key.version, "3.3.3", "3.3.3 已是官方 arm64 版本，不得降级到 3.3.2")
         XCTAssertEqual(entry.key.name, "org.lwjgl:lwjgl:3.3.3:natives-macos-arm64")
     }
