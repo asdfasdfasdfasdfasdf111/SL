@@ -90,11 +90,15 @@ final class MinecraftLauncherLogTests: XCTestCase {
         writer.close()
     }
 
-    /// 制表符被替换成**四个空格**（注释：`replacingOccurrences(of: "\t", with: "    ")`）
-    func testTabsAreExpandedToFourSpaces() async throws {
+    /// ⚠️ **文件写入保留 tab 原样**：`flushCompleteLines` 里的
+    /// `replacingOccurrences(of: "\t", with: "    ")` 只作用于 `raw()` 通道（App 内存日志旁路），
+    /// 落盘用的是**未展开**的 `line`（源码 103 行）。我最初按注释理解成「文件里也展开成 4 空格」，
+    /// 用独立探针逐字复刻源码逻辑后发现是错的 —— 文件里是 `a\tb\n`。
+    /// 若未来想「修正」为展开，必须同时改 `flushCompleteLines` 与 `close()` 两处。
+    func testTabsArePreservedInFileWrite() async throws {
         let (writer, url) = try makeWriter()
         writer.append(Data("a\tb\n".utf8))
-        XCTAssertEqual(contents(of: url), "a    b\n")
+        XCTAssertEqual(contents(of: url), "a\tb\n", "文件写入保留 tab（raw() 通道才展开）")
         writer.close()
     }
 
@@ -120,12 +124,13 @@ final class MinecraftLauncherLogTests: XCTestCase {
                        "close() 必须补刷残字节并补换行（原实现会丢掉这最后一段）")
     }
 
-    /// 残字节里同样做制表符展开
-    func testCloseExpandsTabsInResidual() async throws {
+    /// ⚠️ `close()` 补刷残字节时**同样保留 tab 原样**（与 `flushCompleteLines` 一致：
+    /// 展开只作用于 `raw()` 通道，源码 85 行写的是未展开的 `line + "\n"`）。
+    func testClosePreservesTabsInResidual() async throws {
         let (writer, url) = try makeWriter()
         writer.append(Data("a\tb".utf8))
         writer.close()
-        XCTAssertEqual(contents(of: url), "a    b\n")
+        XCTAssertEqual(contents(of: url), "a\tb\n", "close 补刷的残行同样保留 tab")
     }
 
     /// 缓冲区为空时 `close()` 不额外写空行
