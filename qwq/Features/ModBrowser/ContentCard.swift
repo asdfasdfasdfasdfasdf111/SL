@@ -72,9 +72,28 @@ struct ContentCard: View {
                     .lineLimit(2)
                     .contentTransition(.opacity)
                 if !translatedTags.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 4) {
-                            ForEach(translatedTags.prefix(6), id: \.self) { tag in
+                    // 自动换行（FlowLayout）而非横向滚动：标签多时横向滚动在 macOS 上
+                    // 要触控板/Shift+滚轮才能看全，鼠标用户看不到后面的标签（用户报告）。
+                    // 约定：以 "✓" 开头的标签是「此 Java 版本你已安装」——渲染成绿色勾，
+                    // 与普通分类标签（accent 色胶囊）区分（见 DownloadCategoryViewModel.makeMinecraftVersionItems）。
+                    FlowLayout(horizontalSpacing: 4, verticalSpacing: 4) {
+                        ForEach(translatedTags, id: \.self) { tag in
+                            if tag.hasPrefix("✓") {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundColor(.green)
+                                    Text(String(tag.dropFirst()))
+                                        .font(.system(size: 9, weight: .medium))
+                                        .foregroundColor(.green)
+                                }
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 4)
+                                        .fill(Color.green.opacity(0.14))
+                                )
+                            } else {
                                 Text(tag)
                                     .font(.system(size: 9, weight: .medium))
                                     .foregroundColor(theme.accentColor.opacity(0.8))
@@ -87,7 +106,6 @@ struct ContentCard: View {
                             }
                         }
                     }
-                    .scrollBounceIfAvailable()
                 }
                 Spacer(minLength: 0)
             }

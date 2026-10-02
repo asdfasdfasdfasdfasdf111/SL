@@ -77,11 +77,13 @@ struct VersionSelectionSection: View {
         }
     }
 
-    // MARK: - 整合包版本分组网格（每 4 个一行）
+    // MARK: - 整合包版本分组网格（自适应列宽、自动换行）
 
-    /// 整合包版本网格：把去重后的版本按**每行 4 个**切块，整体横向滚动。
-    /// ⚠️ 行是先把数组 chunk 好再 ForEach 的（不是让 SwiftUI 自动换行），
-    /// 所以每行数量固定、横向滚动而非上下换行。
+    /// 整合包版本网格：**自动换行网格**（自适应列宽、纵向排布），全部版本可见可点。
+    ///
+    /// 此前是「每行 4 个、整体横向滚动」：整合包版本多时后面的版本要靠触控板/
+    /// Shift+滚轮才能看到，鼠标用户选不到后面的版本（用户报告）；改为换行网格后
+    /// 全部版本在一个纵向滚动区域内列出来。
     private var modpackGrid: some View {
         Group {
             // 加载中只放一个居中转圈，不做骨架屏（版本数量未知，骨架反而误导）。
@@ -93,41 +95,28 @@ struct VersionSelectionSection: View {
                 }
                 .padding(.vertical, 20)
             } else {
-                ScrollView(.horizontal, showsIndicators: true) {
-                    VStack(spacing: 12) {
-                        // 每行 4 个。stride + min 切块，最后一行不足 4 个也不会越界。
-                        let chunkSize = 4
-                        let rows = stride(from: 0, to: uniqueVersions.count, by: chunkSize).map {
-                            Array(uniqueVersions[$0..<min($0 + chunkSize, uniqueVersions.count)])
-                        }
-                        // 行身份改用「本行第一个版本的游戏版本号」，不再用行下标：
-                        // 行内容会随 `uniqueVersions` 变化（筛选/排序后同一行会换成别的版本），
-                        // 下标身份会把旧内容的视图状态（选中高亮等）错配到新内容上；
-                        // 而游戏版本在 `uniqueVersions` 内唯一，故 `first?.gameVersion` 既稳定又唯一。
-                        ForEach(rows, id: \.first?.gameVersion) { row in
-                            HStack(spacing: 12) {
-                                ForEach(row, id: \.gameVersion) { item in
-                                    VersionLoaderCard(
-                                        version: item.gameVersion,
-                                        isSelected: selectedModpackVersionId == item.version.id,
-                                        loader: LoaderNameResolver.assetName(for: item.version.loaders.first ?? "fabric"),
-                                        theme: theme
-                                    ) {
-                                        // 两个 state 必须**同时**更新：id 决定下载哪个文件，
-                                        // 游戏版本决定图标与筛选。只改一个会让网格高亮与详情页对不上。
-                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
-                                            selectedModpackVersionId = item.version.id
-                                            selectedVersion = item.gameVersion
-                                        }
-                                    }
-                                }
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 120), spacing: 12)],
+                    spacing: 12
+                ) {
+                    ForEach(uniqueVersions, id: \.gameVersion) { item in
+                        VersionLoaderCard(
+                            version: item.gameVersion,
+                            isSelected: selectedModpackVersionId == item.version.id,
+                            loader: LoaderNameResolver.assetName(for: item.version.loaders.first ?? "fabric"),
+                            theme: theme
+                        ) {
+                            // 两个 state 必须**同时**更新：id 决定下载哪个文件，
+                            // 游戏版本决定图标与筛选。只改一个会让网格高亮与详情页对不上。
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
+                                selectedModpackVersionId = item.version.id
+                                selectedVersion = item.gameVersion
                             }
                         }
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 10)
                 }
-                .scrollBounceIfAvailable()
+                .padding(.horizontal, 10)
+                .padding(.vertical, 10)
             }
         }
     }
@@ -242,27 +231,31 @@ struct VersionSelectionSection: View {
 
     // MARK: - 普通版本卡片列表（模组/光影/资源包）
 
-    /// 普通版本卡片列表：横向滚动的一行卡片，点中即写回 `selectedVersion`。
+    /// 普通版本卡片列表：**自动换行网格**（自适应列宽、纵向排布），点中即写回 `selectedVersion`。
+    ///
+    /// 此前是横向滚动一行：版本多时「后面的版本」要靠触控板/Shift+滚轮才能看到，
+    /// 日常鼠标用户选不到后面的版本（用户报告）；改为换行网格后全部版本可见可点。
     private var versionCardList: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(sortedVersions, id: \.self) { version in
-                    VersionLoaderCard(
-                        version: version,
-                        isSelected: selectedVersion == version,
-                        loader: assetName(for: projectLoaderName(for: version)),
-                        theme: theme
-                    ) {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
-                            selectedVersion = version
-                        }
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 120), spacing: 12)],
+            spacing: 12
+        ) {
+            ForEach(sortedVersions, id: \.self) { version in
+                VersionLoaderCard(
+                    version: version,
+                    isSelected: selectedVersion == version,
+                    loader: assetName(for: projectLoaderName(for: version)),
+                    theme: theme
+                ) {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
+                        selectedVersion = version
                     }
                 }
             }
-            // 水平方向预留放大动画空间（scaleEffect 1.08 放大时最左/最右卡片不被裁剪）
-            .padding(.horizontal, 10)
-            .padding(.vertical, 10)
         }
+        // 水平方向预留放大动画空间（scaleEffect 1.08 放大时最左/最右卡片不被裁剪）
+        .padding(.horizontal, 10)
+        .padding(.vertical, 10)
     }
 
     /// 版本卡片加载器名：项目声明的加载器优先，其次按版本匹配本地已装加载器

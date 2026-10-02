@@ -517,7 +517,16 @@ final class DownloadCategoryViewModel: ObservableObject {
         let byID = Dictionary(versions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         // 已安装集合在循环外算一次：`installedVersionList` 会列举 versions 目录，不能逐项重来。
         // 用只读版本（不带 normalize 的磁盘重命名副作用）—— 本函数跑在主线程的列表渲染路径上。
-        let installed = Set(GameDirectoryScanner.installedVersionList(gameRoot: LauncherSettings.shared.selectedGameRoot))
+        let rawInstalled = GameDirectoryScanner.installedVersionList(gameRoot: LauncherSettings.shared.selectedGameRoot)
+        // 「已安装」匹配口径（2026-10-02 修复）：清单 id 是**不带加载器后缀**的版本号
+        // （1.21.1），而本地目录可能被 normalizeVersionFolderNames 重命名为「版本-加载器」
+        // （1.21.1-Fabric）。两侧集合一起判：id 精确命中 或 剥掉已知加载器后缀后命中。
+        let installed = Set(rawInstalled)
+        let installedBase = Set(rawInstalled.map { GameDirectoryScanner.baseVersionName(of: $0) })
+        // 本地已安装的 Java 大版本集合（JavaManager 扫描结果已同步到 settings，主线程可读）。
+        // 用它决定「此 Java 版本你已安装」绿勾：Java 向后兼容，本地装有 ≥ 所需大版本的
+        // 任意一个即可跑该版本，故用「存在 ≥ 要求的安装」判定。
+        let installedJavaMajors = Set(LauncherSettings.shared.availableJavaList.map { $0.majorVersion })
         // 用 `map` 而不是 `compactMap`：`versionFilter.ids` 是「从同一个 versions 数组过滤」
         // 得来的（`filter(...).map(\.id)`），所以 `byID` 必然命中；真要没命中，也该保留该项
         // （副标题退化为类型名）而不是静默丢一条 —— 列表少一项用户只会以为版本不存在。
@@ -525,8 +534,15 @@ final class DownloadCategoryViewModel: ObservableObject {
             let info = byID[id]
             var tags: [String] = []
             let javaMajor = JavaRequirement.minimumMajor(forMinecraftVersion: id)
-            if javaMajor > 0 { tags.append("需 Java \(javaMajor)") }
-            if installed.contains(id) { tags.append("已安装") }
+            if javaMajor > 0 {
+                tags.append("需 Java \(javaMajor)")
+                // 绿色勾（ContentCard 以 "✓" 前缀渲染成绿勾样式）：本地已装 ≥ 所需大版本
+                // 的 Java 即可跑该版本，提示「此 Java 版本你已安装」而不是让用户再去装一个。
+                if installedJavaMajors.contains(where: { $0 >= javaMajor }) {
+                    tags.append("✓此 Java 版本你已安装")
+                }
+            }
+            if installed.contains(id) || installedBase.contains(id) { tags.append("已安装") }
             return DownloadedItem(id: id,
                                   name: id,
                                   subtitle: info.map { Self.versionSubtitle(releaseTime: $0.releaseTime, type: displayTitle) } ?? displayTitle,

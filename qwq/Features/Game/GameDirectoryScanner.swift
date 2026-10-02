@@ -39,6 +39,24 @@ enum GameDirectoryScanner {
         }
     }
 
+    /// 从版本文件夹名中剥掉已知加载器后缀，返回基础版本号；剥不掉（非加载器目录）返回原目录名。
+    ///
+    /// 存在理由：`normalizeVersionFolderNames` 会把装了加载器的版本目录重命名为
+    /// 「版本-加载器」（1.21.1 → 1.21.1-Fabric），而 Mojang 清单里的版本号是**不带后缀**
+    /// 的（1.21.1）。「已安装」标记用 `installed.contains(清单id)` 精确比对时，装过带
+    /// 加载器版本的玩家**永远看不到「已安装」**（真实缺陷，2026-10-02 用户侧复现）。
+    /// 匹配侧改为「清单 id == 目录名 或 剥后缀后的基础版本号」即可同时覆盖两种形态。
+    /// ⚠️ 只剥**已知加载器后缀**（与 normalize 的检测词一致），不能盲目 `dropLast` 到
+    /// 任意连字符：版本号本身也可能带连字符（如 1.20.5-pre1），剥错会把未装版本误判成已装。
+    static func baseVersionName(of folderName: String) -> String {
+        let lower = folderName.lowercased()
+        let knownSuffixes = ["-neoforge", "-fabric", "-forge", "-quilt"]
+        for suffix in knownSuffixes where lower.hasSuffix(suffix) {
+            return String(folderName.dropLast(suffix.count))
+        }
+        return folderName
+    }
+
     /// 扫描本地前若干版本的 mods 文件夹，探测每个版本使用的加载器（任一 mod 的 jar 命中即记录）。
     /// 返回「版本 → 加载器」映射；每个版本最多探测 limitPerVersion 个 mod 文件。
     static func scanLocalLoaderMap(gameRoot: String, limitVersions: Int = 10, limitPerVersion: Int = 3) -> [String: ModLoader] {

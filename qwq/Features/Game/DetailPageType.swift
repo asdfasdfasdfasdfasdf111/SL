@@ -23,14 +23,21 @@ enum DetailPageType {
         }
     }
 
+    /// 支持版本元信息区标题。
+    ///
+    /// ⚠️ 不得写「严格意义上支持」之类措辞（用户报告）：本启动器对资源包/光影做
+    /// **跨版本自动匹配**——选中一个不受支持的版本点下载，会默认选用最近的受支持版本
+    /// 下载（见 `CrossVersionFinder` / `findCrossVersionDownload`）。标题再强调
+    /// 「严格」会与真实行为矛盾，也让用户误以为不支持的版本完全不可用。
+    /// 这里的版本范围是「API 声明支持」，实际下载可由自动匹配兜底。
     var supportedVersionTitle: String {
         switch self {
         case .resourcePack:
-            return "此资源包目前严格意义上支持的游戏版本"
+            return "此资源包支持的游戏版本"
         case .mod:
             return "此模组支持的游戏版本"
         case .shader:
-            return "此光影目前严格意义上支持的游戏版本"
+            return "此光影支持的游戏版本"
         default:
             return ""
         }

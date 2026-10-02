@@ -63,30 +63,29 @@ struct DetailPageHeader: View {
     /// ① 原始 tags 为空 → 只占位；
     /// ② 有 tags 但一条都翻译不出来（不在 ModrinthTagMap 里）→ 同样只占位，
     ///    避免显示一堆英文 slug；
-    /// ③ 有可翻译的 → 横向滚动展示。
+    /// ③ 有可翻译的 → 自动换行展示。
     @ViewBuilder
     private var tagRow: some View {
         if !tags.isEmpty {
             // compactMap：查不到译名的标签**直接丢弃**（回落显示原文会让界面中英混杂）。
             let translated = tags.compactMap { ModrinthTagMap[$0] }
             if !translated.isEmpty {
-                // 标签多时横向滚动、不显示滚动条；标签本身不可点（纯展示，没有 onTap）。
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(translated, id: \.self) { tag in
-                            Text(tag)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(theme.accentColor)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 5)
-                                        .fill(theme.accentColor.opacity(0.1))
-                                )
-                        }
+                // 标签多时**自动换行**（FlowLayout 而非横向滚动）：横向滚动在 macOS 上
+                // 要触控板/Shift+滚轮才能看全，日常鼠标用户看不到后面的标签（用户报告）。
+                // 标签本身不可点（纯展示，没有 onTap）。
+                FlowLayout(horizontalSpacing: 6, verticalSpacing: 6) {
+                    ForEach(translated, id: \.self) { tag in
+                        Text(tag)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(theme.accentColor)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .fill(theme.accentColor.opacity(0.1))
+                            )
                     }
                 }
-                .scrollBounceIfAvailable()
                 .padding(.bottom, 24)
             } else {
                 // 有标签但全无译名 —— 用零高视图补上同样的底距，保持页头总高不变。

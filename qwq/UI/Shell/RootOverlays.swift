@@ -127,7 +127,12 @@ struct RootOverlays: View {
                 .scaleEffect(navigation.downloadCircleScale)
                 .opacity(navigation.downloadCircleOpacity)
                 .padding(.trailing, 12)
-                .padding(.bottom, 12)
+                // 几何中心与详情页「下载」按钮水平对齐（用户报告：两按钮中心连线不水平）。
+                // 基准：ModDetailView body 有 .padding(.bottom, 20)，其 overlay(alignment:
+                // .bottomTrailing) 锚点在 padding 之后；下载按钮（24pt 字体 + vertical 16×2，
+                // 高约 61）再 padding bottom 20 → 底边距窗口底 20+20=40，中心 40+30.5=70.5。
+                // 圆按钮 48 高，为让中心同处 70.5 → bottom = 70.5 − 24 = 46.5。
+                .padding(.bottom, 46.5)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 .zIndex(40)
                 .onTapGesture {
