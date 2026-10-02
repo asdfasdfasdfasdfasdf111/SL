@@ -19,6 +19,12 @@
 //
 //  ⚠️ 三条都用「限时收集」而非直接 `for await`：实现若坏在「不 finish」上，
 //     用例应当**变红**而不是把整个测试宿主挂死（挂死会被误当成 §五 那条工具链 abort）。
+//  ⚠️ 2026-10-02 起等待一律走 `waitUntil(predicate)` 有界轮询（deadline 2s、间隔 20ms、
+//     超时即 XCTFail），替代裸 `Task.sleep` 时序睡等：
+//     - 正向等待（等事件/终态/订阅建立）用轮询——predicate 永假时快速失败而非挂死；
+//     - 唯一保留的固定 sleep 是 `testUpdatesAfterTerminalAreNotDelivered` 的负向观察窗
+//       （确认杂散状态不投递，负向断言必须有一段观察期，且该窗口有上限不构成挂死）。
+//     反向验证与红线（不能为了消 flakiness 引入挂死）见文件头上方注释。
 //
 //  反向验证：把 `update` 里的 `finish()` 摘掉 → `testTerminalFinishesStream` 红；
 //            把 `continuations` 改回 `[UUID: Continuation]` → `testAllObserversReceiveUpdates` 红；
@@ -29,9 +35,12 @@ import XCTest
 @testable import qwq
 
 /// 线程安全的事件记录器（用例侧）
+/// `started` 供 settle 轮询：驱动任务真正开始消费流（而非只是被创建）的信号。
 private actor Recorder {
     private(set) var events: [LaunchState] = []
     private(set) var ended = false
+    private(set) var started = false
+    func markStarted() { started = true }
     func append(_ state: LaunchState) { events.append(state) }
     func markEnded() { ended = true }
     func snapshot() -> (events: [LaunchState], ended: Bool) { (events, ended) }
@@ -56,16 +65,37 @@ final class GameSessionStoreTests: XCTestCase {
     }
 
     /// 把流抽干到 Recorder；返回驱动任务，调用方限时后自行 cancel。
+    /// 第一件事标记 started：订阅建立（settle）据此轮询，不依赖固定时延。
     private func drain(_ stream: AsyncStream<LaunchState>, into rec: Recorder) -> Task<Void, Never> {
         Task {
+            await rec.markStarted()
             for await state in stream { await rec.append(state) }
             await rec.markEnded()
         }
     }
 
-    /// 给订阅建立留出时间（订阅本身是同步注册的，这里只是让驱动任务先跑起来）
-    private func settle() async {
-        try? await Task.sleep(for: .milliseconds(120))
+    /// 有界轮询：等待 predicate 成立，最多等 `deadline`（默认 2s），超时即失败。
+    /// 替代裸 `Task.sleep` 的时序睡等——predicate 永假时**快速失败**而非挂死 CI。
+    /// 间隔 20ms，一次竞态最坏多等一个间隔，量级与原睡等（120/160/220ms）相当。
+    private func waitUntil(_ reason: String,
+                           deadline: Duration = .seconds(2),
+                           interval: Duration = .milliseconds(20),
+                           `is` predicate: @Sendable () async -> Bool,
+                           file: StaticString = #filePath,
+                           line: UInt = #line) async {
+        let start = ContinuousClock.now
+        while !(await predicate()) {
+            if ContinuousClock.now - start > deadline {
+                XCTFail("等待超时（\(deadline.formatted())）：\(reason)", file: file, line: line)
+                return
+            }
+            try? await Task.sleep(for: interval)
+        }
+    }
+
+    /// 给订阅建立留出时间：轮询驱动任务已开始消费（不再固定睡 120ms）。
+    private func settle(rec: Recorder) async {
+        await waitUntil("驱动任务开始消费流") { await rec.started }
     }
 
     // MARK: - 多订阅者
@@ -81,11 +111,17 @@ final class GameSessionStoreTests: XCTestCase {
         let second = Recorder()
         let t1 = drain(store.observe(sessionID: sessionID), into: first)
         let t2 = drain(store.observe(sessionID: sessionID), into: second)
-        await settle()
+        await settle(rec: first)
+        await settle(rec: second)
 
         await store.update(runningState, for: sessionID)
         await store.update(finishedState, for: sessionID)
-        try? await Task.sleep(for: .milliseconds(220))
+        // 取代固定 220ms：等两个订阅者都确实到达终态并结束（predicate 永假则 2s 后 XCTFail）
+        await waitUntil("两个订阅者都收到终态并结束流") {
+            let (_, end1) = await first.snapshot()
+            let (_, end2) = await second.snapshot()
+            return end1 && end2
+        }
 
         let (e1, end1) = await first.snapshot()
         let (e2, end2) = await second.snapshot()
@@ -107,10 +143,11 @@ final class GameSessionStoreTests: XCTestCase {
 
         let rec = Recorder()
         let task = drain(store.observe(sessionID: sessionID), into: rec)
-        await settle()
+        await settle(rec: rec)
 
         await store.update(finishedState, for: sessionID)
-        try? await Task.sleep(for: .milliseconds(220))
+        // 取代固定 220ms：等流确实结束（原实现缺 finish 时 predicate 永假 → 超时 XCTFail）
+        await waitUntil("终态后流结束") { (await rec.snapshot()).ended }
 
         let (events, ended) = await rec.snapshot()
         task.cancel()
@@ -126,10 +163,11 @@ final class GameSessionStoreTests: XCTestCase {
 
         let rec = Recorder()
         let task = drain(store.observe(sessionID: sessionID), into: rec)
-        await settle()
+        await settle(rec: rec)
 
         await store.update(failedState, for: sessionID)
-        try? await Task.sleep(for: .milliseconds(220))
+        // 取代固定 220ms：等流确实结束（原实现缺 finish 时 predicate 永假 → 超时 XCTFail）
+        await waitUntil("失败终态后流结束") { (await rec.snapshot()).ended }
 
         let (events, ended) = await rec.snapshot()
         task.cancel()
@@ -150,7 +188,12 @@ final class GameSessionStoreTests: XCTestCase {
 
         let rec = Recorder()   // 状态发生之后才订阅
         let task = drain(store.observe(sessionID: sessionID), into: rec)
-        await settle()
+        await settle(rec: rec)
+
+        // 取代固定 120ms（settle 已等 started）：等回放确实落进 recorder 再断言
+        await waitUntil("晚订阅者收到回放的最新状态") {
+            (await rec.snapshot()).events == [runningState]
+        }
 
         let (events, _) = await rec.snapshot()
         task.cancel()
@@ -166,7 +209,11 @@ final class GameSessionStoreTests: XCTestCase {
 
         let rec = Recorder()
         let task = drain(store.observe(sessionID: sessionID), into: rec)
-        try? await Task.sleep(for: .milliseconds(220))
+        // 取代固定 220ms：等回放终态 + 流结束一次到位
+        await waitUntil("终态后订阅回放终态并立即结束") {
+            let (events, ended) = await rec.snapshot()
+            return events == [finishedState] && ended
+        }
 
         let (events, ended) = await rec.snapshot()
         task.cancel()
@@ -184,11 +231,17 @@ final class GameSessionStoreTests: XCTestCase {
 
         let rec = Recorder()
         let task = drain(store.observe(sessionID: sessionID), into: rec)
-        await settle()
+        await settle(rec: rec)
 
         await store.update(finishedState, for: sessionID)
-        try? await Task.sleep(for: .milliseconds(160))
+        // 取代固定 160ms：等终态确实送达并结束流，之后才发杂散状态
+        await waitUntil("终态送达并结束流") { (await rec.snapshot()).ended }
         await store.update(runningState, for: sessionID)   // 终态之后的杂散状态
+        // ⚠️ 负向观察窗（唯一保留的固定 sleep）：吹哨后杂散状态若被错误投递，
+        // 需要一小段观察期才能暴露。负向断言无法用「等待成立」的轮询表达——
+        // 轮询的 predicate 永真（事件数不变）会立刻通过，因此这里必须有界等待。
+        // 上限 160ms：杂散投递走同一 Actor 续体线（yield → for await），
+        // 若实现错误会在远小于此的窗口内到达；超时本身即「未投递」的佐证。
         try? await Task.sleep(for: .milliseconds(160))
 
         let (events, _) = await rec.snapshot()
