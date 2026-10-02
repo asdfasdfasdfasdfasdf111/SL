@@ -177,3 +177,51 @@ echo "口径二: 错误 $(grep -c 'error:' /tmp/tc2.raw) / 告警 $(grep -c 'war
 ```
 
 （基线：口径一 ~112 告警行 / 口径二 24，0 错误。判据用「告警集合逐条 diff」不看数字。）
+
+
+---
+
+## 8. 环境新变化 + 给接手的人的建议（2026-10-02 15:20 追加）
+
+### 8.1 环境已恢复：xcodebuild 现在能跑了
+
+写本文档时的「Mach 服务不可达、xcodebuild 跑不了」**已不再是障碍**：
+
+- **网络现在通了**（`github.com` / SPM 依赖都能拉取，之前解析不了是临时问题）；
+- xcodebuild 能执行，唯一报错是 SwiftPM 的 manifest 诊断写到
+  `~/Library/Caches/org.swift.swiftpm/manifests/ManifestLoading/` 被沙箱拒绝
+  （`Operation not permitted`）。
+
+**解法（已验证思路，完整跑通在验证中）**：重定向 HOME，让 SwiftPM 缓存落到可写处：
+
+```bash
+mkdir -p /tmp/sl-home
+cd "/Users/apple/Downloads/Swim111Launcher_副本"
+HOME=/tmp/sl-home SL_DERIVED=/tmp/SL-DD-r7 SL_LOG=/tmp/sl_test_r7.log \
+  ./scripts/verify-test.sh run
+```
+
+⚠️ 注意：HOME 重定向会改变 `NSHomeDirectory()`，**CrashReporter 的日志路径、
+GameSession 的日志等会写到 /tmp/sl-home/... 而不是真实家目录** —— 这只影响测试过程，
+不影响被测逻辑的正确性。跑真实 App 时用正常 HOME。
+
+### 8.2 给接手的人的建议（按顺序）
+
+1. **先跑通 §8.1 的全量验证**（709 用例 / 55 文件）。这是本会话最大悬而未决项：
+   419 条新用例从没实测过。日志在 `SL_LOG` 指向的文件里，新 verify-test.sh 会
+   区分「断言失败」与「已知 abort」——**先修断言失败，别被 abort 带偏**。
+2. **跑完立刻用真实日志复核我的判据**：`grep -cE 'error: -\[qwqTests\.'` = 断言失败数，
+   `grep -c "Restarting after unexpected exit"` = 已知工具链 abort（约 1/4 概率，非代码问题，
+   见 TESTING.md §五）。当前 `verify-test.sh` 已把这些分开报。
+3. **已知会红但属"有意"的用例**：`ArtifactVersionMapperTests.testArm64DoesNotDowngradeLWJGL333`
+   用 `XCTExpectFailure` 标记了 LWJGL 3.3.3 死守卫缺陷 —— 它报 "expected failure did not occur"
+   才说明有人修好了缺陷。**修法一行**：`qwq/SLCore/Minecraft/Download/ArtifactVersionMapper.swift:119`
+   把 `lwjglPinnedVersion` 换成 `library.version`（我已确认上游 3.3.3 的 arm64 natives 真实存在）。
+4. **别再做的事**：清死代码（判据 C 已 1.9%）、写目标结构文档、加无实现协议、
+   用裸 `grep -c "error:"` 数编译错误（会算进源码上下文行）。
+5. **纪律**：提交信息先算好数字再写、`git add` 前清 `.*.tmpdir`、提交后 `git log --format=%B` 核对、
+   heredoc 永远 `<<'EOF'`。
+6. **判据 D 现状**：文件零触达 64% → 47%，行 66% → 52%。口径见 §2。
+7. **剩余高价值方向**（纯逻辑测试井已近干涸）：离线实测复核「源码注释里的实测声称」
+   （已查 CrashReporter/LocalModCatalog/GameLogWriter/nonisolated-Decodable），
+   或读高风险代码找缺陷（启动链、下载链）。网络恢复后也可复核 Modrinth 相关的声称。
