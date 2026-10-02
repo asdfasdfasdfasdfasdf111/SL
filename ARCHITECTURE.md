@@ -117,17 +117,17 @@ init(versionCatalog: VersionCatalogService = DefaultVersionCatalogService(),
   `SLCore/Download/NetDownloader.swift` 的 `NetManager`。它**已接入 5 处调用方**：
   `ModFileDownloadTask`、`MinecraftLauncherDownload`、`MinecraftInstallerDownloads`、
   `ForgeInstaller`、`FabricInstaller`（切换记录见 `Core/Download/Adapters/MIGRATION.md`）。
-- 尚未接入的：`MultiFileDownloader` 各调用点、以及绕过引擎直连 `URLSession` 的路径。
+- 未接入（终态决策：**不接入**，见 §十第 2/3 条）：`MultiFileDownloader` 各调用点
+  保持直连 `NetManager`；绕过引擎直连 `URLSession` 的 `LoaderSupportProbe`/`Requests`
+  属探测/请求工具，非下载引擎职责。
 - `Core/Download/` 里**只有真实使用的类型**。2026-10 已删除仅存协议声明、
   零实现零调用的 `DownloadScheduler` / `DownloadSliceStore` / `DownloadMerger` / `DownloadTask`。
   教训：**不要提交"先定协议、实现待补"的文件** —— 它们会长期留在树里冒充架构。
 
-已知坏味道（记录在案，未修）：
-
-- `NetDownloaderDownloadEngine.map(_:)` 用**中文字符串匹配**从错误描述还原结构化
-  `DownloadError`（`contains("哈希校验失败")` 等）。改一处文案即静默失效。
-  正解是让旧引擎直接抛结构化错误。
-- `syntheticTotalBytes = 1000`：旧引擎只上报 0…1 比例，未知总大小时用固定分母兜底。
+已知坏味道：**无**（2026-10-02 已全部闭环：`NetDownloaderDownloadEngine.map(_:)` 的中文
+文案反猜 → `NetDownloadError` 结构化 case；`syntheticTotalBytes = 1000` 假分母 →
+`DownloadProgress.fractionOverride` 诚实轨道。闭环记录见
+`docs/SLOP-AUDIT-2026-10-02-REV3-SOURCE.md` §5.1 与提交 `2af498f`）。
 
 ## 七、启动
 
@@ -145,7 +145,7 @@ init(versionCatalog: VersionCatalogService = DefaultVersionCatalogService(),
 
 ## 八、测试与 CI
 
-- 目录：`qwqTests/`，当前 **21 文件 / 250 用例**
+- 目录：`qwqTests/`，当前 **57 个测试文件**（用例数以 CI 结果为准）
 - 跑法：`./scripts/verify-test.sh run`（真实 xcodebuild，编译 + 运行）
 - 快速反馈：`./scripts/typecheck.sh`（`swiftc -typecheck` 两口径，比 xcodebuild 快一个数量级）
   - ⚠️ 它依赖 `/tmp/deps` 里由**上一次真实构建**产出的第三方 `.swiftmodule`；
@@ -178,22 +178,19 @@ abort，表现为"前几个测试类通过、之后无限重启"）。详见 `qw
 
 ## 十、遗留待办
 
-1. **`LaunchFix` 上帝对象拆分为四类校验 + 接线 LaunchPreflight** **已完成（2026-10-02）**：
-   - P3-3 `c99c346`：`perform` 只做编排；缺失支持库收集（McLibFix）/ 缺失资源收集
-     （McAssetsFixList）/ 下载 / natives 各自独立成私有方法，净行数 0。
-   - P2-1（接线）：四段逻辑迁移到 `LaunchPreflight` 协议族默认实现
-     （`Features/Launch/DefaultLaunchPreflightImplementations.swift`），
-     `LaunchFix.swift` 删除；`SLLaunchBridge:254` 经 `LaunchPreflightBridge`
-     （instance→context 抽取 + 组装）调用 `DefaultLaunchPreflight`。
-     natives 解压参数化（`MinecraftInstaller.ensureNatives(nativesDirectory:nativeLibraryPaths:librariesRoot:)`）。
-     验证：typecheck 0 error；全量 709/2/0；真机冒烟启动 + 渲染线程正常。
-2. ~~**下载双轨收口**~~ **已决（2026-10-02）：`NetManager` 保留为最终后端**。`Core/Download` 是
-   薄抽象层而非第二实现（唯一实现 `NetDownloaderDownloadEngine` 转发到 `NetManager`）；批量路径
-   （`MultiFileDownloader`）保持直连 `NetManager`——批进度分子/分母在引擎边界不可观察，无法逐字复刻
-   （判据见 `MultiFileDownloader.start` 注释）。双轨收口的唯一真问题是「注释里的待接线措辞」，已消除。
-3. **`MultiFileDownloader` 与直连 `URLSession` 路径接入 `DownloadEngine`**（~~若选择收口~~ 已一并否决：
-   同第 2 条判据，批量路径不接入；直连 `URLSession` 的 `LoaderSupportProbe`/`Requests` 属探测/请求工具，
-   非下载引擎职责）
-4. **账号伪实现**：`AnyAccount.microsoft` / `.yggdrasil` 实为 `OfflineAccount`，需改为明确报错
-5. **工程配置清理**：移除 `project.pbxproj` 中的 iOS / visionOS 配置，统一部署目标
-6. **UI 收口**：`ContentView` 只保留窗口壳、导航、全局任务入口
+**无**（2026-10-02 终态验收，六条全部处置完毕）：
+
+1. `LaunchFix` 拆分 + 接线：**已完成**（P3-3 `c99c346` 净行数 0；P2-1 接线后
+   `LaunchFix.swift` 删除，逻辑入 `DefaultLaunchPreflightImplementations.swift`）。
+2. 下载双轨收口：**已决**——`NetManager` 保留为最终后端，批量路径不接入引擎
+   （判据见 `MultiFileDownloader.start` 注释与 MIGRATION.md）。
+3. `MultiFileDownloader` / 直连 `URLSession` 接入 `DownloadEngine`：**已否决**
+   （同第 2 条；直连路径属探测/请求工具，非引擎职责）。
+4. 账号伪实现：**已决（保留原样）**——`AnyAccount` 枚举形状保留为历史持久化数据
+   解码兼容，运行期经 `unimplementedError` 显式告警 + 明确文案（SLOP-AUDIT REV3 C）；
+   实现 OAuth 属新功能，超出收尾范畴。
+5. 工程配置清理：**已完成**——`project.pbxproj` 已仅含 macOS 配置
+   （`SDKROOT = macosx` + `SUPPORTED_PLATFORMS = macosx` 四处，无 iOS/visionOS 残留）。
+6. UI 收口：**已完成**——`ContentView` 只保留窗口壳、导航、全局任务入口
+   （163 行，只渲染只转发；业务决策全部外置到 NavigationState / DropInstallCoordinator /
+   LaunchPanelState / DownloadDetailManager）。

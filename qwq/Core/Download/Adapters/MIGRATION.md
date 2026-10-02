@@ -1,10 +1,10 @@
-# Adapters 迁移说明
+# Adapters 现状记录（曾用名：迁移说明）
 
 本目录只放**适配器**：把 `qwq/Core/Download/` 的协议接到现有实现上，不改变任何下载行为，也不切换调用方。
 **终态（2026-10-02 拍板）**：`NetDownloader.swift`（`NetManager`）是唯一实际生效的下载后端；`DownloadEngine`
 是薄抽象层（唯一实现 `NetDownloaderDownloadEngine` 转发到 `NetManager`），单文件路径经它提交；批量路径
 （`MultiFileDownloader`）保持直连 `NetManager`——批进度分子/分母在引擎边界不可观察，无法逐字复刻，
-判据见 `MultiFileDownloader.start` 注释与 ARCHITECTURE.md §十待办 2。本文档后续各节的「迁移」措辞
+判据见 `MultiFileDownloader.start` 注释与 ARCHITECTURE.md §十第 2 条（已决记录）。本文档后续各节的「迁移」措辞
 读作「现状记录」而非待办。
 接入状态：`DownloadEngine` 已由
 `Features/Download/ModFileDownloadTask.swift` 首个接入，并由
