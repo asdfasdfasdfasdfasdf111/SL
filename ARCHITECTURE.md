@@ -140,7 +140,7 @@ init(versionCatalog: VersionCatalogService = DefaultVersionCatalogService(),
 - `LaunchCoordinator` 只做"UI 意图 → 用例 → 状态映射"
 
 遗留：`LaunchFix` 曾是"什么缺了都由我修"的上帝对象，已按四类校验拆分并完成接线
-（P3-3 `c99c346` 拆分净行数 0；P2-1 `7fec44a` 接线：逻辑迁移到 `LaunchPreflight`
+（P3-3 `c99c346` 拆分净行数 0；P2-1 `dee01ef` 接线：逻辑迁移到 `LaunchPreflight`
 协议族默认实现，`LaunchFix.swift` 删除，跨层入口 `LaunchPreflightBridge`）。
 
 ## 八、测试与 CI

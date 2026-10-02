@@ -169,7 +169,7 @@ cd "/Users/apple/Downloads/Swim111Launcher_副本" && SL_DERIVED=/tmp/SL-DD-r8 .
 | 2026-10-02 | `4e1c95d` | B 判据 #4 弹窗骨架合并（共享 PopupCardScaffold） |
 | 2026-10-02 | `23e1380` | P3-1 Java 选择收口到 JavaResolver（真机冒烟验证） |
 | 2026-10-02 | `c99c346` | P3-3 LaunchFix 上帝对象拆分（净行数 0，全量绿，真机冒烟通过） |
-| 2026-10-02 | `7fec44a` | P2-1 LaunchPreflight 协议族接线（SLLaunchBridge 经 LaunchPreflightBridge 调用 DefaultLaunchPreflight；LaunchFix 删除；全量 709/2/0 + 真机冒烟通过） |
+| 2026-10-02 | `dee01ef` | P2-1 LaunchPreflight 协议族接线（SLLaunchBridge 经 LaunchPreflightBridge 调用 DefaultLaunchPreflight；LaunchFix 删除；全量 709/2/0 + 真机冒烟通过） |
 
 ---
 
@@ -189,7 +189,7 @@ cd "/Users/apple/Downloads/Swim111Launcher_副本" && SL_DERIVED=/tmp/SL-DD-r8 .
 | P3-2 | `a48430a` | Features→App 倒置收口：`AppContext` git mv `App/`→`SLCore/`（头部注释重写：基础设施层、非 DI 容器、迁移沿革）；`ProcessPool`→`SLCore/`、`CacheManager`→`SLCore/`（git mv）；`DragDropHandler`→`App/`；`Services/` 目录删除；5 处路径注释同步更新 | typecheck 0 error；全量 709/2/0 干净运行（`/tmp/SL-DD-p32b`） |
 | P3-1 | `23e1380` | SLLaunchBridge Java 选择收口到 JavaResolver：删 6 处 `JavaManager`/`LauncherSettings` 直连（预扫描段 + 兜底段 + 错误日志引用），只经 `JavaResolverBridge` 主路径 + 缓存校验 + `findSuitableJava` 兜底 | typecheck 0 error；JavaResolver/Bridge 测试 12/12；真机冒烟（路径 B）Java 选择不变 |
 | P3-3 | `c99c346` | LaunchFix 上帝对象拆分：四类职责各抽私有方法（`collectMissingLibraries`/`collectMissingAssets`/`download`），主资源循环与索引补漏循环同构段收敛为一处，perform 变薄为编排；**净行数 0（170→170，§九纪律）**；LAUNCH_FLOW 行为不变 | typecheck 0 error；build-for-testing 成功；全量 709 测试 0 断言失败；真机冒烟（路径 B）启动补全完成 + 渲染线程 atlas 创建 |
-| P2-1 | `7fec44a` | LaunchPreflight 协议族接线：四段逻辑自 LaunchFix 迁移到默认实现（DefaultClient/Library/Asset Verifier + DefaultNativeInstaller），LaunchFix.swift 删除；SLLaunchBridge:254 经 LaunchPreflightBridge（instance→context 抽取 + 组装）调用 DefaultLaunchPreflight.prepare(context:)；进度 0.5/0.5 映射、unrepairable 末尾提示、natives 架构判定逐字等义；native 解压参数化（ensureNatives(nativesDirectory:nativeLibraryPaths:librariesRoot:)，原 instance 版不动） | typecheck 0 error（告警 112/24 与基线一致）；build-for-testing 成功；**全量 709/2/0 干净一轮（TEST EXECUTE SUCCEEDED，无 abort）**；真机冒烟（路径 B）：启动前补全完成 + 渲染线程 atlas + 0 致命错误 |
+| P2-1 | `dee01ef` | LaunchPreflight 协议族接线：四段逻辑自 LaunchFix 迁移到默认实现（DefaultClient/Library/Asset Verifier + DefaultNativeInstaller），LaunchFix.swift 删除；SLLaunchBridge:254 经 LaunchPreflightBridge（instance→context 抽取 + 组装）调用 DefaultLaunchPreflight.prepare(context:)；进度 0.5/0.5 映射、unrepairable 末尾提示、natives 架构判定逐字等义；native 解压参数化（ensureNatives(nativesDirectory:nativeLibraryPaths:librariesRoot:)，原 instance 版不动） | typecheck 0 error（告警 112/24 与基线一致）；build-for-testing 成功；**全量 709/2/0 干净一轮（TEST EXECUTE SUCCEEDED，无 abort）**；真机冒烟（路径 B）：启动前补全完成 + 渲染线程 atlas + 0 致命错误 |
 
 ### 已知工具链 abort（不是回归，见 TESTING.md §五）
 
