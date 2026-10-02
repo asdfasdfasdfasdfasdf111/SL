@@ -2,14 +2,21 @@
 //  LaunchPreflight.swift
 //  启动用例层：启动前校验的职责拆分
 //
-//  `SLCore/Minecraft/Launch/LaunchFix.swift` 当前一个函数承担 client / library / asset / natives
-//  四类校验与安装（PCL2 DlClientFix 移植）。本文件只做**职责边界的定义**，不修改 LaunchFix，
-//  供后续接线阶段把 LaunchFix.perform 的四段逻辑分别落到四个实现里。
+//  2026-10-02 P2-1 接线完成：原 `SLCore/Minecraft/Launch/LaunchFix.swift` 的四段逻辑
+//  （client / library / asset / natives）已迁移到本协议族的默认实现
+//  （`DefaultLaunchPreflightImplementations.swift`），`LaunchFix.swift` 已删除；
+//  跨层调用入口是 `LaunchPreflightBridge.swift`（SLLaunchBridge → 本协议族）。
+//  本文件是**职责边界的定义**：上下文（值类型快照）+ 四个校验协议 + 编排器。
 //
 //  上下文类型刻意不直接持有 `MinecraftInstance`（非 Sendable 的引用类型）：
-//  由接线层从 instance / manifest 抽取为下方位值类型，再交给各校验器，
+//  由桥接层从 instance / manifest 抽取为下方位值类型，再交给各校验器，
 //  这样校验器本身可独立测试、可并发调用。
 //
+//  2026-10-02 P2-1 接线补充：`LibraryArtifact`/`AssetObject` 增加预解析下载地址
+//  （`downloadURL`）。下载地址解析需要读取 `ClientManifest.Library` 的 downloads 字段
+//  （非 Sendable 引用类型），而上下文刻意不持有清单 —— 因此由接线层在抽取时用
+//  `DownloadSourceManager` 解析成 `URL?` 放进值类型，校验器只做存在性与下载，不碰清单。
+//  `nativeLibraryPaths` 同理：由接线层抽取 `manifest.getNeededNatives()` 的 jar 坐标。
 
 import Foundation
 
@@ -21,10 +28,13 @@ public struct LibraryArtifact: Sendable, Equatable, Hashable {
     public let path: String
     /// 期望 sha1（`artifact.sha1`），nil 表示只校验存在性
     public let sha1: String?
+    /// 预解析的下载地址（接线层抽取时用 `DownloadSourceManager.getLibraryURL` 解析）
+    public let downloadURL: URL?
 
-    public init(path: String, sha1: String?) {
+    public init(path: String, sha1: String?, downloadURL: URL?) {
         self.path = path
         self.sha1 = sha1
+        self.downloadURL = downloadURL
     }
 }
 
@@ -48,9 +58,12 @@ public struct AssetIndexReference: Sendable, Equatable, Hashable {
 public struct AssetObject: Sendable, Equatable, Hashable {
     /// 对象 hash（同时作为存储名与前两位目录名）
     public let hash: String
+    /// 预解析的下载地址（接线层抽取时用 `DownloadSourceManager.getDownloadSource().getAssetURL` 解析）
+    public let downloadURL: URL?
 
-    public init(hash: String) {
+    public init(hash: String, downloadURL: URL?) {
         self.hash = hash
+        self.downloadURL = downloadURL
     }
 }
 
@@ -76,6 +89,8 @@ public struct LaunchPreflightContext: Sendable, Equatable {
     public var assetObjects: [AssetObject]
     /// natives 解压目录（= runningDirectory/natives）
     public var nativesDirectory: URL
+    /// natives jar 在 `librariesRoot` 下的坐标（`getNeededNatives()` 的 jar 路径）
+    public var nativeLibraryPaths: [String]
 
     public init(
         version: String,
@@ -87,7 +102,8 @@ public struct LaunchPreflightContext: Sendable, Equatable {
         assetsRoot: URL,
         assetIndex: AssetIndexReference?,
         assetObjects: [AssetObject],
-        nativesDirectory: URL
+        nativesDirectory: URL,
+        nativeLibraryPaths: [String]
     ) {
         self.version = version
         self.runningDirectory = runningDirectory
@@ -99,6 +115,7 @@ public struct LaunchPreflightContext: Sendable, Equatable {
         self.assetIndex = assetIndex
         self.assetObjects = assetObjects
         self.nativesDirectory = nativesDirectory
+        self.nativeLibraryPaths = nativeLibraryPaths
     }
 
     /// 资源索引文件路径：assetsRoot/indexes/<id>.json
@@ -187,5 +204,35 @@ public struct DefaultLaunchPreflight: LaunchPreflight {
 
         try await nativeInstaller.install(context)
         progress?(1.0)
+    }
+}
+
+// MARK: - context 直入编排（P2-1 接线）
+
+extension DefaultLaunchPreflight {
+
+    /// 以已抽取的 context 直接执行启动前补全（桥接层用——它没有 LaunchRequest，只有 instance）。
+    /// 进度映射与 `prepare(_ request:)` 完全一致：支持库前 0.5，资源后 0.5。
+    public func prepare(context: LaunchPreflightContext, unrepairable: UnrepairableSink) async throws {
+        try await clientVerifier.verify(context)
+
+        try await libraryVerifier.verify(context) { p in
+            progress?(p * 0.5)
+        }
+        try await assetVerifier.verify(context) { p in
+            progress?(0.5 + p * 0.5)
+        }
+
+        try await nativeInstaller.install(context)
+        progress?(1.0)
+
+        // 汇总「补不了的项」（原 LaunchFix.perform 末尾行为，文案逐字一致）
+        let list = unrepairable.drain()
+        if !list.isEmpty {
+            let detail = list.prefix(3).joined(separator: "、")
+            let suffix = list.count > 3 ? " 等" : ""
+            warn("启动前补全：\(list.count) 项缺失文件无法解析下载地址，已跳过：\(list.joined(separator: "、"))")
+            hint("启动前补全有 \(list.count) 项文件无法获取下载地址（\(detail)\(suffix)），游戏可能因缺库无法正常进入。", .critical)
+        }
     }
 }

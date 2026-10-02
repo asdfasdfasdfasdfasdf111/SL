@@ -181,4 +181,31 @@ public class MinecraftInstaller {
         try unzipNatives(task)
         log("已重新解压 natives: \(instance.name)")
     }
+
+    // MARK: 确保 natives 已解压（参数化入口，P2-1 接线）
+    /// 启动前补全（`LaunchPreflight`）用的 natives 入口：不依赖 `MinecraftInstance` 引用，
+    /// 由接线层把 `manifest.getNeededNatives()` 的 jar 坐标直接传入。
+    /// 与 `ensureNatives(_ instance:)` 的解压语义完全同构（`unzipNatives` 参数化版）：
+    /// 目标架构均取 `Architecture.system`，判据与筛选逻辑一字不差。
+    public static func ensureNatives(nativesDirectory: URL, nativeLibraryPaths: [String], librariesRoot: URL) throws {
+        // 与实例版同判据：已有架构兼容的可执行文件则跳过（避免每次启动反复重解压）
+        if let contents = try? FileManager.default.contentsOfDirectory(atPath: nativesDirectory.path) {
+            let hasCompatibleExecutable = contents
+                .filter { $0.hasSuffix(".dylib") || $0.hasSuffix(".jnilib") }
+                .contains { name in
+                    guard name.hasSuffix(".dylib") else { return true }
+                    let arch = Architecture.getArchOfFile(nativesDirectory.appendingPathComponent(name))
+                    return arch.isCompatiable(with: .system)
+                }
+            if hasCompatibleExecutable { return }
+        }
+        guard !nativeLibraryPaths.isEmpty else { return }
+        try unzipNatives(
+            nativeJarPaths: nativeLibraryPaths,
+            librariesRoot: librariesRoot,
+            nativesURL: nativesDirectory,
+            architecture: .system
+        )
+        log("已重新解压 natives: \(nativesDirectory.lastPathComponent)")
+    }
 }

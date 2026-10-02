@@ -10,7 +10,7 @@
 
 import Foundation
 
-/// 进度回调（0~1）。真实来源：`LaunchFix.perform(instance:onProgress:)` 的 onProgress。
+/// 进度回调（0~1）。真实来源：`LaunchPreflightBridge` → `DefaultLaunchPreflight` 的 onProgress。
 public typealias LaunchProgressHandler = @Sendable (Double) -> Void
 
 /// 一次启动从发起到结束的状态机
@@ -21,7 +21,7 @@ public enum LaunchState: Sendable, Equatable {
     case preparing
     /// 文件校验中（0~1）：client / library / asset 的缺失与损坏分析
     case verifyingFiles(Double)
-    /// 下载补全中（0~1）：`LaunchFix` 语义的缺失项下载
+    /// 下载补全中（0~1）：`LaunchPreflightBridge` 语义的缺失项下载
     case downloading(Double)
     /// 解析 Java：扫描等待、版本要求比对、可执行文件校验
     case resolvingJava

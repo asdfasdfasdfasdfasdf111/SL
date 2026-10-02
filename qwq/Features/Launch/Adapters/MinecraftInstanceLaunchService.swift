@@ -18,16 +18,16 @@
 //  | slLaunch 回调 / 相位 | 触发时机（桥接层）                        | 本服务投递的状态 |
 //  |----------------------|------------------------------------------|-----------------|
 //  | （进入 launch）        | 调用 slLaunch 之前                       | `.preparing` |
-//  | `phaseHandler("downloading")` | 调用 LaunchFix 之前               | `.downloading(0)` |
-//  | `progressHandler(p)`  | LaunchFix 的 onProgress（每文件回调）      | `.downloading(p)`（1% 阈值合并） |
-//  | `phaseHandler("launching")` | LaunchFix 完成后、Java 选择之前      | `.resolvingJava` |
+//  | `phaseHandler("downloading")` | 调用 `LaunchPreflightBridge`（启动前补全）之前 | `.downloading(0)` |
+//  | `progressHandler(p)`  | 补全的 onProgress（每文件回调）      | `.downloading(p)`（1% 阈值合并） |
+//  | `phaseHandler("launching")` | 补全完成后、Java 选择之前      | `.resolvingJava` |
 //  | `onLauncherReady`     | Java 选择 / 参数适配完成、进程将拉起时     | `.launching` |
 //  | `launchSuccess`       | CGWindowList 检测到游戏窗口（或退出码 0）  | `.running` |
 //  | `completion`          | 进程退出 / 启动失败                        | `.finished(result)` / `.failed(error)` |
 //  | （terminate 被调用）   | 服务侧主动终止                            | `.stopping` |
 //
 //  源映射不可达 / 不精确之处（合并阶段需修正，详见 LAUNCH_FLOW.md 风险点）：
-//    - `.verifyingFiles` 恒不可达：`LaunchFix.perform` 把「校验」与「下载」合成一条进度，
+//    - `.verifyingFiles` 恒不可达：启动前补全把「校验」与「下载」合成一条进度，
 //      不暴露「校验完成」事件，无法与 `.downloading` 区分。
 //    - `.buildingArguments` 恒不可达：桥接层未为「参数组装完成」提供回调。
 //    - `phaseHandler("launching")` 语义是「进入 Java 选择与参数组装」，与 `LaunchState.launching`
@@ -239,7 +239,7 @@ public final class MinecraftInstanceLaunchService: LaunchService, @unchecked Sen
     private func handle(phase: String, sessionID: UUID) {
         switch phase {
         case "downloading":
-            // LaunchFix 的「校验 + 补齐」阶段（校验事件不可观测，统一按下载阶段投递）
+            // 启动前补全（LaunchPreflightBridge）的「校验 + 补齐」阶段（校验事件不可观测，统一按下载阶段投递）
             push(.downloading(0), sessionID: sessionID)
         case "launching":
             // 桥接层此相位的语义是「进入 Java 选择与参数组装」，故映射为 resolvingJava

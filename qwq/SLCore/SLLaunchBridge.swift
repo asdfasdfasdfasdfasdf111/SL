@@ -203,13 +203,13 @@ private func slLaunchInternal(
     // MARK: 客户端 JAR 校验（LAUNCH_FLOW 缺陷 D1）
     // 本路径把 skipResourceCheck 恒置为 true（该标记的原始用途是跳过旧启动流程里的
     // createCompleteTask 全量安装任务；该任务已随旧流程删除，但字段语义被沿用）；
-    // 而 LaunchFix.perform 只覆盖 libraries / assets / natives，
+    // 而启动前补全（LaunchPreflightBridge → DefaultLaunchPreflight）只覆盖 libraries / assets / natives，
     // 不含客户端本体。缺 JAR 时 classpath 末项仍是该路径，JVM 对不存在的 classpath 条目静默忽略，
     // 直到进入游戏才以 ClassNotFoundException 崩溃，UI 只能显示「异常退出」。
     // 故必须在拉起进程前显式判定并失败。
     //
-    // **为什么放在补全之前**：本判定与 LaunchFix 无依赖（LaunchFix 从不写客户端 JAR，
-    // 见 `LaunchFix.perform` 四段：libraries / assets 索引 / assets 对象 / natives），
+    // **为什么放在补全之前**：本判定与补全无依赖（preflight 从不写客户端 JAR，
+    // 见 DefaultLaunchPreflight 四段：libraries / assets 索引 / assets 对象 / natives），
     // 而补全最长可跑 600s（超时上限）。原顺序把「必然失败」的启动拖到补全结束（甚至拖满
     // 十分钟超时）之后才报错，用户先看到进度条走完、再看到一句「启动前补全失败」，
     // 真正原因（客户端本体缺失）反而被网络错误掩盖。前移后缺 JAR 立即拦住，
@@ -251,7 +251,7 @@ private func slLaunchInternal(
     phaseHandler("downloading")
     let fixTask = Task {
         do {
-            try await LaunchFix.perform(instance: instance) { p in
+            try await LaunchPreflightBridge.prepare(instance: instance) { p in
                 // 补全已被放弃（超时或被用户取消）后不再回调 UI：两种情况 UI 都已复位到 idle
                 //（超时会弹错误提示），若继续回调进度，用户会看到「已复位 + 进度条继续走」的并存状态。
                 guard !fixAbandoned.isSet else { return }
@@ -297,7 +297,8 @@ private func slLaunchInternal(
         // 现做两件事，并把「能做到什么程度」写清：
         //  1) 置 `fixAbandoned`：**强保证**切断 UI 回调（不再有进度事件流向界面）；
         //  2) `fixTask.cancel()`：**尽力而为**。真正的网络中止需要下载层有取消检查点，
-        //     而 `LaunchFix` 底层的 `MultiFileDownloader.start()` → `NetManager.downloadAll`
+        //     而 `LaunchPreflightBridge` → `DefaultLaunchPreflight` 底层的
+        //     `MultiFileDownloader.start()` → `NetManager.downloadAll`
         //     内部没有任何 `Task.isCancelled` / `checkCancellation` 判定
         //     （`SLCore/Download/MultiFileDownloader.swift:110-152`），
         //     且该层不在本轮允许修改的范围内，因此取消只能传递给仍会响应的 await 点，
@@ -318,7 +319,7 @@ private func slLaunchInternal(
     }
 
     // MARK: 客户端 JAR 校验已前移到本函数开头（补全之前）——见该处注释。
-    // 补全后不再重复判定：同一路径同一次启动内不可能由补全产生（LaunchFix 不写客户端本体）。
+    // 补全后不再重复判定：同一路径同一次启动内不可能由补全产生（preflight 不写客户端本体）。
 
     // 取消判定点 ④：Java 选择之前。取消后不再触发全盘 Java 扫描，也不改写实例配置。
     if abortIfCancelled("跳过 Java 选择") { return }

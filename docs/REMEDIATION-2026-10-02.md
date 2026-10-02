@@ -169,6 +169,7 @@ cd "/Users/apple/Downloads/Swim111Launcher_副本" && SL_DERIVED=/tmp/SL-DD-r8 .
 | 2026-10-02 | `4e1c95d` | B 判据 #4 弹窗骨架合并（共享 PopupCardScaffold） |
 | 2026-10-02 | `23e1380` | P3-1 Java 选择收口到 JavaResolver（真机冒烟验证） |
 | 2026-10-02 | `c99c346` | P3-3 LaunchFix 上帝对象拆分（净行数 0，全量绿，真机冒烟通过） |
+| 2026-10-02 | `7fec44a` | P2-1 LaunchPreflight 协议族接线（SLLaunchBridge 经 LaunchPreflightBridge 调用 DefaultLaunchPreflight；LaunchFix 删除；全量 709/2/0 + 真机冒烟通过） |
 
 ---
 
@@ -188,6 +189,7 @@ cd "/Users/apple/Downloads/Swim111Launcher_副本" && SL_DERIVED=/tmp/SL-DD-r8 .
 | P3-2 | `a48430a` | Features→App 倒置收口：`AppContext` git mv `App/`→`SLCore/`（头部注释重写：基础设施层、非 DI 容器、迁移沿革）；`ProcessPool`→`SLCore/`、`CacheManager`→`SLCore/`（git mv）；`DragDropHandler`→`App/`；`Services/` 目录删除；5 处路径注释同步更新 | typecheck 0 error；全量 709/2/0 干净运行（`/tmp/SL-DD-p32b`） |
 | P3-1 | `23e1380` | SLLaunchBridge Java 选择收口到 JavaResolver：删 6 处 `JavaManager`/`LauncherSettings` 直连（预扫描段 + 兜底段 + 错误日志引用），只经 `JavaResolverBridge` 主路径 + 缓存校验 + `findSuitableJava` 兜底 | typecheck 0 error；JavaResolver/Bridge 测试 12/12；真机冒烟（路径 B）Java 选择不变 |
 | P3-3 | `c99c346` | LaunchFix 上帝对象拆分：四类职责各抽私有方法（`collectMissingLibraries`/`collectMissingAssets`/`download`），主资源循环与索引补漏循环同构段收敛为一处，perform 变薄为编排；**净行数 0（170→170，§九纪律）**；LAUNCH_FLOW 行为不变 | typecheck 0 error；build-for-testing 成功；全量 709 测试 0 断言失败；真机冒烟（路径 B）启动补全完成 + 渲染线程 atlas 创建 |
+| P2-1 | `7fec44a` | LaunchPreflight 协议族接线：四段逻辑自 LaunchFix 迁移到默认实现（DefaultClient/Library/Asset Verifier + DefaultNativeInstaller），LaunchFix.swift 删除；SLLaunchBridge:254 经 LaunchPreflightBridge（instance→context 抽取 + 组装）调用 DefaultLaunchPreflight.prepare(context:)；进度 0.5/0.5 映射、unrepairable 末尾提示、natives 架构判定逐字等义；native 解压参数化（ensureNatives(nativesDirectory:nativeLibraryPaths:librariesRoot:)，原 instance 版不动） | typecheck 0 error（告警 112/24 与基线一致）；build-for-testing 成功；**全量 709/2/0 干净一轮（TEST EXECUTE SUCCEEDED，无 abort）**；真机冒烟（路径 B）：启动前补全完成 + 渲染线程 atlas + 0 致命错误 |
 
 ### 已知工具链 abort（不是回归，见 TESTING.md §五）
 
@@ -218,7 +220,7 @@ cd "/Users/apple/Downloads/Swim111Launcher_副本" && SL_DERIVED=/tmp/SL-DD-r8 .
 
 | 项 | 决策 | 依据 |
 |---|---|---|
-| P2-1 `LaunchPreflight` 协议族零消费 | **维持现状，不在这批接**。它对应 ARCHITECTURE.md §七已宣称交付、但连接点是「迁移期兼容缝」（`MinecraftInstanceLaunchService`），且 `LaunchFixPreflight` 宿主在 `LaunchCoordinator.swift:118` 已有「只标注不改接线」注释。P3-3 已把 `LaunchFix` 拆为四类职责私有方法（`collectMissingLibraries` / `collectMissingAssets` / `download` / natives），边界与协议族对齐，但 `DefaultLaunchPreflight` 编排器仍零消费——真正接线（把 `slLaunchInternal` 的补全调用从 `LaunchFix.perform` 换成 `LaunchPreflight.prepare`）留到合并阶段，需真机启动冒烟 | 代码注释自证 + 启动链路风险 |
+| P2-1 `LaunchPreflight` 协议族零消费 | **已做（接线完成）**。P3-3（`c99c346`）已把 `LaunchFix` 拆为四类职责私有方法；本批接线把四段逻辑迁移到协议族默认实现（`Features/Launch/DefaultLaunchPreflightImplementations.swift`：`DefaultClientFileVerifier` / `DefaultLibraryFileVerifier` / `DefaultAssetFileVerifier` / `DefaultNativeInstaller`），`LaunchFix.swift` 删除；`SLLaunchBridge:254` 经 `LaunchPreflightBridge`（instance→context 抽取 + 组装，仿 JavaResolverBridge 跨层入口模式）调用 `DefaultLaunchPreflight.prepare(context:)`。进度 0.5/0.5 区间映射、unrepairable 末尾汇总提示、natives 架构判定均与 LaunchFix 逐字等义。natives 解压参数化（`MinecraftInstaller.ensureNatives(nativesDirectory:nativeLibraryPaths:librariesRoot:)`，原 instance 版未动）。验证：typecheck 0 error；全量 709/2/0 干净一轮；**真机冒烟（路径 B）启动补全完成 + 渲染线程 atlas + 0 致命错误** | typecheck + 全量 + 真机冒烟 |
 | P2-2 `GameSessionStore`/`GameProcessController.terminate` 待接线 | **维持现状**。`MinecraftInstanceLaunchService.swift:57-70` 记明 T1/T2/T8/T9 前置条件，T2 未解前接上 store 只会写进没人订阅的表（纯开销）。接线属合并阶段任务 | 代码注释自证 |
 | P3-4 下载双轨收口 | **已决（2026-10-02 拍板）：`NetManager` 保留为最终后端**。`Core/Download` 是薄抽象层而非第二实现（唯一实现转发送 NetManager）；批量路径（`MultiFileDownloader`）保持直连 NetManager——批进度分子/分母在引擎边界不可观察，无法逐字复刻（判据见 `MultiFileDownloader.start` 注释） | 判据 B #5 关闭为决策，非降级 |
 | P4-3 默认窗口尺寸 `defaultSize(900×660)` | **已确认 2026-09-23 已恢复**（`qwqApp.swift:56`，e62d7f3/17cca21/e624d33 历史注释完整），本批无需改动，仅登记实况 | 代码注释自证 |
@@ -229,5 +231,4 @@ cd "/Users/apple/Downloads/Swim111Launcher_副本" && SL_DERIVED=/tmp/SL-DD-r8 .
 ### 未动（留给后续）
 
 - **P4-2 CI 启用**：见上方决策表——本地无 GitHub 出口无法验证，需用户环境首次手动跑 `probe.yml` 后启用 `test.yml`。
-- **P2-1 `LaunchPreflight` 接线**（`DefaultLaunchPreflight` 编排器零消费）：P3-3 已铺好边界（四类职责私有方法与其协议一一对应），接线是「把 `slLaunchInternal` 的启动前补全调用换成 `LaunchPreflight.prepare`」，属合并阶段，需真机冒烟。
 - **P2-2 `GameSessionStore` 接线**：T2 前置未解前不接（见决策表）。

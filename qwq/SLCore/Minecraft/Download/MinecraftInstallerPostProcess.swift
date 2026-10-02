@@ -20,18 +20,29 @@ extension MinecraftInstaller {
         guard let manifest = task.manifest else {
             throw MyLocalizedError(reason: "客户端清单未就绪，无法解压本地库")
         }
-        for (_, native) in manifest.getNeededNatives() {
-            let jarPath = resolvedNativeJarPath(native, in: task)
-            let jarURL: URL = task.minecraftDirectory.librariesURL.appendingPathComponent(jarPath)
+        try unzipNatives(
+            nativeJarPaths: manifest.getNeededNatives().values.map(\.path),
+            librariesRoot: task.minecraftDirectory.librariesURL,
+            nativesURL: nativesURL,
+            architecture: task.architecture
+        )
+    }
+
+    /// 参数化解压 natives（P2-1 接线：`LaunchPreflight` 调用的入口，不依赖 task/manifest）。
+    /// 与 task 版逐项等价：按目标架构解析 jar 路径 → 解压 → 架构筛选。
+    static func unzipNatives(nativeJarPaths: [String], librariesRoot: URL, nativesURL: URL, architecture: Architecture = .system) throws {
+        for jarPath in nativeJarPaths {
+            let resolved = resolvedNativeJarPath(jarPath, architecture: architecture, librariesRoot: librariesRoot)
+            let jarURL = librariesRoot.appendingPathComponent(resolved)
             // 解压失败必须可见：`Util.unzip` 原先无返回值、失败仅记日志，调用方无从判断成败，
             // 安装（createTask / createCompleteTask）与启动前修复（ensureNatives）都会在
             // natives 缺失的情况下继续当作成功。现读取其成功标志并走既有错误通道——本方法本就是
             // `throws`，三处调用方均已用 `try`。
             guard Util.unzip(archiveURL: jarURL, destination: nativesURL, replace: true) else {
-                throw MyLocalizedError(reason: "解压 natives 失败：\(jarPath)")
+                throw MyLocalizedError(reason: "解压 natives 失败：\(resolved)")
             }
             do {
-                try processLibs(task, nativesURL)
+                try processLibs(architecture: architecture, nativesDirectory: nativesURL)
             } catch {
                 err("处理 natives 失败")
                 throw error
@@ -54,23 +65,24 @@ extension MinecraftInstaller {
     /// 目标架构为 arm64、原路径是 macos 分类器、且盘上确实存在同坐标的
     /// `-natives-macos-arm64.jar` 时改用它；其余情况（x64 目标、1.18 及更早只有 x64 natives、
     /// 非 macos 分类器、清单已被映射过）一律回落原路径，行为与改动前完全一致。
-    private static func resolvedNativeJarPath(_ native: ClientManifest.DownloadInfo, in task: MinecraftInstallTask) -> String {
-        guard task.architecture == .arm64 else { return native.path }
-        guard native.path.hasSuffix("-natives-macos.jar") else { return native.path }
-        let arm64Path = native.path.replacingOccurrences(of: "-natives-macos.jar", with: "-natives-macos-arm64.jar")
+    private static func resolvedNativeJarPath(_ path: String, architecture: Architecture, librariesRoot: URL) -> String {
+        guard architecture == .arm64 else { return path }
+        guard path.hasSuffix("-natives-macos.jar") else { return path }
+        let arm64Path = path.replacingOccurrences(of: "-natives-macos.jar", with: "-natives-macos-arm64.jar")
         // 只有盘上真有 arm64 变体时才切换：否则保持原路径（老版本/第三方清单可能没有该分类器）
         guard FileManager.default.fileExists(
-            atPath: task.minecraftDirectory.librariesURL.appendingPathComponent(arm64Path).path
-        ) else { return native.path }
-        log("natives 架构修正：目标架构 arm64，改用 arm64 分类器 \(arm64Path)（清单条目为 \(native.path)）")
+            atPath: librariesRoot.appendingPathComponent(arm64Path).path
+        ) else { return path }
+        log("natives 架构修正：目标架构 arm64，改用 arm64 分类器 \(arm64Path)（清单条目为 \(path)）")
         return arm64Path
     }
     
     // MARK: 处理解压结果
-    private static func processLibs(_ task: MinecraftInstallTask, _ nativesURL: URL) throws {
+    /// 架构筛选 + 拷贝到 natives 根目录。参数化版（无 task 依赖）供启动前补全参数化入口调用。
+    private static func processLibs(architecture: Architecture, nativesDirectory: URL) throws {
         let fileManager = FileManager.default
         guard let enumerator = fileManager.enumerator(
-            at: nativesURL, includingPropertiesForKeys: [.isDirectoryKey],
+            at: nativesDirectory, includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
         ) else { return }
         for case let fileURL as URL in enumerator {
@@ -81,7 +93,7 @@ extension MinecraftInstaller {
             // 验证架构
             if fileURL.pathExtension == "dylib" {
                 let arch = Architecture.getArchOfFile(fileURL)
-                guard arch.isCompatiable(with: task.architecture) else {
+                guard arch.isCompatiable(with: architecture) else {
                     try? fileManager.removeItem(at: fileURL)
                     log("已清除架构不匹配的可执行文件: \(fileURL.lastPathComponent)")
                     continue
@@ -89,7 +101,7 @@ extension MinecraftInstaller {
             }
             
             // 拷贝到 natives 根目录
-            let destinationURL = nativesURL.appendingPathComponent(fileURL.lastPathComponent)
+            let destinationURL = nativesDirectory.appendingPathComponent(fileURL.lastPathComponent)
             if destinationURL == fileURL { continue }
             if fileManager.fileExists(atPath: destinationURL.path) {
                 try fileManager.removeItem(at: destinationURL)
@@ -98,7 +110,7 @@ extension MinecraftInstaller {
         }
         
         // 清理非 dylib 文件
-        let contents = try fileManager.contentsOfDirectory(at: nativesURL, includingPropertiesForKeys: nil)
+        let contents = try fileManager.contentsOfDirectory(at: nativesDirectory, includingPropertiesForKeys: nil)
         for fileURL in contents {
             if !fileURL.pathExtension.lowercased().hasSuffix("dylib") && !fileURL.pathExtension.lowercased().hasSuffix("jnilib") {
                 try fileManager.removeItem(at: fileURL)

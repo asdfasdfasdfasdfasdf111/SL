@@ -111,11 +111,12 @@ enum LaunchCoordinator {
             // 事件 → UI 的翻译逐条对应原 slLaunch 六段回调，投递线程与调用点亦一致。
             // 用例层规范结果是 launch(_:) 的返回值/抛出值；本通道为迁移期兼容缝（见适配器文件头）。
             //
-            // **接线现状（缺陷：会话登记等全部空转）**：此处只传了 `events`，
+            // **接线现状（P2-1 已盘点，会话登记仍留空）**：此处只传了 `events`，
             // `sessionStore` 与 `logSink` 保持默认 nil，于是用例层内所有 `sessionStore?.` 调用
             // （会话登记 `register`、状态 `update`、`GameProcessController.waitForTermination`
-            // 所需的过程观察）都不产生任何效果；`LaunchFixClientVerifier` 的 sha1 口径同样从未生效
-            // （其宿主 `LaunchFixPreflight` 全库无引用）。本处**只标注不改接线**：
+            // 所需的过程观察）都不产生任何效果。启动前补全的协议族接线已完成
+            // （`LaunchPreflightBridge` → `DefaultLaunchPreflight`，见 ARCHITECTURE.md §七），
+            // 与 LaunchCoordinator 无关。本处**只标注不改接线**（P2-2 仍成立）：
             // 终止入口实际走 `GameSession.launcher.terminate()`（closeSession / handlePowerTap），
             // 补上 store 会同时启用一条与现有 UI 并行的状态通道，属于合并阶段的任务。
             let service = MinecraftInstanceLaunchService(events: { event in
