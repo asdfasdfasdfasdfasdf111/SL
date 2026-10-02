@@ -157,3 +157,37 @@ cd "/Users/apple/Downloads/Swim111Launcher_副本" && SL_DERIVED=/tmp/SL-DD-r8 .
 | 日期 | HEAD | 做了什么 |
 |---|---|---|
 | 2026-10-02 | `2d58c6a` | 本移交文档创建。环境事实按当天实测更新（xcodebuild 可用、GitHub 不可达、6 条断言失败归属）。审计报告见 `docs/SLOP-AUDIT-2026-10-02.md` |
+
+---
+
+## 7. 修复进度（2026-10-02 16:35 之后实做，全部经全量测试/typecheck 验证）
+
+### 已完成（可放心在其上继续）
+
+| 批次 | HEAD | 内容 | 验证 |
+|---|---|---|---|
+| P0 | `1c2ea0c` | 删 4×`.o`、源码副本目录、AppDelegate `#unavailable` 永不分支、AppContext `downloadSession`/`appSupportURL` 零消费者 | 全量 709 绿 |
+| P1-a | `1c2ea0c` | F1-F4 四处测试断言错（AssetIndex 排序方向 / CardTranslationStore 夹具 1990→1999 / GameVersionHelper 空数组返回 -1 / ItemFilter 空查询=false）；**F5 drainPipe 真缺陷修复**（`FileHandle.read` 在 O_NONBLOCK 下 poll 报 POLLIN 却抛 EAGAIN，即便同刻 raw `read()` 能读到数据 → 改 raw read）；`verify-test.sh:105` 反引号 bug | 全量 709 绿 |
+| P2-3/4/5 | `131b515` | loader→资源名映射收口为 `ModLoader` enum 反查（删 `assetMap` 字典，`loaderTokens` 供给 SkinVersionIdentity）；`ModpackInstaller` 私有 unzip 删除 → 统一 `Util.unzip`；User-Agent 7 处硬编码 → `SharedConstants.shared.userAgent` 唯一来源 | typecheck 0 error/告警同基线；全量 709 绿 |
+| P1-3/4 | `53863df` | `ModpackDownloader` 死链（`search`→`downloadLatest`→`downloadFirst` 互调、外部零调用）+ 随之悬空的 `searchCache`/`SearchResult`/`Modpack`/`ModpackError.notFound`/`.hashMismatch` 全删，保留活路径 `versions`/`resolveFile`；删 `ThemeDefinition.swift`（全库零引用，Theme 目录只剩 README） | typecheck 0 error；全量 0 断言失败（见下方 abort 说明） |
+
+### 已知工具链 abort（不是回归，见 TESTING.md §五）
+
+`LaunchCancellationTests.testUncancelledTokenPassesEntryGate` 全量运行时约 1/4 概率发生
+`pointer being freed was not allocated` host abort（Xcode 26.2 隔离析构缺陷，同步用例创建/
+释放 @MainActor 类实例触发面）。**已做基线对照**：`131b515`（P2-3/4/5 后、P1-3/4 前）同样
+同用例同地址 abort；隔离跑该 suite 4/4 通过；改动前后全量都是 0 断言失败。abort 后
+`xcodebuild` 退出码 65 属预期现象，**不是**代码问题判据，换全新 `SL_DERIVED` 重试即可。
+
+### 决策记录（后续接手者据此继续，勿重复下述判断）
+
+| 项 | 决策 | 依据 |
+|---|---|---|
+| P2-1 `LaunchPreflight` 协议族零消费 | **维持现状，不在这批接**。它对应 ARCHITECTURE.md §七已宣称交付、但连接点是「迁移期兼容缝」（`MinecraftInstanceLaunchService`），且 `LaunchFixPreflight` 宿主在 `LaunchCoordinator.swift:118` 已有「只标注不改接线」注释。真正接线属 P3-3（LaunchFix 拆分）的前置，需要真机启动冒烟，不建议无真机环境操作 | 代码注释自证 + 启动链路风险 |
+| P2-2 `GameSessionStore`/`GameProcessController.terminate` 待接线 | **维持现状**。`MinecraftInstanceLaunchService.swift:57-70` 记明 T1/T2/T8/T9 前置条件，T2 未解前接上 store 只会写进没人订阅的表（纯开销）。接线属合并阶段任务 | 代码注释自证 |
+
+### 未动（留给后续）
+
+- **P3**（高风险，需真机启动冒烟）：SLLaunchBridge→Features 倒置（P3-1）、Features→App 24 处 `AppContext.shared` 倒置（P3-2）、LaunchFix 上帝对象拆分（P3-3）、下载双轨收口（P3-4）。
+- **P4**（需用户拍板）：LWJGL 3.3.3 死守卫一行修复（P4-1，上游 3.3.3 arm64 natives 已确认 200，改后需移除 `XCTExpectFailure` 标记）、CI 启用（P4-2）、默认窗口尺寸恢复（P4-3）。
+- 判据 B 剩余：#4 弹窗骨架（`ModInstallSelectionView` vs `ModpackFolderPickerView` 同源复制）未合并——需读两个 View 整体后才能安全动。
