@@ -330,23 +330,13 @@ private func slLaunchInternal(
     // 沿用原启动流程中启动前的最小化设置
     account.putAccessToken(options: options)
 
-    // MARK: Java 选择：统一走 manifest 优先的动态策略
-    // 1) 确保已触发 Java 扫描（若 DataManager 中为空）
-    if DataManager.shared.javaVirtualMachines.isEmpty {
-        log("DataManager 中暂无 JVM，触发预扫描")
-        JavaManager.shared.preScanJavaAsync()
-        // 等待扫描结果：订阅 DataManager 的 JVM 发布流，首个非空值到达即唤醒；
-        // 保留原实现的 3s 等待上限，不再用「无人 signal 的信号量」做 100ms 轮询忙等。
-        // 发布发生在主线程（JavaManager 回写），本函数运行在后台线程，等待方与回写方互不阻塞（R9）。
-        let scanSettled = DispatchSemaphore(value: 0)
-        let scanObserver = DataManager.shared.$javaVirtualMachines
-            .sink { if !$0.isEmpty { scanSettled.signal() } }
-        let hit = scanSettled.wait(timeout: .now() + 3) == .success
-        scanObserver.cancel()
-        log("Java 扫描等待结束（3s 内命中=\(hit)），DataManager JVM 数量=\(DataManager.shared.javaVirtualMachines.count)")
-    }
+    // MARK: Java 选择：统一走 manifest 优先的动态策略（收口到 JavaResolver，P3-1）
+    // 原先这里有一段「DataManager 为空时触发 JavaManager.preScanJavaAsync + 3s 等待」的预扫描：
+    // SLCore 直连 Features/Java 的 JavaManager（审计判据 A 分层倒置）。收口后不做预扫描——
+    // `JavaResolver` 内部（DefaultJavaRepository.installed → 空则 refresh 强制重扫）已覆盖
+    // 同样的扫描语义，无需在桥接层提前触发、也不必等 DataManager 预热。
 
-    // 2) 读取 manifest.javaVersion（API 后端数据源），推断兜底
+    // 1) 读取 manifest.javaVersion（API 后端数据源），推断兜底
     let minJavaVersion = MinecraftInstance.resolveMinJavaVersion(manifest: instance.manifest, version: instance.version)
     log("最低 Java 要求: \(minJavaVersion) (manifest.javaVersion = \(instance.manifest?.javaVersion ?? -1), 版本推断 = \(MinecraftInstance.getMinJavaVersion(instance.version))")
 
@@ -370,31 +360,18 @@ private func slLaunchInternal(
             log("JavaResolver 命中: \(resolved.path)")
         }
 
-        // 回退：尝试通过 DataManager 选择（已被 JavaManager.syncJavaVirtualMachines 填充）
+        // 回退：尝试通过 DataManager 选择（JavaResolver 内部扫描时已同步填充 DataManager。
+        // DataManager 是 SLCore 内部数据源，此处不构成跨层倒置）
         if selectedJavaURL == nil, let jvm = MinecraftInstance.findSuitableJava(instance.version, minJavaVersion: minJavaVersion, manifest: instance.manifest) {
             selectedJavaURL = jvm.executableURL
             log("通过 DataManager 自动选择 Java: \(jvm.executableURL.path) (major=\(jvm.version), callMethod=\(jvm.callMethod))")
-        } else if selectedJavaURL == nil {
-            // 兜底：直接使用 JavaManager.selectBestJava（基于 LauncherSettings.availableJavaList）
-            var scanned = LauncherSettings.shared.availableJavaList
-            if scanned.isEmpty {
-                scanned = JavaManager.shared.scanInstalledJava(useCache: true)
-                DispatchQueue.main.async { LauncherSettings.shared.availableJavaList = scanned }
-            }
-            log("DataManager 未命中，回退 JavaManager 扫描列表 (count=\(scanned.count))")
-            if let best = JavaManager.shared.selectBestJava(requiredMajor: minJavaVersion, from: scanned) {
-                selectedJavaURL = URL(fileURLWithPath: best.path)
-                log("兜底选择 Java: \(best.path) (major=\(best.majorVersion), arch=\(best.architecture))")
-            }
         }
     }
 
     guard let finalJavaURL = selectedJavaURL, fm.isExecutableFile(atPath: finalJavaURL.path) else {
         let available = DataManager.shared.javaVirtualMachines.map { "\($0.executableURL.path) (major=\($0.version), \($0.callMethod))" }
-        let scanned = LauncherSettings.shared.availableJavaList.map { "\($0.path) (major=\($0.majorVersion))" }
         log("未找到满足版本要求 (Java \(minJavaVersion)+) 的 Java 安装")
         log("DataManager JVMs: \(available.joined(separator: "; "))")
-        log("LauncherSettings list: \(scanned.joined(separator: "; "))")
         completion(nil, .failure(MyLocalizedError(reason: "未找到满足版本要求 (Java \(minJavaVersion)+) 的 Java 安装，请先在「Java 管理」中扫描或下载 Java。")))
         return
     }
