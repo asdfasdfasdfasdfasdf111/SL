@@ -12,10 +12,20 @@ enum GameDirectoryScanner {
     /// 有效版本 = 目录中存在同名 .jar 或 .json 文件。
     /// 注意：这里只做「本地拥有」判断，不做任何加载器/兼容性过滤，
     /// 模组兼容性过滤由 ModDetailView 结合 API 的 game_versions 求交集完成。
+    ///
+    /// ⚠️ **默认零写副作用（2026-10-02 隔离）**：目录名规范化只在迁移期开关
+    /// `MinecraftVersionManager.autoNormalizeOnRead` 打开时才顺带执行（老行为）；
+    /// 默认关闭时本函数不重命名任何目录（与 `installedVersionList` 完全同一判据）。
     static func localOwnedVersions(gameRoot: String) -> [String] {
         guard !gameRoot.isEmpty else { return [] }
-        // 与游戏分类列表一致：先规范化版本文件夹名（1.6.1 → 1.6.1-Forge），列表显示后缀
-        MinecraftVersionManager.normalizeVersionFolderNames(gameRoot: gameRoot)
+        // 与游戏分类列表一致：迁移期开关打开时先规范化版本文件夹名（1.6.1 → 1.6.1-Forge），
+        // 列表显示后缀；开关默认关 = 不干跑，读取路径不写磁盘。
+        if MinecraftVersionManager.autoNormalizeOnRead {
+            let plan = MinecraftVersionManager.planVersionFolderRenames(gameRoot: gameRoot)
+            if !plan.isEmpty {
+                MinecraftVersionManager.applyVersionFolderRenames(gameRoot: gameRoot, plan: plan)
+            }
+        }
         return installedVersionList(gameRoot: gameRoot)
     }
 

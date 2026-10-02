@@ -10,15 +10,24 @@
 //  强调色的唯一真值仍是 `ThemeManager.shared.accentColor`，因此设置窗口与「个性化」页
 //  永远一致（这正是评审建议的「做镜像入口」，而不是把状态搬一份出来）。
 //
+//  版本目录页（2026-10-02 收尾轮新增）：`VersionFolderMigrationView`，
+//  承载「读取时自动规范化」迁移期开关与手动扫描/确认执行入口（详见该文件头注释）。
+//
 
 import SwiftUI
 
 /// 偏好设置场景内容。
 struct SettingsScene: View {
     var body: some View {
-        // 不给 ColorPickerView 套 ScrollView：它自带 `.frame(maxWidth: .infinity, maxHeight: .infinity)`，
-        // 放进垂直 ScrollView 会因为「无限高」导致布局异常。直接给固定尺寸即可。
-        ColorPickerView()
-            .frame(width: 560, height: 420)
+        // TabView 双页：个性化（原有镜像入口）+ 版本目录（规范化迁移期入口）。
+        // 固定宽度取两页内容的最大自然宽（560），高度给版本目录页留够计划列表展示空间。
+        TabView {
+            ColorPickerView()
+                .tabItem { Label("个性化", systemImage: "paintpalette") }
+
+            VersionFolderMigrationView()
+                .tabItem { Label("版本目录", systemImage: "folder.badge.gearshape") }
+        }
+        .frame(width: 560, height: 480)
     }
 }

@@ -5,6 +5,13 @@
 //  ⚠️ 这里的职责其实横跨三层（Java 需求推导、磁盘扫描、目录名改写），
 //  只是因为都服务于「游戏版本」这一屏才放在一起 —— 新增函数前先想想该落哪一层。
 //
+//  规范化（normalize）的写入隔离（2026-10-02 收尾）：
+//  - 磁盘改名这类有写副作用的能力，与「读版本列表」做成了**两个独立函数**：
+//    `planVersionFolderRenames`（只读计划）与 `applyVersionFolderRenames`（按计划执行）。
+//  - 读取路径（getVersions / localOwnedVersions）**默认不干跑**：只有迁移期开关
+//    `autoNormalizeOnRead` 打开时才在读取时顺带执行规范化；默认关闭时读取零写副作用。
+//  - 需要迁移的用户走「设置 → 版本目录」页：扫描出计划 → 人工确认 → 才执行。
+//
 
 import Foundation
 
@@ -19,7 +26,7 @@ func requiredJavaVersionForMinecraft(_ version: String) -> Int {
 }
 
 /// 游戏目录与版本列表的静态工具集（无实例、全部 static）。
-/// 目录扫描结果带缓存；`normalizeVersionFolderNames` 会**改写磁盘**（见其文档）。
+/// 目录扫描结果带缓存；目录名规范化**默认只在显式计划 + 确认后执行**（见文件头「规范化隔离」）。
 struct MinecraftVersionManager {
     /// 缓存键。历史上曾存在 UserDefaults 里，现已迁到 AppContext 的缓存管理器
     /// （迁移分支见 `findGameRootDirectories`）。
@@ -28,20 +35,34 @@ struct MinecraftVersionManager {
     /// 不是原子的；用 NSLock 而不是 actor，是因为调用方可能已在主线程同步调用。
     private static let renameLock = NSLock()
 
-    /// 规范化版本文件夹名：把「文件夹名是纯版本号、但实际装了加载器」的版本目录
-    /// 重命名为「版本号-加载器名」（如 1.6.1 → 1.6.1-Forge）。
+    // MARK: - 迁移期开关（默认关 = 默认不干跑）
+
+    /// 迁移期开关（UserDefaults 持久化，默认 false）：
+    /// `true` 时 `getVersions` / `localOwnedVersions` 在读取版本列表前顺带执行目录名规范化
+    /// （老行为）；`false`（默认）时读取路径**不写磁盘**，规范化只在「设置 → 版本目录」页
+    /// 手动触发。
+    ///
+    /// ⚠️ 本字段是「读版本列表时自动规范化」这一开关的唯一真值；设置页的 Toggle 绑定它，
+    /// 不要在别处再存一份（用户开/关的意图必须落在这里）。
+    static var autoNormalizeOnRead: Bool {
+        get { UserDefaults.standard.bool(forKey: "autoNormalizeVersionFolders") }
+        set { UserDefaults.standard.set(newValue, forKey: "autoNormalizeVersionFolders") }
+    }
+
+    // MARK: - 规范化：只读计划
+
+    /// 找出所有「值得规范化」的版本目录并给出改名计划（不写磁盘）。
+    ///
+    /// 规范化语义：把「文件夹名是纯版本号、但实际装了加载器」的版本目录
+    /// 计划重命名为「版本号-加载器名」（如 1.6.1 → 1.6.1-Forge）。
     /// 原理（用户明确要求）：启动器列表直接读 versions/ 下的文件夹名展示，
     /// 改文件夹名即改列表显示；新下载流程（GameVersionDownloadStarter 拼 name）
     /// 已产出带后缀目录，本函数只兜底历史遗留/第三方启动器装的版本。
     /// 检测依据：版本目录内 <名>.json 的 libraries 依赖或 inheritsFrom 名称。
-    /// 重命名时同步改写 version.json 的 id 字段（JSON 文件名也随目录改名）。
-    /// - Returns: 旧名 → 新名 映射（本次实际发生的重命名）。
-    /// ⚠️ 这是本文件唯一会**写磁盘**的方法：既会重命名版本目录，也会改写目录内 json 的 id。
-    /// ⚠️ 全程 `try?` 化：任何一步失败都只是「这个目录不改了」，不会中断整轮扫描。
-    @discardableResult
-    static func normalizeVersionFolderNames(gameRoot: String) -> [String: String] {
-        renameLock.lock()
-        defer { renameLock.unlock() }
+    ///
+    /// ⚠️ 纯只读：只扫描与探测，绝不重命名、绝不改 json。返回 旧名 → 新名 映射；
+    /// 磁盘上的实际改写由 `applyVersionFolderRenames(gameRoot:plan:)` 完成。
+    static func planVersionFolderRenames(gameRoot: String) -> [String: String] {
         let fm = FileManager.default
         let versionsPath = gameRoot + "/versions"
         // versions/ 不存在（该 root 其实没有版本）时静默返回空表，不报错。
@@ -70,21 +91,69 @@ struct MinecraftVersionManager {
             // 目标已存在则跳过，绝不覆盖
             if fm.fileExists(atPath: newDirPath) { continue }
 
+            renames[dir] = newName
+        }
+        return renames
+    }
+
+    // MARK: - 规范化：按计划执行（唯一的写入口）
+
+    /// 按 `planVersionFolderRenames` 给出的计划执行规范化（写磁盘）：
+    /// 重命名版本目录，并同步改写目录内 version.json 的 id 字段（JSON 文件名也随目录改名）。
+    /// 返回 旧名 → 新名 映射（本次实际发生的重命名）。
+    ///
+    /// ⚠️ 这是本文件唯一会**写磁盘**的路径：既会重命名版本目录，也会改写目录内 json 的 id。
+    /// ⚠️ 默认全程 `try?` 化：任何一步失败都只是「这个目录不改了」，不会中断整轮。
+    /// ⚠️ 中途失败的**部分完成态**是已收敛的：写新 json → 删旧 json → 移动目录 三步中，
+    /// 若最后的移动失败，会把新 json 移回旧名 **并把 json 的 id 字段改回旧值**，
+    /// 恢复成「目录名 + 文件名 + json id」三者一致（= 旧名）的初态，
+    /// 绝不留下「目录名仍旧、json id 已改新名」这种被启动器当成另一个实例的脏状态。
+    ///
+    /// - Parameter moveItem: 目录移动实现；仅测试注入用（默认走 FileManager）。
+    @discardableResult
+    static func applyVersionFolderRenames(
+        gameRoot: String,
+        plan: [String: String],
+        moveItem: (String, String) throws -> Void = { try FileManager.default.moveItem(atPath: $0, toPath: $1) }
+    ) -> [String: String] {
+        renameLock.lock()
+        defer { renameLock.unlock() }
+        let fm = FileManager.default
+        let versionsPath = gameRoot + "/versions"
+        var renames: [String: String] = [:]
+        for (dir, newName) in plan.sorted(by: { $0.key < $1.key }) {
+            let dirPath = "\(versionsPath)/\(dir)"
+            let jsonPath = "\(versionsPath)/\(dir)/\(dir).json"
+            let newDirPath = "\(versionsPath)/\(newName)"
+            // 目标已存在则跳过，绝不覆盖（plan 里已挡过，但 apply 必须独立复核：
+            // plan 与 apply 之间的间隙里可能有别的写入者）
+            if fm.fileExists(atPath: newDirPath) { continue }
+
             // ① 写入新名 json（id 同步改为新名），② 删旧 json，③ 重命名目录
             // id 必须与目录名同步改：启动器读的是 json 里的 id，
             // 两者不一致会导致这个版本无法被识别为有效实例。
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: jsonPath)),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
             var newJSON = json
             newJSON["id"] = newName
             guard let newData = try? JSONSerialization.data(withJSONObject: newJSON, options: [.prettyPrinted]),
                   (try? newData.write(to: URL(fileURLWithPath: "\(versionsPath)/\(dir)/\(newName).json"))) != nil else { continue }
             try? fm.removeItem(atPath: jsonPath)
             do {
-                try fm.moveItem(atPath: dirPath, toPath: newDirPath)
+                try moveItem(dirPath, newDirPath)
                 renames[dir] = newName
                 log("版本文件夹重命名: \(dir) → \(newName)")
             } catch {
-                // 重命名失败：恢复旧 json（否则目录内 json 名与目录名不一致，启动器无法识别）。
-                // 注意此刻磁盘状态是「目录名仍旧、json 已改成新名」，靠这一句回滚回一致状态。
+                // 重命名失败：恢复旧 json —— 分两步，任何一步失败都仍要尝试另一步：
+                // ① 把 json 文件的 id 字段改回旧值（启动器读的是 json 里的 id，
+                //    不改回会让「目录名 1.6.1 + json id 1.6.1-Forge」被判成另一个实例）；
+                // ② 把 json 文件名从新名改回旧名（与目录内查找 <目录名>.json 的判据一致）。
+                // 此刻磁盘状态是「目录名仍旧、json 已改成新名（id 也是新名）」。
+                var rollbackJSON = json
+                rollbackJSON["id"] = dir
+                if let rollbackData = try? JSONSerialization.data(withJSONObject: rollbackJSON, options: [.prettyPrinted]) {
+                    try? rollbackData.write(to: URL(fileURLWithPath: "\(versionsPath)/\(dir)/\(newName).json"))
+                }
                 try? fm.moveItem(atPath: "\(versionsPath)/\(dir)/\(newName).json", toPath: jsonPath)
             }
         }
@@ -169,13 +238,20 @@ struct MinecraftVersionManager {
     }
     
     /// 列出某个游戏根目录下的版本名（versions/ 下的**目录名**，字典序排序）。
-    /// ⚠️ 调用它有**写副作用**：内部先跑一遍目录名规范化（见 normalizeVersionFolderNames）。
-    /// 返回的是文件系统上的目录名，规范化会保证它与 json 里的 id 一致。
+    /// 返回的是文件系统上的目录名。
+    ///
+    /// ⚠️ **默认零写副作用（2026-10-02 隔离）**：只在迁移期开关 `autoNormalizeOnRead`
+    /// 打开时才先跑一遍目录名规范化（老行为）；默认关闭时本函数**不碰磁盘**，
+    /// 因为它在列表渲染路径上被反复调用，带写副作用会让「读列表」悄悄改写用户磁盘。
+    /// 需要规范化迁移的用户走「设置 → 版本目录」页手动确认执行。
     static func getVersions(from gameRoot: String) -> [String] {
-        // 加载列表前先规范化文件夹名：历史遗留的「纯版本号但装了加载器」目录
-        // 重命名为「版本-加载器」（1.6.1 → 1.6.1-Forge），列表读目录名即显示后缀。
-        // 幂等：已带后缀 / 无加载器 / 重命名失败均自动跳过，重复调用无副作用。
-        normalizeVersionFolderNames(gameRoot: gameRoot)
+        // 迁移期开关打开时：读取前顺带执行规范化（兼容旧行为）。这**不是默认路径**。
+        if autoNormalizeOnRead {
+            let plan = planVersionFolderRenames(gameRoot: gameRoot)
+            if !plan.isEmpty {
+                applyVersionFolderRenames(gameRoot: gameRoot, plan: plan)
+            }
+        }
         let versionsPath = gameRoot + "/versions"
         guard let versions = try? FileManager.default.contentsOfDirectory(atPath: versionsPath) else { return [] }
         // 只保留目录：versions/ 下还可能散落着 json、图标等文件。
