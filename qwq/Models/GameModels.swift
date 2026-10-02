@@ -66,6 +66,27 @@ let ModrinthTagMap: [String: String] = [
     "challenging": "硬核", "combat": "战斗", "quests": "任务",
     "kitchen-sink": "水槽包", "lightweight": "轻量", "simplistic": "简洁",
     "tweaks": "改良",
+    // ↓ 加载器标签（保留品牌名，光线追踪式专名不译）。
+    "fabric": "Fabric", "forge": "Forge", "neoforge": "NeoForge",
+    "quilt": "Quilt", "minecraft": "原版", "legacy-fabric": "Legacy Fabric",
+    "babric": "Babric", "bta-babric": "BTA Babric", "rift": "Rift",
+    "modloader": "ModLoader", "folia": "Folia", "ornithe": "Ornithe",
+    "liteloader": "LiteLoader", "nilloader": "NilLoader", "canvas": "Canvas",
+    "java-agent": "Java Agent",
+    // ↓ 服务端/代理标签（品牌名保留）。
+    "paper": "Paper", "spigot": "Spigot", "purpur": "Purpur",
+    "bukkit": "Bukkit", "velocity": "Velocity", "bungeecord": "BungeeCord",
+    "waterfall": "Waterfall", "sponge": "Sponge", "geyser": "Geyser",
+    // ↓ 光影性能档位：low/medium/high 是「硬件档」，potato 是「土豆机」档。
+    "low": "低配", "medium": "中配", "high": "高配", "potato": "土豆机",
+    // ↓ 光影画面特征标签。
+    "atmosphere": "氛围", "bloom": "泛光", "foliage": "植被",
+    "shadows": "阴影", "screenshot": "截图",
+    // ↓ 资源包/光影的内容类型标签（方块、物品、实体等贴图类）。
+    "items": "物品", "blocks": "方块", "entities": "实体",
+    "themed": "主题", "datapack": "数据包", "environment": "环境",
+    "management": "管理", "minigame": "小游戏", "economy": "经济",
+    "cursed": "猎奇",
     // ↓ 分辨率标签（资源包 / 光影用）：数值即贴图或采样倍率，`512x+` 表示「512 及以上」。
     "8x-": "极简", "16x": "16x", "32x": "32x", "48x": "48x",
     "64x": "64x", "128x": "128x", "256x": "256x", "512x+": "超高清",

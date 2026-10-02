@@ -19,6 +19,7 @@
 //
 
 import XCTest
+import zlib
 @testable import qwq
 
 final class GameModelsTests: XCTestCase {
@@ -113,6 +114,76 @@ final class GameModelsTests: XCTestCase {
     func testTagMapValuesAreNonEmpty() async {
         for (key, value) in ModrinthTagMap {
             XCTAssertFalse(value.isEmpty, "标签 \(key) 的中文名为空")
+        }
+    }
+
+    /// 🌟 全库覆盖回归（用户反馈：光影卡片分类显示英文，如 `low` 低性能档）。
+    /// 从 bundle 自带的全量目录 gzip 源读取真实 categories 全集，
+    /// 断言每一条都能经 `ModrinthTagMap` 译出中文 —— 防止「上游标签新增 / 有人误删表项」
+    /// 再次让卡片回显英文 slug（`ContentCard` 对未收录键按原文兜底的代价）。
+    /// 判据与 `DetailPageHeader` 的 compactMap（译不出即丢弃）区分：
+    /// 卡片路径要求全量可译，详情页路径允许白名单缺项。
+    func testTagMapCoversEveryCategoryInBundledCatalog() async {
+        guard let gzURL = Bundle.main.url(forResource: "modrinth_catalog", withExtension: "json.gz"),
+              let gzData = try? Data(contentsOf: gzURL) else {
+            XCTFail("找不到 bundle 内的 modrinth_catalog.json.gz")
+            return
+        }
+        guard let data = Self.gunzipped(gzData),
+              let json = try? JSONSerialization.jsonObject(with: data),
+              let envelope = json as? [String: Any],
+              let items = envelope["items"] as? [[String: Any]] else {
+            XCTFail("gzip 解压或目录 JSON 解析失败")
+            return
+        }
+        var seen = Set<String>()
+        for item in items {
+            // 目录 JSON 用短键：c = categories（其余 i/t/n/d/u/x 是 id/标题/简介/图标等）。
+            guard let categories = item["c"] as? [String] else { continue }
+            for category in categories {
+                let key = category.lowercased()
+                if seen.contains(key) { continue }
+                seen.insert(key)
+                XCTAssertNotNil(ModrinthTagMap[key],
+                                "全量目录中未收录的分类 '\(key)' 会在卡片上回显英文，需补 ModrinthTagMap")
+            }
+        }
+        XCTAssertGreaterThan(seen.count, 50, "目录 categories 集合应远大于 50，防止测试空转")
+    }
+
+    /// 最小 gzip 解压（系统 libz，windowBits=31 支持 gzip 格式）——
+    /// 与 `LocalModCatalog.inflateGzipData` 同法。测试内联而非复用实现，
+    /// 避免把生产类的 private 工具暴露成 internal。
+    private static func gunzipped(_ input: Data) -> Data? {
+        guard !input.isEmpty else { return nil }
+        return input.withUnsafeBytes { (srcRaw: UnsafeRawBufferPointer) -> Data? in
+            let src = srcRaw.bindMemory(to: UInt8.self)
+            var stream = z_stream()
+            guard let srcBase = src.baseAddress else { return nil }
+            stream.next_in = UnsafeMutablePointer<UInt8>(mutating: srcBase)
+            stream.avail_in = uInt(input.count)
+            guard inflateInit2_(&stream, 16 + 15, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size)) == Z_OK else { return nil }
+            defer { inflateEnd(&stream) }
+            var output = Data()
+            let buffer = [UInt8](repeating: 0, count: 1 << 16)
+            var lastStatus: Int32 = Z_OK
+            while true {
+                var localBuffer = buffer
+                let produced = localBuffer.withUnsafeMutableBytes { (dstRaw: UnsafeMutableRawBufferPointer) -> Int in
+                    guard let dstBase = dstRaw.bindMemory(to: UInt8.self).baseAddress else { return -1 }
+                    stream.next_out = dstBase
+                    stream.avail_out = uInt(buffer.count)
+                    lastStatus = inflate(&stream, Z_NO_FLUSH)
+                    if lastStatus == Z_OK || lastStatus == Z_STREAM_END {
+                        return buffer.count - Int(stream.avail_out)
+                    }
+                    return -1
+                }
+                if produced < 0 { return nil }
+                if produced > 0 { output.append(localBuffer, count: produced) }
+                if lastStatus == Z_STREAM_END { return output }
+                if stream.avail_in == 0 && lastStatus == Z_OK { return nil }
+            }
         }
     }
 
