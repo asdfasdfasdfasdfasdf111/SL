@@ -1,8 +1,17 @@
 import Foundation
 
-// MARK: - 统一应用上下文（依赖注入容器，替代散落的单例）
+// MARK: - 统一进程级共享资源（2026-10-02 自 App/ 归位至 SLCore：基础设施层）
 
-/// 集中管理所有共享资源，避免各组件各自创建 URLSession/Process 导致资源浪费
+/// 集中管理进程级共享资源（网络会话 / 进程池 / 缓存 / 内存压力源），
+/// 避免各组件各自创建 URLSession/Process 导致资源浪费。
+///
+/// 说明（修正此前的措辞）：
+/// - 本类型**不是**依赖注入容器——项目约定是「构造器默认参数注入、不用容器」
+///   （见 ARCHITECTURE.md §二），本类型只是共享资源的进程级持有者。
+/// - 归位沿革：它位于 `App/` 时被 Features 层 27 处直接消费，构成 Features→App 反向依赖
+///   （审计判据 A）；其依赖 `ProcessPool` / `CacheManager` 同样错位（Features/、Services/）。
+///   2026-10-02 一并归位到 `SLCore/`（基础设施实现层），Features→SLCore 为合规向下依赖。
+/// - `Services/` 目录已随之仅剩 DragDropHandler（App/ViewModels 的拖拽辅助，已归位 App/）。
 final class AppContext {
     static let shared = AppContext()
 

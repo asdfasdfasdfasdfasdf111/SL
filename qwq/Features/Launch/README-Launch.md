@@ -49,7 +49,7 @@
 
 ### 关于 ProcessPool
 
-`Features/Launch/ProcessPool.swift` 已有进程池（并发上限、超时、命令白名单），
+`SLCore/ProcessPool.swift` 已有进程池（并发上限、超时、命令白名单），
 但它面向「短命令 + 收集 stdout」场景（`execute` / `executeForData` 同步返回），
 而游戏进程是长驻进程、输出走日志文件、需要 termination 观察，形态不同。
 因此 `GameProcessController` **只声明协议不造轮子**；

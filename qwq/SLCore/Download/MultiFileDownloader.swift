@@ -87,8 +87,8 @@ public class MultiFileDownloader {
     
     /// 批量下载入口。
     ///
-    /// 迁移状态：整条批量链路**保持旧后端**（本方法内调 `NetManager.downloadAll`），不切换 `DownloadEngine`。
-    /// 判据见 `Core/Download/Adapters/MIGRATION.md` 第六节「批量路径（#5 / #6 / #8）评估：本轮不切换」：
+    /// **终态决策（2026-10-02 拍板）：整条批量链路保持旧后端**（本方法内调 `NetManager.downloadAll`），
+    /// 不切换 `DownloadEngine`。判据见 `Core/Download/Adapters/MIGRATION.md` 第六节「批量路径（#5 / #6 / #8）评估：本轮不切换」：
     /// 批进度的分子与分母都定义在引擎内部状态上，在 `DownloadEngine` 边界不可观察，无法逐字复刻。
     /// 不可等价的三个具体落点（行号为当前代码）：
     /// 1. 分母 =「首片响应头已到达（`fileSize > 0`）且尚未 `.done`」的文件大小之和，该集合由引擎内部事件决定；

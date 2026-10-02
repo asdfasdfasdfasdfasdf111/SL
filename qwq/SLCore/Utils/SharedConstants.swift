@@ -20,7 +20,7 @@ import Foundation
 /// 写 `nonisolated` 阻止全局 actor 推断；实现于 Swift 6.1（本机工具链 6.2.3）。
 /// 该写法是编译期语义，不引入任何 OS 版本要求，macOS 13.0 目标不受影响。
 /// 官方链接：https://github.com/swiftlang/swift-evolution/blob/main/proposals/0449-nonisolated-for-global-actor-cutoff.md
-/// （同类用法在本工程已有先例：`Services/CacheManager.swift` 的 `LRUCache`。）
+/// （同类用法在本工程已有先例：`SLCore/CacheManager.swift` 的 `LRUCache`。）
 public nonisolated struct SharedConstants {
     public static let shared = SharedConstants()
     

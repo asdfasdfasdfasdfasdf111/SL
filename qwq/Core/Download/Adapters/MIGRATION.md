@@ -1,12 +1,17 @@
 # Adapters 迁移说明
 
 本目录只放**适配器**：把 `qwq/Core/Download/` 的协议接到现有实现上，不改变任何下载行为，也不切换调用方。
-当前状态：`NetDownloader.swift`（`NetManager`）仍是唯一实际生效的下载路径；`DownloadEngine` 已由
+**终态（2026-10-02 拍板）**：`NetDownloader.swift`（`NetManager`）是唯一实际生效的下载后端；`DownloadEngine`
+是薄抽象层（唯一实现 `NetDownloaderDownloadEngine` 转发到 `NetManager`），单文件路径经它提交；批量路径
+（`MultiFileDownloader`）保持直连 `NetManager`——批进度分子/分母在引擎边界不可观察，无法逐字复刻，
+判据见 `MultiFileDownloader.start` 注释与 ARCHITECTURE.md §十待办 2。本文档后续各节的「迁移」措辞
+读作「现状记录」而非待办。
+接入状态：`DownloadEngine` 已由
 `Features/Download/ModFileDownloadTask.swift` 首个接入，并由
 `SLCore/Minecraft/Mod/Loader/Forge/ForgeInstaller.swift` 的两处**单文件**下载第二个接入，
 再由 `FabricInstaller`、`MinecraftInstaller` 的三个前置单文件、`CustomFileDownloadTask`、
 `downloadAuthlibInjector` 第四个批次接入（均见「六、切换记录」）；
-**批量调用方（`MultiFileDownloader` 各调用点）与绕过引擎的 `URLSession` 直连路径仍走旧链路**。
+**批量调用方（`MultiFileDownloader` 各调用点）与绕过引擎的 `URLSession` 直连路径按终态决策保持旧链路**。
 
 ## 一、新增文件与职责
 

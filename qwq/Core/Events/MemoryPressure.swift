@@ -18,7 +18,7 @@
 //    它不是语言保证，理由、实测证据与守它的用例都写在 `post` 的注释里，改动前先读那段。
 //
 //  使用方：
-//  - 发布：`App/AppContext.swift`（内存压力 source 的事件处理器）；
+//  - 发布：`SLCore/AppContext.swift`（内存压力 source 的事件处理器）；
 //  - 订阅：`App/MemoryCacheReclaimer.swift`（装配层注册，聚合各子系统缓存回收）。
 //
 

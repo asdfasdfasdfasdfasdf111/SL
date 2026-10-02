@@ -48,7 +48,9 @@ init(versionCatalog: VersionCatalogService = DefaultVersionCatalogService(),
 
 `static let shared` 目前有 20 余处，集中在两类，暂不清理：
 
-- **进程级基础设施**：`AppContext`（URLSession/进程池/缓存根，28 处真实使用）、
+- **进程级基础设施**：`AppContext`（URLSession/进程池/缓存根，28 处真实使用；2026-10-02 连同
+  `ProcessPool`/`CacheManager` 自 App/Features/Services 归位至 `SLCore/` 基础设施层，消除
+  Features→App 反向依赖，`Services/` 目录已随之删除）、
   `LogStore`、`MemoryPressureBroadcaster`、`PopupManager`、`NoticeCenter`
 - **全局 UI 状态**：`NavigationIntent`、`LaunchPanelState`、`DownloadDetailManager`
 
@@ -175,9 +177,13 @@ abort，表现为"前几个测试类通过、之后无限重启"）。详见 `qw
 ## 十、遗留待办
 
 1. **`LaunchFix` 上帝对象拆分**（按四类校验）
-2. **下载双轨收口**：决定 `NetManager` 是保留为最终后端（则把 `Core/Download` 的协议注释
-   改为"这是终态"），还是真替换（则删旧引擎）。**不要继续维持"待接线"状态。**
-3. **`MultiFileDownloader` 与直连 `URLSession` 路径接入 `DownloadEngine`**（若选择收口）
+2. ~~**下载双轨收口**~~ **已决（2026-10-02）：`NetManager` 保留为最终后端**。`Core/Download` 是
+   薄抽象层而非第二实现（唯一实现 `NetDownloaderDownloadEngine` 转发到 `NetManager`）；批量路径
+   （`MultiFileDownloader`）保持直连 `NetManager`——批进度分子/分母在引擎边界不可观察，无法逐字复刻
+   （判据见 `MultiFileDownloader.start` 注释）。双轨收口的唯一真问题是「注释里的待接线措辞」，已消除。
+3. **`MultiFileDownloader` 与直连 `URLSession` 路径接入 `DownloadEngine`**（~~若选择收口~~ 已一并否决：
+   同第 2 条判据，批量路径不接入；直连 `URLSession` 的 `LoaderSupportProbe`/`Requests` 属探测/请求工具，
+   非下载引擎职责）
 4. **账号伪实现**：`AnyAccount.microsoft` / `.yggdrasil` 实为 `OfflineAccount`，需改为明确报错
 5. **工程配置清理**：移除 `project.pbxproj` 中的 iOS / visionOS 配置，统一部署目标
 6. **UI 收口**：`ContentView` 只保留窗口壳、导航、全局任务入口

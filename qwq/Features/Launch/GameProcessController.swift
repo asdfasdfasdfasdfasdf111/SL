@@ -3,7 +3,7 @@
 //  启动用例层：游戏进程的拉起与终止
 //
 //  本文件只定义协议与最小进程封装，**不创建 Process**。
-//  进程创建的既有约定（并发上限、超时、白名单）由 `Features/Launch/ProcessPool.swift` 承担：
+//  进程创建的既有约定（并发上限、超时、白名单）由 `SLCore/ProcessPool.swift` 承担：
 //  ProcessPool 当前面向「短命令 + 收集输出」场景（同步 execute / executeForData），
 //  游戏进程是长驻、输出走日志文件、需要 termination 观察，形态不同，
 //  故此处仅声明 `GameProcessController` 协议，未来实现应在 ProcessPool 的并发与超时策略之上扩展，
