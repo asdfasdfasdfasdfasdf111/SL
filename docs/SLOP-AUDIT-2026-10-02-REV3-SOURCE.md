@@ -51,16 +51,36 @@
   隔离析构缺陷，与本次改动无关，既有处置是换 fresh derived data 重试），第三轮全绿。
 - `InstallProgressTests` 单跑：8/8 通过。
 
-## 5. 仍存续的「认知 100 分、闭环 0 分」部分（本轮未动，留给后续轮次）
+## 5. 仍存续的「认知 100 分、闭环 0 分」部分
 
-- 错误分类靠中文文案 `contains`（`NetDownloaderDownloadEngine.swift:277-279`，
-  "哈希校验失败"/"磁盘空间不足"/"超时"）——改文案即失效，属「字符串当类型系统」。
-- `syntheticTotalBytes = 1000` 假进度分母（`:32`/`:239-240`）——下载进度条在演。
+### 5.1 已闭环（提交 `2af498f` / `380ab06`，2026-10-02 续轮）
+
+- ✅ 错误分类靠中文文案 `contains`（`NetDownloaderDownloadEngine` 的 4 个 contains 分支
+  ——HTTP 状态码 / 哈希校验失败 / 磁盘空间不足 / 超时）**全部删除**：
+  `NetDownloadError` 增加 `checksumMismatch`/`diskFull`/`httpStatus`/`timeout` 精确 case；
+  NetSliceFetcher / NetMerger / NetDownloader 抛点直接抛精确 case；
+  `FileRecord.failureKind` 在失败落地为文案的同一刻置位（`sliceFailed` / `merge` catch 经
+  `NetManager.failureKind(of:)`），`waitForCompletion` / `download` 经 `structuredError`
+  按类别抛出；适配层 switch 直达 `DownloadError`，`unknown` 只收容真正未知的失败。
+- ✅ `syntheticTotalBytes = 1000` 假进度分母（`:32`/`:239-240`）**删除**：
+  `DownloadProgress` 新增 `fractionOverride` 轨道——总大小未知时旧引擎直传的 0…1
+  比例走独立轨道，字节字段保持诚实（`bytesWritten = 0` / `totalBytes = -1`，不再伪造）；
+  已知大小时字节推导优先，`fractionOverride` 被忽略。`DownloadStateTests` 新增
+  `testFractionFallsBackToOverrideWhenTotalBytesIsUnknown` 钉优先序与钳制。
+- ✅ 字符串契约补盲：`Category` 新增 `CategoryKind` 枚举，`CategoryContentView` 分派改按
+  `kind` switch（`name` 退化为纯文案，改文案不再静默落空、switch 穷尽由编译器保证）；
+  `PopupModel` 新增显式 `allowsReportExport` 字段，删除 `Notice.init(from:)` 里
+  「按钮 label 含『导出』」的推导；`MinecraftLauncher.init?` 去可失败签名、
+  `process.arguments!` ×3 与 `MinecraftLauncher(instance)!` 强解包全部消除。
+
+### 5.2 仍存续（旧清单中未动的部分）
+
 - `VersionUtils.normalizeVersionFolderNames` 是「本文件唯一会写磁盘的方法」
   （重命名版本目录 + 改写 json 的 id），本职是列版本列表，兜底动用户真实文件。
 - 测试层：`GameSessionStoreTests` 睡等（`Task.sleep 120/220ms` ×5）、
-  `LaunchStateTests:9/:175` 自陈纯协议未覆盖、CrashReporter/DataManager/
+  `LaunchStateTests` 自陈纯协议未覆盖（已补 `LaunchPreflightTests`；`LaunchService`/
+  `GameProcessController`/`LaunchArgumentBuilder` 仍无实现）、CrashReporter/DataManager/
   MultiFileDownloader 测试零触达。
 - 注释文化病：考古注释（GameProcessController 竞态史）、哲学辩论注释
-  （GameSessionStore:49-50「待接线不是待清理」）、自证注释（DownloadCategoryViewModel
-  文件头 30 行）、认错注释（VersionUtils:5-6「横跨三层」）——保留原样，记录在案。
+  （GameSessionStore「待接线不是待清理」）、自证注释（DownloadCategoryViewModel
+  文件头 30 行）、认错注释（VersionUtils「横跨三层」）——保留原样，记录在案。
