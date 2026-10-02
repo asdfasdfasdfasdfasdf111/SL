@@ -1,12 +1,10 @@
 //
 //  LaunchFix.swift
 //  启动前补全（PCL2 DlClientFix + McLibFix + McAssetsFixList 移植）
+//  ModDownload.vb DlClientFix(55-165) / ModMinecraft.vb McLibFix(1867) / McAssetsFixList(2172)
 //
-//  PCL2 每次启动前都会执行 DlClientFix：分析缺失/损坏的支持库与资源文件，
-//  仅下载缺失项（McLibFix 按 sha1 检查库、McAssetsFixList 按 hash 检查资源），
-//  实现「启动即自愈」——缺库/坏资源自动补上，游戏不会因文件缺失崩溃。
-//
-//  本模块对应移植：ModDownload.vb DlClientFix(55-165) / ModMinecraft.vb McLibFix(1867) / McAssetsFixList(2172)
+//  2026-10-02 P3-3 拆分：perform 只做编排；四类职责各抽为私有方法。
+//  主资源循环与索引补漏循环同构段、两处下载段各收敛为一处实现。LAUNCH_FLOW 行为不变。
 //
 
 import Foundation
@@ -24,41 +22,18 @@ public enum LaunchFix {
         }
         let dir = instance.minecraftDirectory
         var items: [DownloadItem] = []
-
-        let libraries = manifest.getNeededLibraries()
-        let libTotal = max(1, libraries.count)
-        // 「本应补全却补不了」的项：缺失文件定位不到下载地址 / 清单 URL 非法。
-        // 原实现对这些项直接 `continue`——不下载、不报错、不计进度，于是：
-        //  日志里看不到、界面上看不到、进度条停在原地像是卡死，
-        //  最终仍带着缺失的库拉起进程，游戏在进入后才以 NoClassDefFoundError 崩溃，
-        //  UI 只能显示「异常退出」，用户与维护者都无从定位。
-        // 现在统一收集到本数组，逐条 err 记日志，并在末尾汇总为一次用户可见提示。
+        // 「本应补全却补不了」的项（缺库/坏资源定位不到下载地址）：原实现直接 continue，
+        // 进度条像卡死、游戏进入后才崩溃，无从定位。现在收集到本数组，末尾汇总提示。
         var unrepairable: [String] = []
 
         // 1) 缺失支持库分析（PCL2 McLibFix）：已存在且 sha1 匹配 → 跳过，仅收集缺失项
-        for (i, library) in libraries.enumerated() {
-            // 每项（含补不了的项）都推进进度：跳过的项不计进度会让进度条停在原地
-            let step = Double(i + 1) / Double(libTotal) * 0.5
-            guard let artifact = library.artifact else {
-                onProgress(step)
-                continue
-            }
-            let dest = dir.librariesURL.appendingPathComponent(artifact.path)
-            if fileIsValid(dest, hash: artifact.sha1) {
-                onProgress(step)
-                continue
-            }
-            // 走到这里代表该文件**当前缺失或校验不通过**
-            if let url = DownloadSourceManager.shared.getLibraryURL(library) {
-                items.append(.init(url, dest, sha1: artifact.sha1))
-            } else {
-                // 缺库且拿不到下载地址 = 无法自愈的缺库，必须可见
-                err("启动前补全：库 \(library.name) 缺失但无法解析下载地址，已跳过（\(dest.path)）")
-                unrepairable.append(library.name)
-            }
-            onProgress(step)
-        }
-        
+        items += collectMissingLibraries(
+            manifest.getNeededLibraries(),
+            dir: dir,
+            onProgress: onProgress,
+            unrepairable: &unrepairable
+        )
+
         // 2) 资源索引：缺失或损坏时先补索引，再按索引分析缺失资源
         var assetsObjects: [AssetIndex.Object] = []
         if let assetIndexInfo = manifest.assetIndex {
@@ -67,30 +42,106 @@ public enum LaunchFix {
                 if let url = URL(string: assetIndexInfo.url) {
                     items.append(.init(url, indexPath, sha1: assetIndexInfo.sha1))
                 } else {
-                    // 清单里的索引 URL 非法（第三方/损坏清单）：索引补不上 → 后续资源分析也无法进行
+                    // 索引 URL 非法（第三方/损坏清单）：索引补不上 → 后续资源分析也无法进行
                     err("启动前补全：资源索引 URL 非法，已跳过：\(assetIndexInfo.url)")
                     unrepairable.append("资源索引 \(assetIndexInfo.id)")
                 }
             }
-            // 索引本地可用时立即解析，否则等下载完成后由本函数末尾统一补资源（见下）
+            // 索引本地可用时立即解析，否则等下载完成后统一补资源（见下）
             if fileIsValid(indexPath, hash: assetIndexInfo.sha1),
                let data = try? Data(contentsOf: indexPath),
                let index = try? AssetIndex.parse(data) {
                 assetsObjects = index.objects
             }
         }
-        
-        // 3) 缺失资源分析（PCL2 McAssetsFixList CheckHash）：asset 以 hash 命名，直接用 hash 校验
-        let assetTotal = max(1, assetsObjects.count)
-        for (i, object) in assetsObjects.enumerated() {
+
+        // 3) 缺失资源分析（PCL2 McAssetsFixList）：asset 以 hash 命名，直接用 hash 校验
+        items += collectMissingAssets(
+            assetsObjects,
+            dir: dir,
+            // 主循环进度区间：资源对象缺项占全局后半 0.5（前半为支持库），仅跳过项推进
+            progressOnSkip: { onProgress(0.5 + $0 * 0.5) },
+            unrepairable: &unrepairable
+        )
+
+        // 4) 下载缺失项（NetManager 引擎：多源回退 + 分片 + 重试 + 校验）
+        if !items.isEmpty {
+            try await download(items, onProgress: onProgress)
+            // 若资源索引是本次刚下载的，现在补上资源分析
+            if assetsObjects.isEmpty, let assetIndexInfo = manifest.assetIndex {
+                let indexPath = dir.assetsURL.appendingPathComponent("indexes").appendingPathComponent("\(assetIndexInfo.id).json")
+                if let data = try? Data(contentsOf: indexPath),
+                   let index = try? AssetIndex.parse(data) {
+                    let assetItems = collectMissingAssets(
+                        index.objects,
+                        dir: dir,
+                        // 补漏场景：索引刚下载完，不推进度（全局进度已到 1，继续推会越界）
+                        progressOnSkip: nil,
+                        unrepairable: &unrepairable
+                    )
+                    if !assetItems.isEmpty {
+                        try await download(assetItems, onProgress: onProgress)
+                    }
+                }
+            }
+        }
+
+        // 5) natives 缺失 → 重新解压（PCL2 McLaunchNatives 语义）
+        try MinecraftInstaller.ensureNatives(instance)
+
+        // 6) 汇总「补不了的项」并让用户看见。
+        //
+        // **为什么只提示、不阻断**：
+        //  - `getNeededLibraries()` 只表示「清单规则允许且当前平台适用」，不表示运行期一定会加载；
+        //    据此阻断会把**本可正常启动**的实例变成不可启动——比原缺陷更糟。
+        //  - 与 PCL2 DlClientFix 同源语义一致：尽力修补后继续，把判断留给用户。
+        //  - 真正的硬失败（客户端 JAR 缺失或为空）已由桥接层 `slLaunchInternal` 在拉起进程前阻断。
+        // 因此「不阻断 + 双重可见」：逐条 err 进日志，汇总 hint 进界面提示。
+        if !unrepairable.isEmpty {
+            let detail = unrepairable.prefix(3).joined(separator: "、")
+            let suffix = unrepairable.count > 3 ? " 等" : ""
+            warn("启动前补全：\(unrepairable.count) 项缺失文件无法解析下载地址，已跳过：\(unrepairable.joined(separator: "、"))")
+            hint("启动前补全有 \(unrepairable.count) 项文件无法获取下载地址（\(detail)\(suffix)），游戏可能因缺库无法正常进入。", .critical)
+        }
+    }
+
+    // MARK: - 四类职责（P3-3 拆分，行为与原 perform 内联段一致）
+
+    /// 缺失支持库收集（McLibFix）：已存在且 sha1 匹配 → 跳过，仅收集缺失项。
+    /// 每项都推进进度（跳过的项不计进度会让进度条停在原地）；
+    /// 缺库且拿不到下载地址 = 无法自愈，记 err 并计入 unrepairable。
+    private static func collectMissingLibraries(_ libraries: [ClientManifest.Library], dir: MinecraftDirectory, onProgress: (Double) -> Void, unrepairable: inout [String]) -> [DownloadItem] {
+        var items: [DownloadItem] = []
+        let libTotal = max(1, libraries.count)
+        for (i, library) in libraries.enumerated() {
+            let step = Double(i + 1) / Double(libTotal) * 0.5
+            guard let artifact = library.artifact else { onProgress(step); continue }
+            let dest = dir.librariesURL.appendingPathComponent(artifact.path)
+            if fileIsValid(dest, hash: artifact.sha1) { onProgress(step); continue }
+            if let url = DownloadSourceManager.shared.getLibraryURL(library) {
+                items.append(.init(url, dest, sha1: artifact.sha1))
+            } else {
+                err("启动前补全：库 \(library.name) 缺失但无法解析下载地址，已跳过（\(dest.path)）")
+                unrepairable.append(library.name)
+            }
+            onProgress(step)
+        }
+        return items
+    }
+
+    /// 缺失资源收集（McAssetsFixList CheckHash）：asset 以 hash 命名，直接用 hash 校验。
+    /// 解析不出下载地址时记 err 并计入 unrepairable，不再强制解包 `URL(string:)!` 崩。
+    /// - Parameter progressOnSkip: 每跳过一个有效项时推进的局部进度回调；
+    ///   主循环传「缺项占后 0.5 区间」的映射，索引补漏场景传 nil（不推进度）。
+    private static func collectMissingAssets(_ objects: [AssetIndex.Object], dir: MinecraftDirectory, progressOnSkip: ((Double) -> Void)?, unrepairable: inout [String]) -> [DownloadItem] {
+        var items: [DownloadItem] = []
+        let assetTotal = max(1, objects.count)
+        for (i, object) in objects.enumerated() {
             let dest = object.appendTo(dir.assetsURL.appendingPathComponent("objects"))
             if fileIsValid(dest, hash: object.hash) {
-                onProgress(0.5 + Double(i + 1) / Double(assetTotal) * 0.5)
+                progressOnSkip?(Double(i + 1) / Double(assetTotal))
                 continue
             }
-            // 原实现：`getAssetURL(hash:) ?? URL(string: 官方CDN)!`，hash 含空格/`#`/裸 `%` 时
-            // `getAssetURL` 返回 nil 且兜底 `URL(string:)!` 崩。两者都解析不出则记 err 并计入
-            // unrepairable（与 :67 资源索引 URL 非法同口径）。
             if let resolvedAssetURL = DownloadSourceManager.shared.getDownloadSource().getAssetURL(hash: object.hash)
                       ?? assetURL(hash: object.hash) {
                 items.append(.init(resolvedAssetURL, dest, sha1: object.hash))
@@ -99,66 +150,16 @@ public enum LaunchFix {
                 unrepairable.append("资源 \(object.hash)")
             }
         }
-        
-        // 4) 下载缺失项（NetManager 引擎：多源回退 + 分片 + 重试 + 校验）
-        if !items.isEmpty {
-            try await MultiFileDownloader(items: items, concurrentLimit: 32) { progress, _ in
-                onProgress(progress)
-            }.start()
-            // 若资源索引是本次刚下载的，现在补上资源分析
-            if assetsObjects.isEmpty, let assetIndexInfo = manifest.assetIndex {
-                let indexPath = dir.assetsURL.appendingPathComponent("indexes").appendingPathComponent("\(assetIndexInfo.id).json")
-                if let data = try? Data(contentsOf: indexPath),
-                   let index = try? AssetIndex.parse(data) {
-                    var assetItems: [DownloadItem] = []
-                    for object in index.objects {
-                        let dest = object.appendTo(dir.assetsURL.appendingPathComponent("objects"))
-                        if fileIsValid(dest, hash: object.hash) { continue }
-                        // 与原 :91 资源分析同口径：hash 含空格/`#`/裸 `%` 时 getAssetURL 与兜底都解析
-                        // 不出，记 err 并计入 unrepairable，而非 `URL(string:)!` 崩。
-                        if let resolvedAssetURL = DownloadSourceManager.shared.getDownloadSource().getAssetURL(hash: object.hash)
-                                  ?? assetURL(hash: object.hash) {
-                            assetItems.append(.init(resolvedAssetURL, dest, sha1: object.hash))
-                        } else {
-                            err("启动前补全：资源 \(object.hash) 的下载地址非法，已跳过")
-                            unrepairable.append("资源 \(object.hash)")
-                        }
-                    }
-                    if !assetItems.isEmpty {
-                        try await MultiFileDownloader(items: assetItems, concurrentLimit: 32) { progress, _ in
-                            onProgress(progress)
-                        }.start()
-                    }
-                }
-            }
-        }
-        
-        // 5) natives 缺失 → 重新解压（PCL2 McLaunchNatives 语义）
-        try MinecraftInstaller.ensureNatives(instance)
-
-        // 6) 汇总「补不了的项」并让用户看见。
-        //
-        // **为什么只提示、不阻断**（本条的取舍口径）：
-        //  - `getNeededLibraries()` 只表示「清单规则允许且当前平台适用」，不表示运行期一定会加载该库；
-        //    第三方加载器清单里常见「列了但实际由加载器自带 / 永不访问」的条目。
-        //    据此阻断会把**本可正常启动**的实例变成不可启动——这是比原缺陷更糟的结果。
-        //  - 与 PCL2 DlClientFix 的同源语义一致：尽力修补后继续，把判断留给用户。
-        //  - 真正的硬失败（客户端 JAR 缺失或为空）已由桥接层 `slLaunchInternal` 在拉起进程前阻断，
-        //    不依赖本函数。
-        // 因此这里选择「不阻断 + 双重可见」：逐条 err 进日志，汇总 hint 进界面提示，
-        // 并保留 `unrepairable` 计数供后续接入更精细的必要性判定。
-        if !unrepairable.isEmpty {
-            let detail = unrepairable.prefix(3).joined(separator: "、")
-            let suffix = unrepairable.count > 3 ? " 等" : ""
-            warn("启动前补全：\(unrepairable.count) 项缺失文件无法解析下载地址，已跳过：\(unrepairable.joined(separator: "、"))")
-            hint("启动前补全有 \(unrepairable.count) 项文件无法获取下载地址（\(detail)\(suffix)），游戏可能因缺库无法正常进入。", .critical)
-        }
+        return items
     }
-    
-    /// 资源文件（assets objects）兜底下载地址：官方 CDN。
-    /// 原实现用 `getAssetURL(hash:) ?? URL(string: 官方CDN)!`，当 hash 含空格/`#`/裸 `%` 时
-    /// `getAssetURL` 返回 nil 且兜底 `URL(string:)!` 崩。这里返回 `URL?`，解析不出则交回调用方
-    /// 走 err + unrepairable（与 :67 资源索引 URL 非法同口径）。
+
+    /// 下载一组缺失项（NetManager 引擎）。
+    private static func download(_ items: [DownloadItem], onProgress: @escaping (Double) -> Void) async throws {
+        try await MultiFileDownloader(items: items, concurrentLimit: 32) { progress, _ in
+            onProgress(progress)
+        }.start()
+    }
+
     private static func assetURL(hash: String) -> URL? {
         return URL(string: "https://resources.download.minecraft.net/\(String(hash.prefix(2)))/\(hash)")
     }
