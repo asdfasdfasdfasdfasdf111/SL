@@ -57,7 +57,15 @@ extension ClientManifest {
                     if name == "unknown" { return true }
                     if name != "osx" { return false }
                 }
-                // TODO: 处理 arch（官方 macOS JSON 基本不含 arch 规则，风险低）
+                // arch：清单书写形态（x86 / arm64 / amd64 …）经 Architecture.fromString
+                // 归一化后与当前进程架构比对；"unknown"（含从未见过的书写形态）视为通用。
+                // 官方 macOS JSON 基本不含 arch 规则，但既然字段存在就参与判定，避免
+                // 未来出现含 arch 的清单时被静默误匹配。
+                if let arch {
+                    let manifestArch = Architecture.fromString(arch)
+                    if manifestArch == .unknown { return true }
+                    if manifestArch != Architecture.system { return false }
+                }
                 return true
             }
         }

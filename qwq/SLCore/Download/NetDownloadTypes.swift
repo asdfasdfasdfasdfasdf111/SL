@@ -28,13 +28,11 @@ public final class SLNetFile {
 
 public enum NetDownloadError: LocalizedError {
     case fileExists(String)
-    // 预留 case：全部候选源均不可用。
-    // 当前引擎的失败载体是 `FileRecord.failReason: String`（由 NetSourceSelecting.pickSource 写入
-    // 「所有下载源均不可用」），download / waitForCompletion 一律包装为 `.fileFailed` 抛出，
-    // 因此本 case 目前不会被构造。保留而非删除的理由：Core/Download 适配层按 NetDownloadError
-    // 归类失败原因（NetDownloaderDownloadEngine.map(_:) → DownloadError.sourceUnavailable），
-    // 该归类只有在失败载体从字符串改为结构化错误后才可达，属已登记的迁移目标；接入本 case
-    // 需要给 FileRecord 增加结构化错误字段，超出本次修复范围，故按预留标注处理。
+    // 已可达（2026-10-02）：`FileRecord.failureKind == .noAvailableSource` 时由
+    // NetDownloader 构造本 case。此前为「声明了但永不构造」的预留态——失败载体
+    // 是 `FileRecord.failReason: String`（由 NetSourceSelecting.pickSource 写入
+    // 「所有下载源均不可用」），download / waitForCompletion 一律包装为 `.fileFailed` 抛出；
+    // 现已通过结构化类别字段接入（见 NetDownloadState.FileRecord.failureKind 注释）。
     case noAvailableSource(String)
     case sourceNoResumeSupport
     case slowSpeed
@@ -57,4 +55,12 @@ public enum NetDownloadError: LocalizedError {
             return "合并文件失败：\(reason)"
         }
     }
+}
+
+/// 下载失败的结构化类别（替代「靠 failReason 文本匹配」）。
+/// 2026-10-02 引入首个成员 `noAvailableSource`；后续如需区分其它终端失败
+/// （校验失败、落盘失败等）在此扩充，并同步 FileRecord 的置位点与该枚举的抛出点。
+public enum NetDownloadFailureKind: Sendable {
+    /// 全部候选下载源均不可用（对应 `NetDownloadError.noAvailableSource`）。
+    case noAvailableSource
 }

@@ -27,6 +27,7 @@ extension NetManager {
         }
         record.state = .failed
         record.failReason = "所有下载源均不可用"
+        record.failureKind = .noAvailableSource   // 结构化类别：让 NetDownloader 抛精确错误而非泛化 fileFailed
         // 失败路径自行清理已产生的分片临时文件：本函数是终态判定点，此处的清理不依赖
         // 外层 cancelRecords（它仅在 download / downloadAll 退栈时调用，批次中途的单文件失败
         // 不会经过该路径），避免残留 .tmp 占用缓存目录。

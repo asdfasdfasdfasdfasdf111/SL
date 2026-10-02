@@ -24,14 +24,15 @@
 //  键序是 `id,uuid,name`，单值形态下是 `uuid,name,id`）。写死字符串会得到一个
 //  「今天绿、明天红」的用例。
 //
-//  ⚠️ 本文件**刻意不驱动 `AccountManager.shared`**：测试 bundle 的宿主就是 qwq.app 本体
+//  ⚠️ 本文件**默认不驱动 `AccountManager.shared`**：测试 bundle 的宿主就是 qwq.app 本体
 //  （`TEST_HOST = qwq.app/Contents/MacOS/qwq`，bundle id 与正式 App 同为
 //  `io.github.asdfasdfasdfasdfasdf111.SL`），因此测试进程里的 `UserDefaults.standard`
 //  就是**用户真实启动器的偏好域**。而 `getAccount()` 在 `accountId == nil` 时会**回写** `accountId`
-//  —— 一旦在用例里调用它，就等于改用户的真实账号数据。所以：
-//    · `getAccount()` 的分支语义本轮**未覆盖**，需先给 `AccountManager` / `CodableAppStorage`
-//      注入 `UserDefaults` 才能安全地测（属模型分层那一轮的范围）；
-//    · 本文件只对两个真实键做**只读**访问，并用
+//  —— 一旦直接调用它，就等于改用户的真实账号数据。
+//    · 文件末尾的 `getAccount()` 用例用「备份 → 改 → 断言 → 无条件还原」的
+//      `withScrubbedAccountKeys` 帮助器**临时隔离**真实键（2026-10-02 起，分支持
+//      `getAccount()` 四个分支语义——回填/空列表/匹配/不匹配，约束见 F 节说明）；
+//    · 其余用例只对两个真实键做**只读**访问，并用
 //      `testWrapperMechanismLeavesRealAccountKeysUntouched` 把「本套用例不碰真实键」
 //      变成可执行断言。
 //
@@ -332,5 +333,80 @@ final class AccountPersistenceCompatTests: XCTestCase {
         }
         let decoded = try JSONDecoder().decode([AnyAccount].self, from: data)
         XCTAssertFalse(decoded.isEmpty, "accounts 键有数据却解出空数组，说明落盘格式已变")
+    }
+
+    // MARK: - F. getAccount() 分支语义（2026-10-02 补覆盖）
+
+    /// 帮助器：`getAccount()` 的用例会**临时读写真实键**（`AccountManager` 单例直接驱动
+    /// `CodableAppStorage("accounts")` / `("accountId")`，无注入点），因此必须
+    /// 「备份 → 改 → 断言 → 无条件还原」。这是文件头「刻意不驱动 AccountManager.shared」
+    /// 约束的**唯一例外**——受限范围：单用例内、defer 无条件还原、与
+    /// `testWrapperMechanismLeavesRealAccountKeysUntouched` 的护栏互补。
+    private func withScrubbedAccountKeys(_ body: () async throws -> Void) async throws {
+        let before = Self.snapshotRealAccountKeys()
+        UserDefaults.standard.removeObject(forKey: Self.accountsKey)
+        UserDefaults.standard.removeObject(forKey: Self.accountIdKey)
+        defer {
+            if let accounts = before.accounts {
+                UserDefaults.standard.set(accounts, forKey: Self.accountsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.accountsKey)
+            }
+            if let accountId = before.accountId {
+                UserDefaults.standard.set(accountId, forKey: Self.accountIdKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.accountIdKey)
+            }
+        }
+        try await body()
+    }
+
+    /// 分支 1：accountId 为空 + accounts 非空 ⇒ 回写 first.id 并返回 first。
+    func testGetAccountBackfillsAccountIdWhenMissing() async throws {
+        try await withScrubbedAccountKeys {
+            let account = self.makeOffline()
+            AccountManager.shared.accounts = [account]
+            AccountManager.shared.accountId = nil
+
+            let result = AccountManager.shared.getAccount()
+            XCTAssertEqual(result?.id, account.id, "accountId 缺失时必须回填 first 的 id 并返回它")
+            XCTAssertEqual(AccountManager.shared.accountId, account.id,
+                           "getAccount() 必须把缺失的 accountId 回写成 first.id")
+        }
+    }
+
+    /// 分支 2：accountId 为空 + accounts 也空 ⇒ 返回 nil（不回写）。
+    func testGetAccountReturnsNilWhenNoAccounts() async throws {
+        try await withScrubbedAccountKeys {
+            AccountManager.shared.accounts = []
+            AccountManager.shared.accountId = nil
+            let result = AccountManager.shared.getAccount()
+            XCTAssertNil(result, "无账号时必须返回 nil")
+            XCTAssertNil(AccountManager.shared.accountId, "无账号时不得回写 accountId")
+        }
+    }
+
+    /// 分支 3：accountId 非空且匹配 accounts 之一 ⇒ 返回对应账号。
+    func testGetAccountReturnsMatchingStoredAccount() async throws {
+        try await withScrubbedAccountKeys {
+            let first = self.makeOffline(name: "First")
+            let second = self.makeOffline(name: "Second")
+            AccountManager.shared.accounts = [first, second]
+            AccountManager.shared.accountId = second.id
+
+            let result = AccountManager.shared.getAccount()
+            XCTAssertEqual(result?.id, second.id, "必须返回 accountId 指向的账号")
+        }
+    }
+
+    /// 分支 4：accountId 非空但不匹配任何账号 ⇒ 返回 nil（不因残留 id 崩）。
+    func testGetAccountReturnsNilWhenStoredIDDoesNotMatch() async throws {
+        try await withScrubbedAccountKeys {
+            AccountManager.shared.accounts = [self.makeOffline()]
+            AccountManager.shared.accountId = UUID()
+
+            let result = AccountManager.shared.getAccount()
+            XCTAssertNil(result, "accountId 无匹配时必须返回 nil")
+        }
     }
 }

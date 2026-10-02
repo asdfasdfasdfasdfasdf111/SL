@@ -95,6 +95,12 @@ public actor NetManager {
         // 另一条逃生路径「找不到记录 → continue」也不成立：记录 id 为 UUID 且各批次互斥，
         // 本记录的移除点只有本方法自己的 removeAll（downloadAll 的收尾只移除自己 pending 里的 id）。
         if record.state == .failed {
+            // 2026-10-02：结构化失败类别优先——「所有下载源均不可用」抛
+            // `noAvailableSource`（使 Core/Download 适配层归类 `.sourceUnavailable` 可达），
+            // 其余一律保底 `fileFailed`（文案即 failReason，用户可见）。
+            if record.failureKind == .noAvailableSource {
+                throw NetDownloadError.noAvailableSource(record.file.destination.lastPathComponent)
+            }
             throw NetDownloadError.fileFailed(record.failReason)
         }
         await MainActor.run { progress?(1.0) }

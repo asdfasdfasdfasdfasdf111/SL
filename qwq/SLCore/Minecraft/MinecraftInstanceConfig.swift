@@ -23,7 +23,9 @@
 //
 //  ── 兼容性红线 ─────────────────────────────────────────────
 //  `.SL.json` 是**用户磁盘上的既有数据**，字段只能加不能改语义。
-//  例如 `additionalLibraries` 目前没有任何读取方，但仍然保留着（见该属性的注释）。
+//  已处置（2026-10-02）：原 `additionalLibraries` 字段（零读取方、无接线能力）随
+//  注释标注问题清理删除——解码侧 SwiftyJSON 对未知键天然跳过，旧 `.SL.json` 里
+//  若残留该键会被忽略，写回时不再写出，行为与删除前（从未被读取）完全一致。
 //
 
 import Foundation
@@ -76,15 +78,6 @@ extension MinecraftInstance {
 ///
 /// 字段读写的非对称、以及 `javaURLString` 沿用旧键名这两点见文件头。
 public struct MinecraftConfig: Codable {
-    /// 死代码标注：全库无引用，待清理（勿删，保留以兼容既有 .SL.json 字段）。
-    ///
-    /// 现状：只有写入方——本类型的 CodingKeys 与 `init(_ json:)` 自编解码，读取方为零，
-    /// 即外部配置实际无法追加支持库，功能未接线。
-    ///
-    /// 标注形式说明：该属性在本文件内仍有活引用（解码赋值处），改为
-    /// `@available(*, deprecated, message:)` 会在该处引入一条弃用告警，且「已弃用」与
-    /// 其真实状态（有写入、无读取）不符，故以本注释作为等价标注。
-    public var additionalLibraries: Set<String> = []
     /// 本实例要用的 Java 可执行文件。**空串（即 `nil`）表示「没设置，请自动选」**。
     ///
     /// 对外是 `URL!`、对内存字符串：`Codable` 直接编解码可选 URL 的缺省语义不好控制，
@@ -124,7 +117,6 @@ public struct MinecraftConfig: Codable {
     /// 持久化键名。注意 `javaURLString` 映射成 `"javaURL"`（历史键名）——
     /// 改这里会让已有 `.SL.json` 的 Java 设置读不出来。
     enum CodingKeys: String, CodingKey {
-        case additionalLibraries
         case javaURLString = "javaURL"
         case skipResourcesCheck
         case maxMemory
@@ -141,7 +133,6 @@ public struct MinecraftConfig: Codable {
     /// - `javaURLString` 用 `json["javaURL"].stringValue`：字段缺失时得到空串，
     ///   正好等于「未设置」，所以不需要额外的 nil 分支。
     public init(_ json: JSON) {
-        self.additionalLibraries = .init(json["additionalLibraries"].array?.map { $0.stringValue } ?? [])
         self.javaURLString = json["javaURL"].stringValue // 旧版本字段
         self.skipResourcesCheck = json["skipResourcesCheck"].boolValue
         self.maxMemory = json["maxMemory"].int32 ?? 4096

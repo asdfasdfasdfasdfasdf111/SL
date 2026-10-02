@@ -40,14 +40,24 @@ enum MinecraftLoaderKind: String, Sendable, Hashable, CaseIterable {
     /// 由清单文本判定加载器。
     ///
     /// 判定顺序与关键字与 `MinecraftInstance.getClientBrand(_:)` 完全一致
-    /// （neoforged → fabric → forge → vanilla）。该方法**无法识别 quilt**，
-    /// 因此文件扫描路径不会产出 `.quilt`；该分支只可能来自 `ClientBrand` 转换。
+    /// （neoforged → quilt → fabric → forge → vanilla）。
+    ///
+    /// quilt 说明（2026-10-02 补全）：quilt 安装的清单文本里**没有** `quilt` 字样
+    /// （加载器本体在 `libraries` 的 `org.quiltmc:quilt-loader:<版本>` 依赖里），
+    /// 故旧实现无法识别 quilt、文件扫描路径永远不产出 `.quilt`。现按与
+    /// `VersionUtils` 相同的判据补上 `org.quiltmc:quilt-loader` 子串检测：
+    /// 该依赖名只在 quilt 版本清单中出现，不会与 fabric/forge 误撞
+    /// （fabric 用 `net.fabricmc:fabric-loader`，forge 用 `net.minecraftforge`）。
+    /// 判定顺序放在 `fabric` 之前：quilt 清单同样含 `fabric` 相关字样（其 api 依赖
+    /// quilted-fabric-api），先判 fabric 会把 quilt 误判成 fabric。
     ///
     /// `nonisolated`：纯字符串判定，无任何共享状态，且调用方
     /// `DirectoryScanningMinecraftRepository.scan` 明确在后台任务里跑（见该文件注释）。
     nonisolated init(manifestText: String) {
         if manifestText.contains("neoforged") {
             self = .neoforge
+        } else if manifestText.contains("org.quiltmc:quilt-loader") {
+            self = .quilt
         } else if manifestText.contains("fabric") {
             self = .fabric
         } else if manifestText.contains("forge") {

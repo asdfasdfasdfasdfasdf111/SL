@@ -6,8 +6,9 @@
 //  三者均为纯值类型，是 UI 由 `LaunchState` 派生观感状态的依据，
 //  核心风险在 Equatable 语义（同状态不同载荷需判不等）与面向用户的中文错误描述。
 //
-//  未覆盖：`LaunchService` / `LaunchArgumentBuilder` / `GameProcessController` 均为纯协议，
-//  工程内尚无实现，缺少注入点，见本文件末尾说明与 TESTING.md。
+//  协议族（`LaunchService` / `LaunchArgumentBuilder` / `GameProcessController`）为纯协议、
+//  无默认实现——它们的编排器 `DefaultLaunchPreflight` 已由 `LaunchPreflightTests`
+//  覆盖（见本文件末尾说明的更新与 TESTING.md）。
 //
 
 import XCTest
@@ -167,22 +168,25 @@ final class LaunchStateTests: XCTestCase {
     }
 }
 
-// MARK: - 未覆盖项说明
+// MARK: - 未覆盖项说明（2026-10-02 更新）
 
 /*
- 以下类型本轮未写用例，原因是缺少可注入的实现或注入点（不改源码，仅记录建议）：
+ 以下类型当前未写用例，原因是缺少可注入的实现或注入点。状态逐条更新如下：
 
- 1. LaunchService / GameProcessController / LaunchArgumentBuilder：均为纯协议，
+ 1. ✅ 已落地（2026-10-02）：`DefaultLaunchPreflight` 编排器补了
+    `LaunchPreflightTests`——skipResourceCheck 短路、四段调用顺序
+    （client → libraries → assets → natives）、进度区间映射（0~0.5 / 0.5~1）、
+    抛错中断链路，均已有断言（原建议第 2 条已执行）。
+
+ 2. LaunchService / GameProcessController / LaunchArgumentBuilder：均为纯协议，
     工程内没有默认实现，也没有可替换的构造入口，无法在不新增生产代码的前提下断言行为。
     建议：落地 `DefaultLaunchService` 时把上述三者作为构造参数注入，
     届时可用 fake 断言「参数顺序 / 进程拉起 / 状态迁移」。
 
- 2. DefaultLaunchPreflight：已有可注入的四个校验器（ClientFileVerifier 等），
-    具备可测性，但本轮任务未要求覆盖；建议后续补一份
-    `LaunchPreflightTests`，断言 skipResourceCheck 短路、四段调用顺序与进度区间映射（0~0.5 / 0.5~1）。
-
- 3. GameSessionStore / InMemoryGameSessionStore：有默认实现，但 `register` 需要
-    `ManagedProcess`，而 `ManagedProcess` 强依赖真实 `Process` 实例（无协议抽象），
-    缺少注入点。建议：把 `ManagedProcess` 抽象为协议（如 `GameProcess`），
-    或在测试中以 `/bin/sleep` 作为受控进程验证 register → observe → terminate 链路。
+ 3. GameSessionStore / InMemoryGameSessionStore：有默认实现（`GameSessionStoreTests`
+    已覆盖其状态语义），但 `register` 需要 `ManagedProcess`，而 `ManagedProcess`
+    强依赖真实 `Process` 实例（无协议抽象），缺少注入点。建议：把 `ManagedProcess`
+    抽象为协议（如 `GameProcess`），或在测试中以 `/bin/sleep` 作为受控进程验证
+    register → observe → terminate 链路。接线前置条件（T2）见
+    `InMemoryGameSessionStore` 的「接线状态」注释。
  */

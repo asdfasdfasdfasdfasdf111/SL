@@ -102,6 +102,14 @@ extension NetManager {
         var failCount = 0
         /// 最后一次失败的原因文本，**会被直接展示给用户**，因此是面向用户的文案。
         var failReason = ""
+        /// 失败类别（结构化，供抛出时精确归类；nil = 无类别，走通用文案）。
+        /// 2026-10-02：新增 `noAvailableSource` 类别——此前「所有下载源均不可用」
+        /// 只能靠 failReason 字符串匹配区分（NetDownloader 按文本判断），
+        /// 且 NetDownloadTypes.noAvailableSource 处于「声明了但永不构造」的预留态；
+        /// 现在由 pickSource 置位本字段，NetDownloader 在抛出时据此构造
+        /// `NetDownloadError.noAvailableSource`，让 Core/Download 适配层的
+        /// `.sourceUnavailable` 归类真正可达。
+        var failureKind: NetDownloadFailureKind? = nil
         /// 进度回调（0~1）。仅在有新进展时调用；下载任务不在主线程上跑，
         /// 实现里若要碰 UI 必须自己切回主线程。
         var progressHandler: ((Double) -> Void)?

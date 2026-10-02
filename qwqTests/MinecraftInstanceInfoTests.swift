@@ -11,10 +11,11 @@
 //
 //  三条**注释点名**的性质，本文件逐条钉住：
 //  1. `MinecraftLoaderKind(manifestText:)` 的判定顺序是
-//     **neoforged → fabric → forge → vanilla** —— `neoforged` 必须排在 `forge` 之前，
+//     **neoforged → quilt → fabric → forge → vanilla** —— `neoforged` 必须排在 `forge` 之前，
 //     否则含 "neoforged" 的清单会被先命中 `contains("forge")` 而误判；
-//  2. 该方法**无法识别 quilt**（注释原话：「因此文件扫描路径不会产出 `.quilt`；
-//     该分支只可能来自 `ClientBrand` 转换」）；
+//     `quilt` 检测排在 `fabric` 之前（quilt 清单含 quilted-fabric-api 字样）；
+//  2. 旧实现**无法识别 quilt**（注释原话），2026-10-02 起按 `org.quiltmc:quilt-loader`
+//     依赖名补全识别（见 testQuiltIsDetectableFromManifestText）；
 //  3. `MinecraftVersionKind(rawVersionType:)` 对未识别取值**回落 `.release`**
 //     —— 与 `MinecraftVersionInfo.kind` 刻意用可失败构造的做法相反（见另一测试文件）。
 //
@@ -41,11 +42,15 @@ final class MinecraftInstanceInfoTests: XCTestCase {
         XCTAssertEqual(MinecraftLoaderKind(manifestText: "neoforged"), .neoforge)
     }
 
-    /// ⚠️ **注释点名的局限**：本方法**认不出 quilt** ⇒ 含 "quilt" 的清单回落 `.vanilla`
-    /// （`.quilt` 只可能来自 `ClientBrand` 转换路径）
-    func testQuiltIsNotDetectableFromManifestText() async {
-        XCTAssertEqual(MinecraftLoaderKind(manifestText: "org.quiltmc.loader.impl.QuiltLoader"), .vanilla,
-                       "已知局限：清单文本判定不识别 quilt")
+    /// quilt 识别（2026-10-02 补全）：quilt 安装的清单文本里没有 "quilt" 字样，
+    /// 但必含 `org.quiltmc:quilt-loader` 依赖（在 libraries 段）⇒ 现在可识别。
+    /// 判定顺序：quilt 检测必须在 fabric 之前（quilt 清单含 quilted-fabric-api 字样）。
+    func testQuiltIsDetectableFromManifestText() async {
+        XCTAssertEqual(MinecraftLoaderKind(manifestText: "org.quiltmc:quilt-loader:0.26.1"), .quilt,
+                       "quilt 依赖名出现在清单里必须识别为 quilt")
+        // 顺序：含 fabric 相关字样的 quilt 清单必须先命中 quilt，不能被 fabric 抢先
+        XCTAssertEqual(MinecraftLoaderKind(manifestText: "org.quiltmc:quilt-loader:0.26.1\norg.quiltmc:quilted-fabric-api:9.0"), .quilt,
+                       "quilt 检测必须排在 fabric 之前")
     }
 
     /// 判定是**大小写敏感**的 `contains` ⇒ 只写 "Fabric"（首字母大写）认不出来

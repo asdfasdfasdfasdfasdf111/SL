@@ -25,16 +25,23 @@ import ZIPFoundation
 extension MinecraftInstance {
     /// 按清单原文里的关键字猜客户端品牌。
     ///
-    /// 判定顺序**不能调换**：`neoforged` → `fabric` → `forge`。原因是
+    /// 判定顺序**不能调换**：`neoforged` → `quilt` → `fabric` → `forge`。原因是
     /// 这几家的清单文本会互相包含 —— NeoForge 的清单里同样出现 `forge` 字样，
     /// 先判 `forge` 会把 NeoForge 误判成 Forge。同理 Fabric 与 Forge 混装时也算 Fabric。
     ///
+    /// quilt（2026-10-02 补全）：quilt 安装的清单文本里没有 `quilt` 字样，但必含
+    /// `org.quiltmc:quilt-loader` 依赖名；该检测放在 `fabric` 之前——quilt 清单同样
+    /// 含 `fabric` 相关字样（quilted-fabric-api），先判 fabric 会把它误判成 Fabric。
+    /// 算法与 `MinecraftLoaderKind(manifestText:)` 保持一致（见 MinecraftInstanceInfo）。
+    ///
     /// 判定依据是**整个清单文件的文本**（不是解析后的结构），所以是「尽力而为」的启发式：
-    /// 只要文本里出现对应子串就算。返回 `.vanilla` 代表「三个关键字都没有」，
+    /// 只要文本里出现对应子串就算。返回 `.vanilla` 代表「上述关键字都没有」，
     /// 而不是「确认是原版」。
     private static func getClientBrand(_ manifestString: String) -> ClientBrand {
         if manifestString.contains("neoforged") {
             return .neoforge
+        } else if manifestString.contains("org.quiltmc:quilt-loader") {
+            return .quilt
         } else if manifestString.contains("fabric") {
             return .fabric
         } else if manifestString.contains("forge") {

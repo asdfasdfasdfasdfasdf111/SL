@@ -60,6 +60,10 @@ final class ClientManifestRuleTests: XCTestCase {
     private func disallow(_ os: String) -> String {
         #"[ { "action": "disallow", "os": { "name": "\#(os)" } } ]"#
     }
+    /// 造一条带 os.name + os.arch 的 allow 规则（arch 匹配的测试入口）
+    private func allowOS(named name: String, arch: String) -> String {
+        #"[ { "action": "allow", "os": { "name": "\#(name)", "arch": "\#(arch)" } } ]"#
+    }
 
     // MARK: - 空规则
 
@@ -148,6 +152,42 @@ final class ClientManifestRuleTests: XCTestCase {
         let kept = try survivingLibraries([library("a:custom-res:1", rules: rules)])
         XCTAssertEqual(kept, ["a:custom-res:1"],
                        "Features.match() 只对 `true` 返回 false，故 `false` 视为条件命中")
+    }
+
+    // MARK: - arch 匹配（2026-10-02 实现后补测）
+
+    /// 清单 arch 与本机架构一致 ⇒ allow 命中、库保留。
+    /// 本机架构用 `Architecture.system`（进程视角：Rosetta 下为 .x64，与 exec 语义一致）。
+    func testAllowMatchingArchIsKept() async throws {
+        let current = Architecture.system
+        let archString: String
+        switch current {
+        case .arm64: archString = "arm64"
+        case .x64: archString = "x86_64"
+        default: archString = "x86_64" // 兜底：让用例在 fatFile/unknown 等异常态仍可跑
+        }
+        let kept = try survivingLibraries([library("a:match-arch:1", rules: allowOS(named: "osx", arch: archString))])
+        XCTAssertEqual(kept, ["a:match-arch:1"], "arch 与本机一致的 allow 必须命中")
+    }
+
+    /// 清单 arch 与本机架构**不一致** ⇒ allow 不命中、库被丢弃。
+    /// 取一个肯定与当前架构不同的书写形态（arm64 进程用 x86，x64 进程用 arm64）。
+    func testAllowNonMatchingArchIsDropped() async throws {
+        let foreign: String
+        switch Architecture.system {
+        case .arm64: foreign = "x86"
+        case .x64: foreign = "arm64"
+        default: foreign = "x86"
+        }
+        let kept = try survivingLibraries([library("a:foreign-arch:1", rules: allowOS(named: "osx", arch: foreign))])
+        XCTAssertEqual(kept, [], "arch 与本机不一致的 allow 必须丢弃")
+    }
+
+    /// 从未见过的 arch 书写形态（如 `arm32-v7a`）⇒ `Architecture.fromString` 返回
+    /// `.unknown` ⇒ 视为通用、不因此否决（与 os.name == "unknown" 的语义一致）。
+    func testAllowUnknownArchIsKept() async throws {
+        let kept = try survivingLibraries([library("a:unknown-arch:1", rules: allowOS(named: "osx", arch: "arm32-v7a"))])
+        XCTAssertEqual(kept, ["a:unknown-arch:1"], "未识别的 arch 形态应视为通用（.unknown → true）")
     }
 
     // MARK: - 多条库混合（确认筛选逐条独立、且保持顺序）
