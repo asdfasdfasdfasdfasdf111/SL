@@ -27,10 +27,6 @@ public final class NetDownloaderDownloadEngine: DownloadEngine, @unchecked Senda
         var cancelRequested: Bool
     }
 
-    /// 旧引擎只上报比例值，不上报字节数。总大小未知时用该固定分母承载比例，
-    /// 保证 `DownloadProgress.fraction` 与旧链路的 0…1 进度口径一致。
-    private static let syntheticTotalBytes: Int64 = 1000
-
     /// 终态回放缓存上限。散列资源可达数万项，若保留全部已终结任务会导致台账无界增长。
     private static let terminalHistoryLimit = 256
 
@@ -228,16 +224,18 @@ public final class NetDownloaderDownloadEngine: DownloadEngine, @unchecked Senda
 
     // MARK: - 进度与错误转换
 
-    /// 旧引擎只回调 0…1 比例。已知总大小时换算为字节；未知时以固定分母承载比例，
-    /// 保证 `DownloadProgress.fraction` 不退化。速度旧引擎按全局统计，不做每文件拆分，故置 0。
+    /// 旧引擎只回调 0…1 比例。已知总大小时换算为字节；未知时把比例放到
+    /// `fractionOverride` 轨道（不再用假分母伪造字节，见 DownloadProgress 注释）。
+    /// 速度旧引擎按全局统计，不做每文件拆分，故置 0。
     private static func progress(fraction: Double, expectedSize: Int64?) -> DownloadProgress {
         let clamped = min(1, max(0, fraction))
         if let size = expectedSize, size > 0 {
             return DownloadProgress(bytesWritten: Int64(clamped * Double(size)), totalBytes: size)
         }
         return DownloadProgress(
-            bytesWritten: Int64(clamped * Double(syntheticTotalBytes)),
-            totalBytes: syntheticTotalBytes
+            bytesWritten: 0,
+            totalBytes: -1,
+            fractionOverride: clamped
         )
     }
 
@@ -254,8 +252,10 @@ public final class NetDownloaderDownloadEngine: DownloadEngine, @unchecked Senda
     }
 
     /// `NetDownloadError` 与字符串失败原因 → `DownloadError`。
-    /// 旧实现把部分错误（HTTP 状态码、慢速、大小不符）编码进描述文本，这里按文本归类，
-    /// 归类不出来的统一落入 `unknown`，保留原始描述不丢信息。
+    /// 2026-10-02：失败类别已由源头结构化（NetDownloadError 精确 case / FileRecord.failureKind），
+    /// 此处的 contains 中文文案反猜全部删除。剩余字符串路径 `unknown` 仅收容
+    /// 真正的未知失败（fileExists / fileFailed / mergeFailed 与未包装的本地错误），
+    /// 原描述原样保留，不丢信息。
     private static func map(_ error: Error) -> DownloadError {
         if let downloadError = error as? DownloadError { return downloadError }
 
@@ -267,23 +267,20 @@ public final class NetDownloaderDownloadEngine: DownloadEngine, @unchecked Senda
                 return .rangeNotSupported
             case .slowSpeed:
                 return .timeout
-            default:
-                break
+            case .checksumMismatch:
+                return .checksumMismatch
+            case .diskFull:
+                return .diskFull
+            case .httpStatus(let code):
+                return .httpStatus(code)
+            case .timeout:
+                return .timeout
+            case .fileExists, .fileFailed, .mergeFailed:
+                break   // 落到下方 unknown 路径
             }
         }
 
         let description = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-        if let code = httpStatusCode(in: description) { return .httpStatus(code) }
-        if description.contains("哈希校验失败") { return .checksumMismatch }
-        if description.contains("磁盘空间不足") { return .diskFull }
-        if description.contains("超时") || description.contains("速度过慢") { return .timeout }
         return .unknown(description)
-    }
-
-    /// 从「远程服务器返回了 404」一类的描述中提取状态码。
-    private static func httpStatusCode(in description: String) -> Int? {
-        guard let range = description.range(of: "远程服务器返回了 ") else { return nil }
-        let digits = description[range.upperBound...].prefix { $0.isNumber }
-        return digits.isEmpty ? nil : Int(digits)
     }
 }

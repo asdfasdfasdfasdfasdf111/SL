@@ -90,16 +90,16 @@ public actor NetManager {
         records.removeAll { $0.id == record.id }
         // 已确认的**不可达**分支，保留作防御（不改行为）。
         // 依据：waitForCompletion 在 allTerminal 成立时，只要任一记录 state == .failed 就必抛
-        // NetDownloadError.fileFailed（本文件 :154-160）；而 FileRecord.isTerminal 只包含 .done / .failed
+        // NetDownloadError（本文件 waitForCompletion）；而 FileRecord.isTerminal 只包含 .done / .failed
         // （NetDownloadState.swift:75），所以它正常返回 ⇒ 本记录 state == .done。
         // 另一条逃生路径「找不到记录 → continue」也不成立：记录 id 为 UUID 且各批次互斥，
         // 本记录的移除点只有本方法自己的 removeAll（downloadAll 的收尾只移除自己 pending 里的 id）。
         if record.state == .failed {
-            // 2026-10-02：结构化失败类别优先——「所有下载源均不可用」抛
-            // `noAvailableSource`（使 Core/Download 适配层归类 `.sourceUnavailable` 可达），
-            // 其余一律保底 `fileFailed`（文案即 failReason，用户可见）。
-            if record.failureKind == .noAvailableSource {
-                throw NetDownloadError.noAvailableSource(record.file.destination.lastPathComponent)
+            // 2026-10-02：结构化失败类别优先——按 failureKind 抛精确 case
+            // （`noAvailableSource` 使适配层归类 `.sourceUnavailable` 可达，其余同理）；
+            // 无类别才保底 `fileFailed`（文案即 failReason，用户可见）。
+            if let kind = record.failureKind {
+                throw Self.structuredError(kind: kind, reason: record.failReason)
             }
             throw NetDownloadError.fileFailed(record.failReason)
         }
@@ -163,23 +163,53 @@ public actor NetManager {
         let deadline = Date().addingTimeInterval(1800)
         while true {
             var failedReason: String?
+            var failedKind: NetDownloadFailureKind?
             var allTerminal = true
             for id in ids {
                 guard let r = find(id) else { continue }
                 if !r.isTerminal { allTerminal = false }
-                if r.state == .failed, failedReason == nil { failedReason = r.failReason }
+                if r.state == .failed, failedReason == nil {
+                    failedReason = r.failReason
+                    failedKind = r.failureKind
+                }
             }
             if allTerminal {
+                if let failedReason, let failedKind {
+                    throw Self.structuredError(kind: failedKind, reason: failedReason)
+                }
                 if let failedReason {
                     throw NetDownloadError.fileFailed(failedReason)
                 }
                 return
             }
             if Date() > deadline {
-                throw NetDownloadError.fileFailed("下载等待超时（超过 1800 秒仍未结束）")
+                // 2026-10-02：结构化类别——整体等待超时不再以 fileFailed 文案裸抛。
+                throw NetDownloadError.timeout("下载等待超时（超过 1800 秒仍未结束）")
             }
             try await Task.sleep(for: .milliseconds(100))
             try Task.checkCancellation()
+        }
+    }
+
+    // MARK: - 结构化失败类别 → 精确错误（2026-10-02）
+
+    /// 按 `FileRecord.failureKind` 把「用户可见的 failReason 文案」包装成精确的
+    /// `NetDownloadError` case，替代此前一律 `.fileFailed(文案)` 的做法——
+    /// 类别在失败落地为文案的同一刻已置位（NetSliceFetcher / NetMerger），
+    /// 这里只做类别 → case 的映射，不做文案反猜。
+    private static func structuredError(kind: NetDownloadFailureKind, reason: String) -> NetDownloadError {
+        switch kind {
+        case .noAvailableSource:
+            return .noAvailableSource(reason)
+        case .checksumMismatch:
+            return .checksumMismatch(reason)
+        case .diskFull:
+            return .diskFull(reason)
+        case .httpStatus(let code):
+            // 状态码为主信息，reason（原始文案）仅作补充；httpStatus 的 errorDescription 用 code。
+            return .httpStatus(code)
+        case .timeout:
+            return .timeout(reason)
         }
     }
 }

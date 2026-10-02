@@ -4,7 +4,10 @@
 //
 //  覆盖 `Core/Download/DownloadProgress.swift` 与 `DownloadState.swift`。
 //  这两个类型是纯值类型，核心风险在派生属性的边界处理：
-//  totalBytes = 0 / -1（旧实现的「大小未知」语义）不得崩溃或产生 NaN。
+//  totalBytes = 0 / -1（旧实现的「大小未知」语义）不得崩溃或产生 NaN；
+//  2026-10-02 起「大小未知 + 旧引擎直传比例」走 `fractionOverride` 轨道
+//  （见 testFractionFallsBackToOverrideWhenTotalBytesIsUnknown），
+//  字节字段不再因假分母 1000 而失真。
 //
 
 import XCTest
@@ -32,6 +35,38 @@ final class DownloadStateTests: XCTestCase {
         XCTAssertEqual(DownloadProgress(bytesWritten: 10, totalBytes: -1).fraction, 0, accuracy: 1e-12)
         XCTAssertFalse(DownloadProgress(bytesWritten: 10, totalBytes: 0).fraction.isNaN)
         XCTAssertFalse(DownloadProgress(bytesWritten: 10, totalBytes: -1).fraction.isNaN)
+    }
+
+    /// 大小未知 + 比例直通（2026-10-02）：fractionOverride 承载旧引擎直传的 0…1 比例，
+    /// fraction 直接回落它 —— 字节字段保持诚实（0/-1，不伪造假分母），比例不退化。
+    func testFractionFallsBackToOverrideWhenTotalBytesIsUnknown() async {
+        // 未知大小且给比例 → fraction 取比例
+        XCTAssertEqual(
+            DownloadProgress(bytesWritten: 0, totalBytes: -1, fractionOverride: 0.5).fraction,
+            0.5, accuracy: 1e-12
+        )
+        // 越界比例仍钳制
+        XCTAssertEqual(
+            DownloadProgress(bytesWritten: 0, totalBytes: -1, fractionOverride: 1.5).fraction,
+            1.0, accuracy: 1e-12
+        )
+        XCTAssertEqual(
+            DownloadProgress(bytesWritten: 0, totalBytes: -1, fractionOverride: -0.2).fraction,
+            0.0, accuracy: 1e-12
+        )
+        // 已知大小时比例轨道无意义：fraction 由字节推导（fractionOverride 被忽略）
+        XCTAssertEqual(
+            DownloadProgress(bytesWritten: 25, totalBytes: 100, fractionOverride: 0.9).fraction,
+            0.25, accuracy: 1e-12,
+            "已知大小必须走字节推导，不得被 fractionOverride 覆盖"
+        )
+        // 大小未知且无比例（旧语义）→ 0，等价于之前的 testFractionIsZeroWhenTotalBytesIsUnknown
+        XCTAssertEqual(DownloadProgress(bytesWritten: 10, totalBytes: -1).fraction, 0, accuracy: 1e-12)
+        // Equatable 成员同步：默认参数 fractionOverride = nil，既有构造点编译与相等语义不变
+        XCTAssertEqual(
+            DownloadProgress(bytesWritten: 10, totalBytes: -1),
+            DownloadProgress(bytesWritten: 10, totalBytes: -1, fractionOverride: nil)
+        )
     }
 
     // MARK: - DownloadProgress.estimatedRemaining

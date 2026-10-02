@@ -36,6 +36,16 @@ public enum NetDownloadError: LocalizedError {
     case noAvailableSource(String)
     case sourceNoResumeSupport
     case slowSpeed
+    // 2026-10-02：以下四个 case 是「结构化错误类别」的落地——替代此前
+    // Core/Download 适配层靠 failReason **中文文案 contains 反猜**（哈希校验失败 /
+    // 磁盘空间不足 / 远程服务器返回了 N / 超时）的分类方式。抛点在源头直接以
+    // 精确 case 抛出（NetSliceFetcher / NetMerger / NetDownloader），
+    // FileRecord.failureKind 随之置位，waitForCompletion / download 按类别抛出，
+    // 适配层 switch 直达 DownloadError，不再读文案。
+    case checksumMismatch(String)
+    case diskFull(String)
+    case httpStatus(Int)
+    case timeout(String)
     case fileFailed(String)
     case mergeFailed(String)
 
@@ -49,6 +59,14 @@ public enum NetDownloadError: LocalizedError {
             return "下载源不支持断点续传。"
         case .slowSpeed:
             return "由于速度过慢断开链接。"
+        case .checksumMismatch(let reason):
+            return "文件校验失败：\(reason)"
+        case .diskFull(let reason):
+            return "磁盘空间不足：\(reason)"
+        case .httpStatus(let code):
+            return "远程服务器返回了 \(code)。"
+        case .timeout(let reason):
+            return "下载超时：\(reason)"
         case .fileFailed(let reason):
             return "下载失败：\(reason)"
         case .mergeFailed(let reason):
@@ -58,9 +76,19 @@ public enum NetDownloadError: LocalizedError {
 }
 
 /// 下载失败的结构化类别（替代「靠 failReason 文本匹配」）。
-/// 2026-10-02 引入首个成员 `noAvailableSource`；后续如需区分其它终端失败
-/// （校验失败、落盘失败等）在此扩充，并同步 FileRecord 的置位点与该枚举的抛出点。
+/// 2026-10-02：随 NetDownloadError 精确 case 同步扩到五类，每个成员对应一个
+/// `NetDownloadError` case；`FileRecord.failureKind` 在失败落地处置位，
+/// waitForCompletion / download 按类别抛精确错误，适配层 switch 直达
+/// `DownloadError`，不再读 failReason 中文文案（见 NetDownloaderDownloadEngine.map 注释）。
 public enum NetDownloadFailureKind: Sendable {
     /// 全部候选下载源均不可用（对应 `NetDownloadError.noAvailableSource`）。
     case noAvailableSource
+    /// 大小或哈希校验不通过（对应 `NetDownloadError.checksumMismatch`）。
+    case checksumMismatch
+    /// 磁盘空间不足（对应 `NetDownloadError.diskFull`）。
+    case diskFull
+    /// 服务器返回非 2xx 状态码（对应 `NetDownloadError.httpStatus`）。
+    case httpStatus(Int)
+    /// 连接或分片传输超时 / 整体等待超时（对应 `NetDownloadError.timeout`）。
+    case timeout
 }

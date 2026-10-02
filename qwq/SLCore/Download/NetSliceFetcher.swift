@@ -97,7 +97,9 @@ extension NetManager {
             throw NetDownloadError.fileFailed("无效的响应")
         }
         guard (200..<300).contains(http.statusCode) else {
-            throw NetDownloadError.fileFailed("远程服务器返回了 \(http.statusCode)")
+            // 2026-10-02：结构化类别——此前 `fileFailed("远程服务器返回了 \(code)")`
+            // 靠适配层 contains 反猜状态码，现直接以 `.httpStatus(code)` 抛出。
+            throw NetDownloadError.httpStatus(http.statusCode)
         }
 
         // 非首线程却返回 200（服务器忽略 Range 返回全量）→ 该源不支持断点续传（PCL2 1080-1088 行）
@@ -284,6 +286,10 @@ extension NetManager {
         if record.isAllSourcesFailed(config.maxFailPerSource) {
             record.state = .failed
             record.failReason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            // 2026-10-02：失败类别在「错误落地为 failReason 文案」的这一刻一并结构化，
+            // 避免类别随文案中转丢失——NetDownloader 抛出时据此构造精确 case，
+            // 适配层不再靠 contains 反猜（见 NetDownloaderDownloadEngine.map 注释）。
+            record.failureKind = Self.failureKind(of: error) ?? record.failureKind
             cleanupTemps(record)
         }
     }
@@ -295,10 +301,11 @@ extension NetManager {
         record.fileSize = size
         if let checker = record.file.checker {
             if checker.minSize > 0 && size < checker.minSize {
-                throw NetDownloadError.fileFailed("文件大小不足，获取结果为 \(size) B，要求至少为 \(checker.minSize) B")
+                // 2026-10-02：结构化类别——大小校验失败走 `.checksumMismatch`。
+                throw NetDownloadError.checksumMismatch("文件大小不足，获取结果为 \(size) B，要求至少为 \(checker.minSize) B")
             }
             if checker.actualSize > 0 && size != checker.actualSize {
-                throw NetDownloadError.fileFailed("文件大小不一致，获取结果为 \(size) B，要求必须为 \(checker.actualSize) B")
+                throw NetDownloadError.checksumMismatch("文件大小不一致，获取结果为 \(size) B，要求必须为 \(checker.actualSize) B")
             }
         }
         // >50MB 磁盘空间预检（PCL2 1066-1077 行）
@@ -306,7 +313,8 @@ extension NetManager {
             if let values = try? record.file.destination.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
                let capacity = values.volumeAvailableCapacityForImportantUsage,
                capacity < size + 5 * 1024 * 1024 {
-                throw NetDownloadError.fileFailed("磁盘空间不足，需要至少 \(size + 5 * 1024 * 1024) B，当前仅剩余 \(capacity) B")
+                // 2026-10-02：结构化类别——磁盘不足走 `.diskFull`。
+                throw NetDownloadError.diskFull("需要至少 \(size + 5 * 1024 * 1024) B，当前仅剩余 \(capacity) B")
             }
         }
     }

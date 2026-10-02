@@ -52,6 +52,27 @@ extension NetManager {
         }
     }
 
+    /// 从抛出的错误反推结构化失败类别（2026-10-02）。
+    /// 用于 `sliceFailed` 在错误落地为 `failReason` 文案的同一刻置位 `FileRecord.failureKind`，
+    /// 使精确类别穿过「错误 → 文案 → 再抛出」的中转而不丢失（见 NetDownloaderDownloadEngine.map 注释）。
+    static func failureKind(of error: Error) -> NetDownloadFailureKind? {
+        guard let netError = error as? NetDownloadError else { return nil }
+        switch netError {
+        case .checksumMismatch:
+            return .checksumMismatch
+        case .diskFull:
+            return .diskFull
+        case .httpStatus(let code):
+            return .httpStatus(code)
+        case .timeout:
+            return .timeout
+        case .noAvailableSource:
+            return .noAvailableSource
+        default:
+            return nil
+        }
+    }
+
     func sourceFailCount(fileID: UUID, sourceIndex: Int) -> Int {
         find(fileID)?.sourceFails[sourceIndex] ?? 0
     }

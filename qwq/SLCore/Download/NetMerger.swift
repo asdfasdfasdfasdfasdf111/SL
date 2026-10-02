@@ -41,6 +41,9 @@ extension NetManager {
         } catch {
             record.state = .failed
             record.failReason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            // 2026-10-02：合并/校验失败同样在文案落地时置位结构化类别
+            // （哈希不符、磁盘不足、HTTP 状态等），使类别穿过「文案中转」不丢失。
+            record.failureKind = NetManager.failureKind(of: error) ?? record.failureKind
             cleanupTemps(record)
         }
     }
@@ -118,14 +121,17 @@ extension NetManager {
            let actualSize = (attrs[.size] as? NSNumber)?.int64Value,
            actualSize != record.fileSize {
             try? FileManager.default.removeItem(at: destination)
-            throw NetDownloadError.mergeFailed("文件大小不符，期望 \(record.fileSize) B，实际为 \(actualSize) B")
+            // 2026-10-02：结构化类别——大小不符归 checksumMismatch。
+            throw NetDownloadError.checksumMismatch("文件大小不符，期望 \(record.fileSize) B，实际为 \(actualSize) B")
         }
 
         // 下载后四合一校验（参照上游 PCL2 的 FileChecker.Check）
         if let checker = record.file.checker {
             if let err = checker.check(destination) {
                 try? FileManager.default.removeItem(at: destination)
-                throw NetDownloadError.fileFailed(err)
+                // 2026-10-02：结构化类别——checker 的失败（哈希/大小/JSON）统一归 checksumMismatch，
+                // 此前靠 `fileFailed(文案)` 让适配层 contains 反猜。
+                throw NetDownloadError.checksumMismatch(err)
             }
         }
     }
