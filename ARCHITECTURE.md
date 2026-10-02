@@ -139,7 +139,9 @@ init(versionCatalog: VersionCatalogService = DefaultVersionCatalogService(),
   `GameProcessController`、`GameSessionStore`、`LaunchService`
 - `LaunchCoordinator` 只做"UI 意图 → 用例 → 状态映射"
 
-遗留：`LaunchFix` 仍是"什么缺了都由我修"的上帝对象，待按四类校验拆分。
+遗留：`LaunchFix` 曾是"什么缺了都由我修"的上帝对象，按四类校验拆分已完成
+（2026-10-02 `c99c346`，perform 编排 + 四类职责私有方法，净行数 0）；`DefaultLaunchPreflight`
+编排器仍零消费，接线（把 `slLaunchInternal` 的补全换成 `LaunchPreflight.prepare`）留合并阶段。
 
 ## 八、测试与 CI
 
@@ -176,7 +178,11 @@ abort，表现为"前几个测试类通过、之后无限重启"）。详见 `qw
 
 ## 十、遗留待办
 
-1. **`LaunchFix` 上帝对象拆分**（按四类校验）
+1. **`LaunchFix` 上帝对象拆分**（按四类校验）**已做（2026-10-02 `c99c346`）**：
+   `perform` 只做编排；缺失支持库收集（McLibFix）/ 缺失资源收集（McAssetsFixList）/
+   下载 / natives 各自独立成私有方法，主资源循环与「索引刚下载后的补漏循环」同构段
+   收敛为一处，两处下载段同样收敛。净行数 0。`DefaultLaunchPreflight` 编排器仍零消费，
+   接线（把 `slLaunchInternal` 的补全调用换成 `LaunchPreflight.prepare`）留合并阶段。
 2. ~~**下载双轨收口**~~ **已决（2026-10-02）：`NetManager` 保留为最终后端**。`Core/Download` 是
    薄抽象层而非第二实现（唯一实现 `NetDownloaderDownloadEngine` 转发到 `NetManager`）；批量路径
    （`MultiFileDownloader`）保持直连 `NetManager`——批进度分子/分母在引擎边界不可观察，无法逐字复刻

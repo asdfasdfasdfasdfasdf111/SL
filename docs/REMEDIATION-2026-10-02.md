@@ -157,6 +157,18 @@ cd "/Users/apple/Downloads/Swim111Launcher_副本" && SL_DERIVED=/tmp/SL-DD-r8 .
 | 日期 | HEAD | 做了什么 |
 |---|---|---|
 | 2026-10-02 | `2d58c6a` | 本移交文档创建。环境事实按当天实测更新（xcodebuild 可用、GitHub 不可达、6 条断言失败归属）。审计报告见 `docs/SLOP-AUDIT-2026-10-02.md` |
+| 2026-10-02 | `7fec44a` | 施工移交文档 §1-6 补全（环境 / 分级修复表 / 回归纪律 / 复核） |
+| 2026-10-02 | `3fc278a` | 移交文档定稿：6 条失败修法 + P0-P4 分级表 + 验收命令 |
+| 2026-10-02 | `1c2ea0c` | P0 + P1 修复完成（见完成表前两行） |
+| 2026-10-02 | `131b515` | P2-3/4/5 三组双实现收口完成 |
+| 2026-10-02 | `53863df` | P1-3/4 死链删除 + 悬空类型清理 |
+| 2026-10-02 | `2b7fe5b` | §7 进度补充：abort 对照结论 + P2-1/P2-2 决策 |
+| 2026-10-02 | `52d50e8` | P4-1 LWJGL 3.3.3 守卫修复（removed XCTExpectFailure） |
+| 2026-10-02 | `479d148` | §7 真机冒烟路径 A/B 实测结论写入 |
+| 2026-10-02 | `a48430a` | **「都做了」批次**：P3-4 终态决策 + P3-2 基础设施归位（同批） |
+| 2026-10-02 | `4e1c95d` | B 判据 #4 弹窗骨架合并（共享 PopupCardScaffold） |
+| 2026-10-02 | `23e1380` | P3-1 Java 选择收口到 JavaResolver（真机冒烟验证） |
+| 2026-10-02 | `c99c346` | P3-3 LaunchFix 上帝对象拆分（净行数 0，全量绿，真机冒烟通过） |
 
 ---
 
@@ -170,6 +182,12 @@ cd "/Users/apple/Downloads/Swim111Launcher_副本" && SL_DERIVED=/tmp/SL-DD-r8 .
 | P1-a | `1c2ea0c` | F1-F4 四处测试断言错（AssetIndex 排序方向 / CardTranslationStore 夹具 1990→1999 / GameVersionHelper 空数组返回 -1 / ItemFilter 空查询=false）；**F5 drainPipe 真缺陷修复**（`FileHandle.read` 在 O_NONBLOCK 下 poll 报 POLLIN 却抛 EAGAIN，即便同刻 raw `read()` 能读到数据 → 改 raw read）；`verify-test.sh:105` 反引号 bug | 全量 709 绿 |
 | P2-3/4/5 | `131b515` | loader→资源名映射收口为 `ModLoader` enum 反查（删 `assetMap` 字典，`loaderTokens` 供给 SkinVersionIdentity）；`ModpackInstaller` 私有 unzip 删除 → 统一 `Util.unzip`；User-Agent 7 处硬编码 → `SharedConstants.shared.userAgent` 唯一来源 | typecheck 0 error/告警同基线；全量 709 绿 |
 | P1-3/4 | `53863df` | `ModpackDownloader` 死链（`search`→`downloadLatest`→`downloadFirst` 互调、外部零调用）+ 随之悬空的 `searchCache`/`SearchResult`/`Modpack`/`ModpackError.notFound`/`.hashMismatch` 全删，保留活路径 `versions`/`resolveFile`；删 `ThemeDefinition.swift`（全库零引用，Theme 目录只剩 README） | typecheck 0 error；全量 0 断言失败（见下方 abort 说明） |
+| P4-1 | `52d50e8` | LWJGL natives 版本守卫被硬编码作废：`ArtifactVersionMapper.swift:119` 的 natives 命名从 `lwjglPinnedVersion`（3.3.2）改为 `library.version`（3.3.3），`!= 3.3.3` 守卫恢复生效，core/natives 不再版本错配；`testArm64DoesNotDowngradeLWJGL333` 的 `XCTExpectFailure` 移除、改真实断言 | ArtifactVersionMapperTests 隔离 11/11；全量绿 |
+| P3-4 | `a48430a` 批内 | 下载双轨**终态决策**：`NetManager` 保留为最终后端（见决策表），`MultiFileDownloader.swift:88-93` 注释从「迁移状态」改写为「终态决策（2026-10-02 拍板）」；`Core/Download/Adapters/MIGRATION.md` 标题改「现状记录」+ 终态声明；ARCHITECTURE.md §十待办 2/3 改写为 RESOLVED | 打字面收口，无行为改动 |
+| B 判据 #4 | `4e1c95d` | 弹窗骨架合并：`ModInstallSelectionView` 与 `ModpackFolderPickerView` 同源复制（标题区/Divider/毛玻璃卡片/入场动画/取消按钮）→ 共享 `UI/Shell/PopupCardScaffold.swift`（泛型 header/content），两视图各减 ~65 行、差异保留（宽 420/450、确认按钮文案/宽度、单实例自动选中、NSOpenPanel） | typecheck 0 error；真实编译成功；全量 4 次运行全部 0 断言失败 |
+| P3-2 | `a48430a` | Features→App 倒置收口：`AppContext` git mv `App/`→`SLCore/`（头部注释重写：基础设施层、非 DI 容器、迁移沿革）；`ProcessPool`→`SLCore/`、`CacheManager`→`SLCore/`（git mv）；`DragDropHandler`→`App/`；`Services/` 目录删除；5 处路径注释同步更新 | typecheck 0 error；全量 709/2/0 干净运行（`/tmp/SL-DD-p32b`） |
+| P3-1 | `23e1380` | SLLaunchBridge Java 选择收口到 JavaResolver：删 6 处 `JavaManager`/`LauncherSettings` 直连（预扫描段 + 兜底段 + 错误日志引用），只经 `JavaResolverBridge` 主路径 + 缓存校验 + `findSuitableJava` 兜底 | typecheck 0 error；JavaResolver/Bridge 测试 12/12；真机冒烟（路径 B）Java 选择不变 |
+| P3-3 | `c99c346` | LaunchFix 上帝对象拆分：四类职责各抽私有方法（`collectMissingLibraries`/`collectMissingAssets`/`download`），主资源循环与索引补漏循环同构段收敛为一处，perform 变薄为编排；**净行数 0（170→170，§九纪律）**；LAUNCH_FLOW 行为不变 | typecheck 0 error；build-for-testing 成功；全量 709 测试 0 断言失败；真机冒烟（路径 B）启动补全完成 + 渲染线程 atlas 创建 |
 
 ### 已知工具链 abort（不是回归，见 TESTING.md §五）
 
@@ -200,11 +218,16 @@ cd "/Users/apple/Downloads/Swim111Launcher_副本" && SL_DERIVED=/tmp/SL-DD-r8 .
 
 | 项 | 决策 | 依据 |
 |---|---|---|
-| P2-1 `LaunchPreflight` 协议族零消费 | **维持现状，不在这批接**。它对应 ARCHITECTURE.md §七已宣称交付、但连接点是「迁移期兼容缝」（`MinecraftInstanceLaunchService`），且 `LaunchFixPreflight` 宿主在 `LaunchCoordinator.swift:118` 已有「只标注不改接线」注释。真正接线属 P3-3（LaunchFix 拆分）的前置，需要真机启动冒烟，不建议无真机环境操作 | 代码注释自证 + 启动链路风险 |
+| P2-1 `LaunchPreflight` 协议族零消费 | **维持现状，不在这批接**。它对应 ARCHITECTURE.md §七已宣称交付、但连接点是「迁移期兼容缝」（`MinecraftInstanceLaunchService`），且 `LaunchFixPreflight` 宿主在 `LaunchCoordinator.swift:118` 已有「只标注不改接线」注释。P3-3 已把 `LaunchFix` 拆为四类职责私有方法（`collectMissingLibraries` / `collectMissingAssets` / `download` / natives），边界与协议族对齐，但 `DefaultLaunchPreflight` 编排器仍零消费——真正接线（把 `slLaunchInternal` 的补全调用从 `LaunchFix.perform` 换成 `LaunchPreflight.prepare`）留到合并阶段，需真机启动冒烟 | 代码注释自证 + 启动链路风险 |
 | P2-2 `GameSessionStore`/`GameProcessController.terminate` 待接线 | **维持现状**。`MinecraftInstanceLaunchService.swift:57-70` 记明 T1/T2/T8/T9 前置条件，T2 未解前接上 store 只会写进没人订阅的表（纯开销）。接线属合并阶段任务 | 代码注释自证 |
+| P3-4 下载双轨收口 | **已决（2026-10-02 拍板）：`NetManager` 保留为最终后端**。`Core/Download` 是薄抽象层而非第二实现（唯一实现转发送 NetManager）；批量路径（`MultiFileDownloader`）保持直连 NetManager——批进度分子/分母在引擎边界不可观察，无法逐字复刻（判据见 `MultiFileDownloader.start` 注释） | 判据 B #5 关闭为决策，非降级 |
+| P4-3 默认窗口尺寸 `defaultSize(900×660)` | **已确认 2026-09-23 已恢复**（`qwqApp.swift:56`，e62d7f3/17cca21/e624d33 历史注释完整），本批无需改动，仅登记实况 | 代码注释自证 |
+| P4-2 CI 启用（test.yml/probe.yml 从未跑过） | **本机无法验证（GitHub 不可达，实测 000）**。test.yml 门禁逻辑已就绪（区分「断言失败⇒红」与「已知工具链 abort⇒警告」，见 TESTING.md §五）；probe.yml 是纯探针。首次启用步骤：用户环境手动 Run probe.yml → 按输出确认 runner Xcode 版本与 test.yml 的 Xcode 选择逻辑匹配 → 再依赖 test.yml 门禁。**enabled 前 git log 上不会有任何 CI checkmark，属预期** | 网络边界实测（§1.3） |
+| P3-2 `Features→App` 24 处 `AppContext.shared` 倒置 | **已做（`a48430a`）**：`AppContext` 从 `App/` git mv 沉到 `SLCore/`（基础设施层，头部注释重写为"非 DI 容器"）、`ProcessPool`/`CacheManager` 同归位、`DragDropHandler` 入 `App/`、`Services/` 目录删除；24 处跨模块引用在目标层内消化 | 分层归位，见 ARCHITECTURE.md §二 |
+| P3-1 `SLLaunchBridge` Java 选择收口 | **已做（`23e1380`）**：6 处 `JavaManager`/`LauncherSettings` 直连全删，Java 选择只经 `JavaResolverBridge`（唯一跨层入口），缓存校验 + `findSuitableJava`（SLCore 内部 DataManager）保留为兜底。真机冒烟验证 Java 选择路径不变 | 真机冒烟（路径 B） |
 
 ### 未动（留给后续）
 
-- **P3**（高风险，需真机启动冒烟）：SLLaunchBridge→Features 倒置（P3-1）、Features→App 24 处 `AppContext.shared` 倒置（P3-2）、LaunchFix 上帝对象拆分（P3-3）、下载双轨收口（P3-4）。
-- **P4**（需用户拍板）：LWJGL 3.3.3 死守卫一行修复（P4-1，上游 3.3.3 arm64 natives 已确认 200，改后需移除 `XCTExpectFailure` 标记）、CI 启用（P4-2）、默认窗口尺寸恢复（P4-3）。
-- 判据 B 剩余：#4 弹窗骨架（`ModInstallSelectionView` vs `ModpackFolderPickerView` 同源复制）未合并——需读两个 View 整体后才能安全动。
+- **P4-2 CI 启用**：见上方决策表——本地无 GitHub 出口无法验证，需用户环境首次手动跑 `probe.yml` 后启用 `test.yml`。
+- **P2-1 `LaunchPreflight` 接线**（`DefaultLaunchPreflight` 编排器零消费）：P3-3 已铺好边界（四类职责私有方法与其协议一一对应），接线是「把 `slLaunchInternal` 的启动前补全调用换成 `LaunchPreflight.prepare`」，属合并阶段，需真机冒烟。
+- **P2-2 `GameSessionStore` 接线**：T2 前置未解前不接（见决策表）。
