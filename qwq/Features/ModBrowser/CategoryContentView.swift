@@ -3,7 +3,7 @@ import AppKit
 import UniformTypeIdentifiers
 import Combine
 
-/// 右侧主内容区：按左侧分类（`category.name`）分派到不同页面。
+/// 右侧主内容区：按左侧分类（`category.kind`）分派到不同页面。
 ///
 /// 本视图自身只实现「启动」页那一整套（头像 / 用户名 / 启动按钮 / 日志面板 / 电源按钮），
 /// 其余分类转交对应视图：个性化 → ColorPickerView、游戏 → GameCategoryView、
@@ -13,8 +13,9 @@ import Combine
 /// LaunchAvatarSkinViewModel（头像皮肤管道）与 LaunchEntryViewModel（启动入口决策）。
 /// 本视图只订阅它们的 `@Published` 展示状态、转发意图，自身不做校验也不起网络。
 ///
-/// ⚠️ 分派依据是 `category.name` 的**中文字符串**（"个性化" / "启动" / "游戏" …）——
-/// 分类名一旦改名或本地化，这里会静默落进最后的 else 分支（空网格），不会有编译错误。
+/// ✅ 分派判据（2026-10-02 结构化）：`category.kind`（`CategoryKind` 枚举，见 Category.swift）。
+/// 此前用 `category.name` 中文字符串（"个性化" / "启动" / "游戏" …）比较，
+/// 分类名改名/本地化会静默落进空网格分支且无编译错误；现 switch 穷尽由编译器保证。
 struct CategoryContentView: View {
     /// 当前分类。本视图**只读它的 name** 做分派，不读其它字段。
     let category: Category
@@ -285,18 +286,21 @@ struct CategoryContentView: View {
         SessionLogCardView(session: session, logCardHeight: logCardHeight)
     }
 
-    // 分派入口：按分类名切页面。分支顺序即优先级，最后的 else 是「还没做的分类」占位。
+    // 分派入口：按 `category.kind`（语义身份）切页面，2026-10-02 起不再比较
+    // `name` 中文字符串（改文案不再静默破坏路由）。switch 穷尽由编译器保证——
+    // 新增 `CategoryKind` 成员而这里漏分支会直接编译报错。
     var body: some View {
         Group {
-            if category.name == "个性化" {
+            switch category.kind {
+            case .appearance:
                 ColorPickerView().frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if category.name == "启动" {
+            case .launcher:
                 launchView
-            } else if category.name == "游戏" {
+            case .game:
                 GameCategoryView(theme: theme).frame(maxWidth: .infinity, maxHeight: .infinity).id(category.id)
-            } else if category.name == "下载" {
+            case .download:
                 DownloadCategoryView(theme: theme).frame(maxWidth: .infinity, maxHeight: .infinity).id(category.id)
-            } else if category.name == "联机" {
+            case .online:
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 280))], spacing: 20) { }
                         .padding(.horizontal, 32)
@@ -305,7 +309,7 @@ struct CategoryContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.clear)
             // 赞助页：两张赞助方式卡 + 一张感谢卡，纯静态内容。
-            } else if category.name == "赞助" {
+            case .sponsor:
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 180))], spacing: 20) {
                         SponsorCard(imageName: "zanzhu1", title: "赞助方式一")
@@ -317,14 +321,6 @@ struct CategoryContentView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.clear)
-            } else {
-                // ⚠️ 这是**占位分支**：网格内容为空数组，实际上什么都不显示。
-                // 它兜住的是所有未在上面列出的分类（也包含「联机」之后可能新增的分类）。
-                // 原先以 ScrollViewReader 包裹但从未调用 scrollTo（proxy 无读取点）：
-                // ScrollViewReader 的官方用途即经 proxy 做编程式滚动，无调用时仅为惰性包装，
-                // 不参与布局、不影响滚动，故移除包装保留 ScrollView 本体。
-                ScrollView { LazyVGrid(columns: [GridItem(.adaptive(minimum: 280))], spacing: 20) { }.padding(32) }
-                    .background(Color.clear)
             }
         }
         .id(category.id)

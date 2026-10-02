@@ -326,7 +326,7 @@ private func slLaunchInternal(
 
     phaseHandler("launching")
 
-    let launcher = MinecraftLauncher(instance)!
+    let launcher = MinecraftLauncher(instance)
 
     // 沿用原启动流程中启动前的最小化设置
     account.putAccessToken(options: options)

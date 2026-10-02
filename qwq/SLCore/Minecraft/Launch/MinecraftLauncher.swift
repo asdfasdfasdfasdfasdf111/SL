@@ -44,7 +44,7 @@ public class MinecraftLauncher {
     /// 本 launcher 自己启动的进程引用。不依赖 instance.process（后者会被同版本的其它 launcher 覆盖）。
     public private(set) var currentProcess: Process?
     
-    public init?(_ instance: MinecraftInstance) {
+    public init(_ instance: MinecraftInstance) {
         self.instance = instance
         self.logURL = SharedConstants.shared.applicationSupportURL.appendingPathComponent("GameLogs").appendingPathComponent(id.uuidString + ".log")
         // 目录 / 文件创建失败在此**不抛错也不报错**：日志写不了不应阻止游戏启动。
@@ -60,10 +60,12 @@ public class MinecraftLauncher {
         let process = Process()
         process.executableURL = options.javaPath
         process.environment = ProcessInfo.processInfo.environment
-        process.arguments = []
-        process.arguments!.append(contentsOf: buildJvmArguments(options))
-        process.arguments!.append(instance.manifest.mainClass)
-        process.arguments!.append(contentsOf: buildGameArguments(options))
+        // 2026-10-02：去掉 `process.arguments!` 强解包——本地构建参数数组后一次性赋值。
+        var args: [String] = []
+        args.append(contentsOf: buildJvmArguments(options))
+        args.append(instance.manifest.mainClass)
+        args.append(contentsOf: buildGameArguments(options))
+        process.arguments = args
         let executablePath = process.executableURL?.path ?? "<未指定 Java 路径>"
         // 令牌遮蔽：accessToken 除了以 `--accessToken <token>` 出现在 JVM 参数里，还会以
         // `auth_access_token:<token>` / `auth_session:<token>` 出现在游戏参数里

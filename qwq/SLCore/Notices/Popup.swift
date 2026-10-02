@@ -43,8 +43,15 @@ public struct PopupModel {
     public let title: String
     public let message: String
     public let buttons: [PopupButton]
-    public init(_ type: PopupType, _ title: String, _ message: String, _ buttons: [PopupButton]) {
+    /// 是否附带「导出错误报告」入口（2026-10-02：显式字段，替代此前
+    /// `Notice.init(_ model:)` 里靠「按钮 label 含『导出』」的字符串推导——
+    /// 该推导从未触发（全库无含「导出」的按钮），且文案改一字就静默失效）。
+    /// 崩溃弹窗（`showAsync` 的「导出错误报告」按钮）接线时在此传 true。
+    public let allowsReportExport: Bool
+    public init(_ type: PopupType, _ title: String, _ message: String, _ buttons: [PopupButton],
+                allowsReportExport: Bool = false) {
         self.type = type; self.title = title; self.message = message; self.buttons = buttons
+        self.allowsReportExport = allowsReportExport
     }
 }
 

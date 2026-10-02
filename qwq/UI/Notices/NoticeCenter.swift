@@ -99,12 +99,14 @@ public extension NoticeLevel {
 
 public extension Notice {
     /// 由旧的 `PopupModel` 构造提示，保持 `PopupManager` 调用点的语义不变。
+    /// `allowsReportExport` 直接透传 `PopupModel.allowsReportExport`（显式字段，
+    /// 2026-10-02 起不再靠「按钮 label 含『导出』」的字符串推导）。
     init(_ model: PopupModel) {
         self.init(
             level: NoticeLevel(model.type),
             title: model.title,
             message: model.message,
-            allowsReportExport: model.buttons.contains { $0.label.contains("导出") },
+            allowsReportExport: model.allowsReportExport,
             buttons: model.buttons.map { NoticeButton(label: $0.label, style: $0.style) }
         )
     }

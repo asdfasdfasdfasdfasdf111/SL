@@ -337,7 +337,8 @@ final class NoticeCenterTests: XCTestCase {
                                "启动失败",
                                "无法定位 Java 运行时",
                                [PopupButton(label: "确定"),
-                                PopupButton(label: "导出错误报告", style: .accent)])
+                                PopupButton(label: "导出错误报告", style: .accent)],
+                               allowsReportExport: true)
 
         let notice = Notice(model)
 
@@ -349,7 +350,7 @@ final class NoticeCenterTests: XCTestCase {
         XCTAssertTrue(notice.allowsReportExport)
     }
 
-    /// 不含「导出」按钮时不得出现导出入口
+    /// 不含「导出」按钮时不得出现导出入口（显式字段默认 false）
     func testNoticeFromPopupModelWithoutExportButtonDisablesReportExport() async {
         let model = PopupModel(.warning, "注意", "磁盘空间不足", [PopupButton(label: "去清理")])
         let notice = Notice(model)
@@ -358,17 +359,26 @@ final class NoticeCenterTests: XCTestCase {
         XCTAssertFalse(notice.allowsReportExport)
     }
 
-    /// 导出判定按「按钮文案包含『导出』」，只要有一个命中即开启
-    func testAllowsReportExportOnlyDependsOnButtonLabels() async {
-        let withExport = Notice(PopupModel(.error, "错误", "正文",
-                                           [PopupButton(label: "取消"),
-                                            PopupButton(label: "导出日志", style: .danger)]))
-        XCTAssertTrue(withExport.allowsReportExport)
+    /// 导出判定走显式字段（2026-10-02 起替代「按钮文案包含『导出』」的字符串推导）：
+    /// 按钮 label 与 allowsReportExport 完全解耦——含「导出」字样但未声明 true 则不开启，
+    /// 未含字样但声明 true 则开启（崩溃弹窗「导出错误报告」接线即属后者）。
+    func testAllowsReportExportComesFromExplicitField() async {
+        // 按钮含「导出」字样但未声明 → 不开启（不再按文案反猜）
+        let labelOnly = Notice(PopupModel(.error, "错误", "正文",
+                                          [PopupButton(label: "导出日志", style: .danger)]))
+        XCTAssertFalse(labelOnly.allowsReportExport)
 
-        let withoutExport = Notice(PopupModel(.error, "错误", "正文",
-                                              [PopupButton(label: "取消"),
-                                               PopupButton(label: "重试", style: .accent)]))
-        XCTAssertFalse(withoutExport.allowsReportExport)
+        // 显式声明 true（按钮是普通「确定」）→ 开启
+        let explicit = Notice(PopupModel(.error, "错误", "正文",
+                                         [PopupButton(label: "确定")],
+                                         allowsReportExport: true))
+        XCTAssertTrue(explicit.allowsReportExport)
+
+        // 显式声明 false → 不开启
+        let explicitOff = Notice(PopupModel(.error, "错误", "正文",
+                                            [PopupButton(label: "导出日志", style: .danger)],
+                                            allowsReportExport: false))
+        XCTAssertFalse(explicitOff.allowsReportExport)
     }
 
     // MARK: - Notice 相等语义
