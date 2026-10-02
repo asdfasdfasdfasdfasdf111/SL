@@ -62,8 +62,7 @@ struct DownloadDetailView: View {
             )
             // 卡片高度由三组数据决定并贴顶。
             // 原先 VStack 末尾有一个 Spacer() 把卡片撑满整个 HStack 高度，而三组数据只占其中
-            // 一部分 —— 卡下部留出一大片空白（评审第 3 条；
-            // 截图 docs/ui-review-round5/02-window-download-detail.png）。
+            // 一部分 —— 卡下部留出一大片空白（UI 评审第 3 条；对应截图已随评审文档清理删除）。
             // 顺序关键：本修饰符必须在 .background(...) **之后**，撑满高度的只是外层容器；
             // 若加在 .background 之前，毛玻璃卡本身仍会被撑满，问题不解决。
             .frame(maxHeight: .infinity, alignment: .top)
