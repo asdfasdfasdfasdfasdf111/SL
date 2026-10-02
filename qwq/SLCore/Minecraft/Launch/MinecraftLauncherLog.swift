@@ -145,13 +145,23 @@ func drainPipe(_ pipe: Pipe, into writer: GameLogWriter) {
         }
         let events = pfd.revents
         if events & Int16(POLLIN) != 0 || events & Int16(POLLHUP) != 0 {
-            do {
-                let chunk = try handle.read(upToCount: 64 * 1024)
-                guard let chunk, !chunk.isEmpty else { break }  // 空 Data = EOF
-                writer.append(chunk)
-            } catch {
-                // EAGAIN：可读事件被 `readabilityHandler` 抢先消费，重试下一轮 poll
+            // ⚠️ 用 raw read(fd) 而非 FileHandle.read(upToCount:)：
+            // 实测（2026-10-02）O_NONBLOCK 下 poll 返回 POLLIN 后，FileHandle.read 会抛
+            // EAGAIN（errno 35，NSCocoaErrorDomain 256）——即使数据确实在内核管道缓冲里
+            // （同一时刻 raw read() 能读到 10 字节）。Foundation 的 FileHandle 非阻塞读
+            // 在此场景不可靠，会让我们在 3s 收尾时限内永远拿不到已写入的数据（日志尾部缺行）。
+            var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+            let n = buffer.withUnsafeMutableBufferPointer { read(fd, $0.baseAddress, 64 * 1024) }
+            if n > 0 {
+                writer.append(Data(buffer[0..<n]))
+            } else if n == 0 {
+                break                               // EOF：写端已关闭，读完收尾
+            } else if errno == EAGAIN || errno == EWOULDBLOCK {
+                continue                            // 可读事件被抢先消费（readabilityHandler 竞态），下一轮 poll
+            } else if errno == EINTR {
                 continue
+            } else {
+                break
             }
         } else if events & Int16(POLLERR) != 0 {
             break

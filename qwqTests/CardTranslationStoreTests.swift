@@ -79,8 +79,9 @@ final class CardTranslationStoreTests: XCTestCase {
     }
 
     /// 合并后超限 ⇒ 先裁剪（只留 active + batch 全量），再合并
+    /// ⚠️ 判据是 `dict.count + batch.count > maxEntries`：1999 + 2 = 2001 > 2000 才触发裁剪
     func testMergeTrimsWhenCombinedOverLimit() async {
-        var dict = Dictionary(uniqueKeysWithValues: (0..<1990).map { ("k\($0)", "v\($0)") })
+        var dict = Dictionary(uniqueKeysWithValues: (0..<1999).map { ("k\($0)", "v\($0)") })  // 1999 条
 
         CardTranslationStore.merge(&dict, batch: ["a": "A", "b": "B"], active: ["k0", "k1"])
 

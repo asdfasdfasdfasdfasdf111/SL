@@ -66,10 +66,11 @@ final class GameVersionHelperTests: XCTestCase {
                           "`20-pre` 被丢弃后只剩 [1]，故小于 [1,19]（已知怪癖）")
     }
 
-    /// 纯非数字 id（如快照名）⇒ 两段都为空 ⇒ 与任何纯数字版本判等（0）
+    /// 纯非数字 id（如快照名）⇒ 数字段为空 ⇒ 与任何纯数字版本比较**小于**（-1），
+    /// 而不是判等：`compare` 的循环里 pa=[] 按 0 补齐，`vb=1` → 返回 `0-1 = -1`。
     func testNonNumericIdComparesEqualToNumericVersion() async {
-        XCTAssertEqual(GameVersionHelper.compare("23w33a", "1.20"), 0,
-                       "快照名没有可解析的数字段，退化成空数组（已知怪癖）")
+        XCTAssertLessThan(GameVersionHelper.compare("23w33a", "1.20"), 0,
+                          "快照名没有可解析的数字段，退化成空数组 → 空数组 < 任何非空版本（已知怪癖）")
     }
 
     // MARK: - sortForDisplay

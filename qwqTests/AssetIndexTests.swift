@@ -42,7 +42,8 @@ final class AssetIndexTests: XCTestCase {
         XCTAssertEqual(sortedObjects(index).map(\.hash),
                        ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"])
-        XCTAssertEqual(sortedObjects(index).map(\.size), [56, 1234])
+        // sortedObjects 按 hash 升序：a… 在前（size 1234）、b… 在后（size 56）
+        XCTAssertEqual(sortedObjects(index).map(\.size), [1234, 56])
     }
 
     /// 空 `objects` ⇒ 空数组（不少见：某些索引只含极少量资源）

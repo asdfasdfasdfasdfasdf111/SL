@@ -102,7 +102,7 @@ fi
 if [ -n "$EXECUTED" ]; then
   echo "末次汇总 : $EXECUTED"
 fi
-echo "（口径提醒：abort 会重启进程，故 `Executed N tests` 只是**最后一次 launch** 的汇总，"
+echo "（口径提醒：abort 会重启进程，故「Executed N tests」只是**最后一次 launch** 的汇总，"
 echo "  不是全部用例数；要总数须逐 suite 求和。）"
 
 if [ "$ASSERT_FAILS" -gt 0 ]; then

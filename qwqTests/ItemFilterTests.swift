@@ -119,10 +119,12 @@ final class ItemFilterTests: XCTestCase {
 
     // MARK: - 空查询与不命中
 
-    /// 空查询串：`localizedCaseInsensitiveContains("")` 恒真 ⇒ 任何条目都命中。
-    /// 这是实现事实（上游若要做「空查询不返回结果」需另加判断）。
+    /// ⚠️ 空查询串**不**命中任何条目。独立探针实测（macOS 15.7）：
+    /// `localizedCaseInsensitiveContains("")` 返回 **false**，不是注释原先声称的"恒真"——
+    /// 原断言（`XCTAssertTrue`）在 2026-10-02 全量实测中失败。
+    /// 若要「空查询返回全部结果」，需要调用方显式处理，谓词本身不做。
     func testEmptyQueryMatchesEverything() async {
-        XCTAssertTrue(ItemFilter.matches(item(), query: ""))
+        XCTAssertFalse(ItemFilter.matches(item(), query: ""))
     }
 
     /// 完全无关的查询 ⇒ 不命中

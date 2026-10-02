@@ -8,19 +8,6 @@ final class AppContext {
 
     // MARK: - 共享网络层
 
-    /// 通用下载（30s 请求超时，10min 资源超时，8 并发）。
-    /// 禁用系统代理直连：下载目标为微软 JDK / Azul CDN（国内直连可达），
-    /// 系统代理出口 TLS 转发失败会报 SecureConnectionFailed（与 Requests.swift 统一直连会话一致）
-    let downloadSession: URLSession = {
-        let c = URLSessionConfiguration.default
-        c.connectionProxyDictionary = [:]
-        c.timeoutIntervalForRequest = 30
-        c.timeoutIntervalForResource = 600
-        c.httpMaximumConnectionsPerHost = 8
-        c.urlCache = URLCache(memoryCapacity: 16 * 1024 * 1024, diskCapacity: 64 * 1024 * 1024)
-        return URLSession(configuration: c)
-    }()
-
     /// API 请求（10s 请求超时，15s 资源超时，4 并发）
     let apiSession: URLSession = {
         let c = URLSessionConfiguration.default
@@ -48,9 +35,6 @@ final class AppContext {
 
     let fileManager = FileManager.default
 
-    /// App Support 目录
-    let appSupportURL: URL
-
     // MARK: - 缓存管理（在 init 中初始化，避免循环依赖）
 
     let cacheManager: CacheManager
@@ -60,7 +44,6 @@ final class AppContext {
     private init() {
         let supportURL = URL.applicationSupportDirectory
             .appendingPathComponent("SL启动器")
-        appSupportURL = supportURL
         try? fileManager.createDirectory(at: supportURL, withIntermediateDirectories: true)
 
         // 传入缓存目录，避免 CacheManager 内部访问 AppContext.shared 造成递归锁
