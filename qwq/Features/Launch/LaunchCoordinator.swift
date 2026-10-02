@@ -113,8 +113,9 @@ enum LaunchCoordinator {
             //
             // **接线现状（P2-1 已盘点，会话登记仍留空）**：此处只传了 `events`，
             // `sessionStore` 与 `logSink` 保持默认 nil，于是用例层内所有 `sessionStore?.` 调用
-            // （会话登记 `register`、状态 `update`、`GameProcessController.waitForTermination`
-            // 所需的过程观察）都不产生任何效果。启动前补全的协议族接线已完成
+            // （会话登记 `register`、状态 `update`、进程退出观察——原 `waitForTermination`
+            // 已随 2026-10-02 死代码清理删除，结论归档于 `GameProcessController.swift` 头）
+            // 都不产生任何效果。启动前补全的协议族接线已完成
             // （`LaunchPreflightBridge` → `DefaultLaunchPreflight`，见 ARCHITECTURE.md §七），
             // 与 LaunchCoordinator 无关。本处**只标注不改接线**（P2-2 仍成立）：
             // 终止入口实际走 `GameSession.launcher.terminate()`（closeSession / handlePowerTap），
@@ -368,8 +369,8 @@ enum LaunchCoordinator {
 ///
 /// 显式 `nonisolated`：该对象要被事件回调线程与调用方线程共享，必须脱离
 /// `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` 的默认推断（仅靠 `@unchecked Sendable`
-/// 不足以阻止 MainActor 推断，届时跨线程访问会成片告警），与 `TerminationResumeGate`
-/// 的治理方式一致。锁内只做内存操作，属同步临界区，不跨 `await` 持有。
+/// 不足以阻止 MainActor 推断，届时跨线程访问会成片告警）。锁内只做内存操作，属同步
+/// 临界区，不跨 `await` 持有。与同形态的原子门控（见 `SLCore/Util/`）做法一致。
 private nonisolated final class LaunchFailureNoticeGate: @unchecked Sendable {
     private let lock = NSLock()
     private var reported = false

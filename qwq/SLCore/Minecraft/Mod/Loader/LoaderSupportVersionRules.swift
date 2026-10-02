@@ -6,7 +6,7 @@
 //  - versionAtLeast / isSnapshotVersion：MC 版本号形态与下限比较
 //  - candidateDisplayNames：某版本应检测的候选加载器显示名（按版本剔除明确不可能的项）
 //  - isFullyResolved：缓存是否已覆盖全部候选（全部定论则无需联网）
-//  - orderIndex / displayName(for:)：显示名排序与反查
+//  - orderIndex：显示名排序键（`displayName(for:)` 已于 2026-10-02 删除：零调用方）
 //
 
 import Foundation
@@ -118,16 +118,5 @@ extension LoaderSupportChecker {
     /// 访问级别为 internal：缓存层与兼容聚合入口的排序均需调用。
     static func orderIndex(_ name: String) -> Int {
         loaderOrder.firstIndex(of: name) ?? 99
-    }
-
-    /// 端点 key → 显示名。注意：当前无调用方（`key(for:)` 只提供显示名→key 的正向映射），保留待清理。
-    private static func displayName(for key: String) -> String {
-        switch key {
-        case "fabric": return "Fabric"
-        case "forge": return "Forge"
-        case "neoforge": return "NeoForged"
-        case "quilt": return "Quilt"
-        default: return key
-        }
     }
 }

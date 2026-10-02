@@ -145,9 +145,8 @@ struct DownloadDetailView: View {
         }
     }
 
-    /// 状态 → SF Symbol 名。
-    /// ⚠️ 与 SLCore 里 `InstallState.getImageName()` 那套**不是同一套**：
-    /// 界面实际用的是这里；旧方法返回占位串且已无调用方（见 InstallProgress.swift 的注释）。
+    /// 状态 → SF Symbol 名。界面统一走这里（原 `InstallState.getImageName()` 已随
+    /// 2026-10-02 死代码清理删除，见 InstallProgress.swift 注释）。
     private static func iconName(for state: InstallState) -> String {
         switch state {
         case .finished: return "checkmark.circle.fill"

@@ -19,8 +19,9 @@
 //     实际文件名是 `TemperatureDirectory.swift`）—— 是改名后漏改的注释，非功能问题。
 //  2. `root` 是**计算属性**，每次访问都重新拼一次路径。所以拿到 `TemperatureDirectory`
 //     之后立刻 `free()`、再访问 `root`，得到的仍是同一条路径（不会报错，只是目录已不在）。
-//  3. 目前唯一的使用点是 `MinecraftCrashHandler.swift:40`（导出崩溃报告）——
-//     而那个导出功能本身还没接线，所以这条路径现在跑不到。
+//  3. 活代码：`Minecraft` 加载器安装链路（`ForgeInstaller`）用它做工作目录。
+//     原「导出崩溃报告」（`MinecraftCrashHandler.exportErrorReport`）已于 2026-10-02
+//     随死代码清理删除，不再使用本类型。
 //
 
 import Foundation

@@ -10,9 +10,8 @@
 //  它会插到「原版 jar」和「资源索引」之间）」。这条不变量没有任何编译期保护，
 //  只能靠测试守住。`getDisplayName()` 的中文文案是**用户可见界面的一部分**，同样钉住。
 //
-//  另有一条已登记的死代码：`InstallState.getImageName()` **零调用方**
-//  （界面实际走 `DownloadDetailView.iconName(for:)`，返回 SF Symbol）。本文件照样覆盖它，
-//  因为「零调用方」不等于「可以随便改」—— 真要用时行为得是对的。
+//  2026-10-02：`InstallState.getImageName()` 已随死代码清理删除（零调用方，
+//  界面实际走 `DownloadDetailView.iconName(for:)`），对应用例一并移除。
 //
 
 import XCTest
@@ -111,19 +110,5 @@ final class InstallProgressTests: XCTestCase {
         for stage in all {
             XCTAssertFalse(stage.getDisplayName().isEmpty, "\(stage) 缺少显示名")
         }
-    }
-
-    // MARK: - InstallState.getImageName（已登记为零调用方）
-
-    func testImageNames() async {
-        XCTAssertEqual(InstallState.waiting.getImageName(), "InstallWaiting")
-        XCTAssertEqual(InstallState.finished.getImageName(), "InstallFinished")
-    }
-
-    /// `inprogress` 与 `failed` 走 `default` ⇒ 占位串 `"Missingno"`
-    /// （源码注释自认：这两枚自绘资源不存在，界面实际用 SF Symbol）
-    func testInProgressAndFailedFallBackToPlaceholder() async {
-        XCTAssertEqual(InstallState.inprogress.getImageName(), "Missingno")
-        XCTAssertEqual(InstallState.failed.getImageName(), "Missingno")
     }
 }

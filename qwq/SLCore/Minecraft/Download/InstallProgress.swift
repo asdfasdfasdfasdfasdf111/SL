@@ -74,20 +74,7 @@ public enum InstallStage: Int {
 /// 单个阶段的状态。
 public enum InstallState {
     case waiting, inprogress, finished, failed
-    /// 阶段图标名（资源名，不是 SF Symbol）。
-    ///
-    /// **当前零调用方**（2026-09-23 全库 grep `getImageName()` 只命中本定义）：
-    /// 界面实际走的是 `DownloadDetailView.iconName(for:)` —— 那边返回 SF Symbol，
-    /// 且四种状态都有图标。本方法只剩 `waiting`/`finished` 两枚自绘资源，
-    /// 另两种状态返回占位串 `"Missingno"`。属遗留代码，可清理但尚未清理。
-    public func getImageName() -> String {
-        switch self {
-        case .waiting:
-            "InstallWaiting"
-        case .finished:
-            "InstallFinished"
-        default:
-            "Missingno"
-        }
-    }
+
+    // 注：原 `getImageName()`（返回自绘资源名，inprogress/failed 走占位串 "Missingno"）
+    // 已于 2026-10-02 删除——零调用方，界面实际用 `DownloadDetailView.iconName(for:)`（SF Symbol）。
 }

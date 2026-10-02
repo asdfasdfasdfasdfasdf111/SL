@@ -529,7 +529,9 @@ private enum FixWaitOutcome {
 /// 回调可能在主线程（`MultiFileDownloader` 经 `MainActor.run` 回调）而置位发生在等待线程，
 /// 故用锁保护（锁内只做内存读写，不回调外部、不跨 await 持有）。
 /// 显式 `nonisolated`：需脱离 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` 的默认推断
-/// （仅靠 `@unchecked Sendable` 不足以阻止 MainActor 推断），与 `TerminationResumeGate` 治理方式一致。
+/// （仅靠 `@unchecked Sendable` 不足以阻止 MainActor 推断），锁内只做内存读写，不回调
+/// 外部、不跨 await 持有。与同形态的原子门控做法一致（原参照物
+/// `LaunchCoordinator.TerminationResumeGate` 已随 2026-10-02 死代码清理删除）。
 private nonisolated final class AbandonFlag: @unchecked Sendable {
     private let lock = NSLock()
     private var abandoned = false

@@ -338,10 +338,6 @@ public class ModDownloader {
         case noCompatibleVersion
         case noGameVersionSet
         case noGameRootSet
-        /// 全库无引用，待清理（`downloadMod` 解析主文件地址失败时改抛 `noDownloadableFile`，
-        /// 本 case 已无任何构造点；保留以维持错误枚举与既有文案表不变）。
-        @available(*, deprecated, message: "全库无引用，待清理")
-        case invalidURL
         case hashMismatch(String)
 
         /// 上游返回非 2xx。此前状态码被 `_` 丢弃、错误体被当成功响应解码，
@@ -358,7 +354,6 @@ public class ModDownloader {
             case .noCompatibleVersion: return "未找到兼容的模组版本"
             case .noGameVersionSet: return "未选择 Minecraft 版本"
             case .noGameRootSet: return "未设置游戏根目录"
-            case .invalidURL: return "模组文件下载地址无效"
             case .hashMismatch(let reason): return "模组文件完整性校验失败：\(reason)"
             case .httpStatus(let code, let detail):
                 // 按状态码给「用户能据此判断下一步」的结论，而不是只丢一个数字。
