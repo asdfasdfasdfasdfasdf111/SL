@@ -44,6 +44,9 @@ public nonisolated struct SharedConstants {
     public let version = "Beta 0.1.1"
     public let branch: String
     
+    /// 全部对外 HTTP 请求的 User-Agent（2026-10-02 由 7 处硬编码收口为唯一来源）。
+    public let userAgent = "Swim111Launcher/1.0 (Minecraft Launcher)"
+    
     private init() {
         self.applicationContentsURL = Bundle.main.bundleURL.appendingPathComponent("Contents")
         self.applicationResourcesURL = self.applicationContentsURL.appendingPathComponent("Resources")

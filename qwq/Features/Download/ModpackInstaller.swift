@@ -36,7 +36,11 @@ class ModpackInstaller {
         let tempDir = createTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
-        try unzip(packURL, to: tempDir)
+        // 复用 `Util.unzip`（唯一解压实现；本文件不再维护私有副本）。
+        // 解压目标 tempDir 是新建的空目录，`replace: true` 的删除语义无实际影响。
+        guard Util.unzip(archiveURL: packURL, destination: tempDir) else {
+            throw InstallError.unzipFailed
+        }
 
         let manifest = try parseManifest(in: tempDir)
 
@@ -78,23 +82,6 @@ class ModpackInstaller {
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try? FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
         return temp
-    }
-
-    private func unzip(_ source: URL, to destination: URL) throws {
-        do {
-            let archive = try Archive(url: source, accessMode: .read)
-            for entry in archive {
-                // ZIP Slip 防御（同 Util.unzip）：拒绝绝对路径与含 .. 的条目，防止写入目标目录之外
-                let entryPath = entry.path.replacingOccurrences(of: "\\", with: "/")
-                let normalizedPath = (entryPath as NSString).standardizingPath
-                if normalizedPath.hasPrefix("/") || normalizedPath.components(separatedBy: "/").contains("..") {
-                    continue
-                }
-                _ = try archive.extract(entry, to: destination.appendingPathComponent(normalizedPath))
-            }
-        } catch {
-            throw InstallError.unzipFailed
-        }
     }
 
     private func parseManifest(in dir: URL) throws -> Manifest {

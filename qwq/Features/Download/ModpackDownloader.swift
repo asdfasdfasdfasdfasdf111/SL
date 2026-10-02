@@ -62,7 +62,6 @@ public class ModpackDownloader {
     /// ⚠️ 注意路径里带 `/modrinth/v2`：镜像代理的是 Modrinth **v2** 接口，
     /// 端点路径（`/search`、`/project/...`）与官方一致，换镜像站时只改域名前缀即可。
     private let base = "https://mod.mcimirror.top/modrinth/v2"
-    private let userAgent = "Swim111Launcher/1.0 (Minecraft Launcher)"
 
     private var session: URLSession { AppContext.shared.apiSession }
 
@@ -102,7 +101,7 @@ public class ModpackDownloader {
                 URLQueryItem(name: "facets", value: "[[\"project_type:modpack\"]]")
             ]
             var req = URLRequest(url: components.url!)
-            req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            req.setValue(SharedConstants.shared.userAgent, forHTTPHeaderField: "User-Agent")
             let (data, _) = try await session.data(for: req)
             let result = try JSONDecoder().decode(SearchResult.self, from: data)
             searchCache.store(key, result.hits)
@@ -126,7 +125,7 @@ public class ModpackDownloader {
     public func versions(packId: String) async throws -> [ModpackVersion] {
         guard let url = URL(string: "\(base)/project/\(packId)/version") else { throw ModpackError.invalidURL }
         var req = URLRequest(url: url)
-        req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue(SharedConstants.shared.userAgent, forHTTPHeaderField: "User-Agent")
         let (data, _) = try await session.data(for: req)
         return try JSONDecoder().decode([ModpackVersion].self, from: data)
     }

@@ -81,7 +81,6 @@ final class ModrinthSearchCache<Value> {
 
 public class ModDownloader {
     private let baseURL = "https://api.modrinth.com/v2"
-    private let userAgent = "Swim111Launcher/1.0 (Minecraft Launcher)"
 
     private var session: URLSession { AppContext.shared.apiSession }
 
@@ -101,7 +100,7 @@ public class ModDownloader {
         let url = URL(string: baseURL + path)!
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
-        req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue(SharedConstants.shared.userAgent, forHTTPHeaderField: "User-Agent")
         return req
     }
 
@@ -156,7 +155,7 @@ public class ModDownloader {
                 URLQueryItem(name: "facets", value: facets)
             ]
             var req = URLRequest(url: components.url!)
-            req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            req.setValue(SharedConstants.shared.userAgent, forHTTPHeaderField: "User-Agent")
             let (data, response) = try await session.data(for: req)
             // 先验状态码再解码：429/5xx 的错误体不是 SearchResult，直接解码会报「数据格式不正确」
             try validate(data, response)
@@ -197,7 +196,7 @@ public class ModDownloader {
         }
         components.queryItems = queryItems.isEmpty ? nil : queryItems
         var req = URLRequest(url: components.url!)
-        req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+        req.setValue(SharedConstants.shared.userAgent, forHTTPHeaderField: "User-Agent")
         let (data, response) = try await session.data(for: req)
         // 先验状态码再解码（同 getProject：429/5xx 的错误体不是版本数组）
         try validate(data, response)

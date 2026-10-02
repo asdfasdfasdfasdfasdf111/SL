@@ -138,12 +138,12 @@ enum SkinSizeInspector {
 /// 而工程里 `settings.selectedMinecraftVersion` 存的是**版本 id**（带加载器后缀）——
 /// 直接把 id 当游戏版本传去过滤会一条都查不到（`1.21.1-Fabric` 不是任何模组声明的版本）。
 ///
-/// 后缀词表沿用 `LoaderNameResolver.assetMap` 的键（fabric / forge / neoforge / neoforged /
+/// 后缀词表沿用 `LoaderNameResolver.loaderTokens`（fabric / forge / neoforge / neoforged /
 /// quilt / rift），避免两处各维护一份加载器名单。
 enum SkinVersionIdentity {
 
-    /// 加载器后缀词表 —— 直接取自 `LoaderNameResolver.assetMap` 的**键**（都是小写）。
-    private static let loaderTokens: Set<String> = Set(LoaderNameResolver.assetMap.keys)
+    /// 加载器后缀词表 —— 直接取自 `LoaderNameResolver.loaderTokens`（都是小写）。
+    private static let loaderTokens: Set<String> = LoaderNameResolver.loaderTokens
 
     /// 从版本 id 尾部找出加载器词（找不到返回 nil，表示原版）。
     /// 从**后往前**扫：`26.3-snapshot-3-Fabric` 的最后一段才是加载器。
