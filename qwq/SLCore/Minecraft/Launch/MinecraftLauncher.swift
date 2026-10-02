@@ -154,6 +154,8 @@ public class MinecraftLauncher {
                             return
                         }
                     }
+                    // 窗口未出现：1s 后重查。等待窗口是启动后最常见的长等待，
+                    // 忙轮询毫无意义（CGWindowList 是瞬时快照），1s 让 CPU 让出。
                     try await Task.sleep(for: .seconds(1))
                 }
             }

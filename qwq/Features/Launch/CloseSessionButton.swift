@@ -75,11 +75,14 @@ struct CloseSessionButton: View {
             closeButtonGlow = 0.8
         }
         popTask = Task { @MainActor in
+            // 弹入三段时序：250ms 保持放大（1.3 + 光晕 0.8）→ 回落到 0.85 → 再等 200ms → 复位。
+            // 与 ModDetailView 弹跳同一套路：间隔是动画帧节奏，过短视觉糊、过长显卡顿。
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
             withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
                 closeButtonScale = 0.85
             }
+            // 200ms 保持回落中间态，再复位（同一段三段时序，见上方 78-79 行论证）
             try? await Task.sleep(nanoseconds: 200_000_000)
             guard !Task.isCancelled else { return }
             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {

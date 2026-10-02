@@ -18,6 +18,8 @@ extension NetManager {
         tickTask = Task.detached(priority: .utility) {
             let interval = await self.config.tickIntervalNs
             while !Task.isCancelled {
+                // ticker 节奏：每 `tickIntervalNs`（配置注入，见类型头注释）唤醒一次做一轮
+                // 调度判分。睡在间隔上而非忙轮询——分片/合并不需要亚 tick 粒度响应。
                 try? await Task.sleep(nanoseconds: interval)
                 await self.tickOnce()
                 let active = await self.hasActiveWork()
@@ -78,6 +80,8 @@ extension NetManager {
             guard budget > 0 else { break }
             if tryBeginSlice(record) {
                 budget -= 1
+                // 每开一个新分片让出 `tickIntervalNs`：分片创建是同步记账，这里让出调度节奏
+                // 而非等待网络——避免同轮循环把预算瞬间耗尽。时长由配置注入，见头注释。
                 try? await Task.sleep(nanoseconds: config.tickIntervalNs)
             }
         }
@@ -85,6 +89,7 @@ extension NetManager {
             guard budget > 0 else { break }
             if tryBeginSlice(record) {
                 budget -= 1
+                // 同上：加载中文件的分割同样让出一个 tick（与 waiting 分支同一节奏）。
                 try? await Task.sleep(nanoseconds: config.tickIntervalNs)
             }
         }

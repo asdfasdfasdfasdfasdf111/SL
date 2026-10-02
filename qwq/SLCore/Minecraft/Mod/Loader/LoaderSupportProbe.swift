@@ -130,6 +130,8 @@ extension LoaderSupportChecker {
                 await requestOnce(url: urls[0].0, authoritativeEmpty: urls[0].1, key: key, version: version)
             }
             group.addTask {
+                // 备用源延迟 700ms 才发起（见上方双源策略注释）：给主源一个完整的
+                // 首请求窗口；700ms 同时是「主源无响应」的判据——再长只是拖慢定论。
                 try? await Task.sleep(nanoseconds: 700_000_000)
                 guard !Task.isCancelled else { return .failed }
                 return await requestOnce(url: urls[1].0, authoritativeEmpty: urls[1].1, key: key, version: version)

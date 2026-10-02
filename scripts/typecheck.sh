@@ -102,3 +102,93 @@ else
   echo "结果: 存在类型错误，禁止提交"
   exit 1
 fi
+
+# ─────────────────────────────────────────────────────────────
+# 防回潮红线（2026-10-02 添加，依据审计闭环轮）：
+#   已修掉的问题必须被"钉死"，防止下一个功能开发时被重新引入——
+#   任何人（或未来的我们）顺手写回 `category.name == "启动"`
+#   / 裸 `Task.sleep` / `contains("中文文案")`，这里立刻亮红。
+# 每条红线当前都必须是零命中；命中即 exit 1 禁止提交。
+# ─────────────────────────────────────────────────────────────
+
+fail=0
+redline() { # redline <名称> <描述>; 输出命中则 fail
+  echo "红线「$1」命中（$2）："
+  echo "$3"
+  fail=1
+}
+
+# 红线 1：分类分派字符串回潮。已结构化到 `CategoryKind`（Category.swift），
+# 生产代码一旦再出现 `category.name == "中文"` 即违规。
+# 只查**活代码**：注释里引用旧模式作历史说明不算（`///`/`//` 行排除）。
+HIT1=$(grep -rn 'category\.name == "[^"]*"' qwq --include='*.swift' | grep -vE ':[0-9]+:[[:space:]]*(//|/\*)' || true)
+if [ -n "$HIT1" ]; then
+  redline "category.name == 字符串分派" "改用 CategoryKind 枚举" "$HIT1"
+fi
+
+# 红线 2：裸 `Task.sleep` 回潮（生产代码任意位置、不带论证注释）。
+# 规则：`qwq/` 下每个 `Task.sleep(` 的**上方 ≤5 行内**必须有论证注释
+# （原因/时长依据）。实现：Python 逐文件扫描，命中「同一行无注释且上方
+# 5 行内无注释」的裸睡即失败。窗口取值 5 行的依据：
+#   - 太小（≤3）会把「紧贴的多行论证注释块」误伤（如 VersionButton 的 7 行
+#     论证块紧贴 sleep，注释第 1 行距 sleep 达 7 行）；
+#   - 太大（>5）会出现「远处无关注释护身」盲区（探针实测 8 行窗口下
+#     与 sleep 无关的头部注释也能豁免）。
+# 5 行是「误伤与盲区的务实平衡」；新代码请把论证注释放在 sleep 紧邻上方。
+HIT2=$(python3 - "$PWD" <<'PYEOF'
+import pathlib, sys
+root = sys.argv[1]
+bad = []
+for f in sorted(pathlib.Path(root, 'qwq').rglob('*.swift')):
+    lines = f.read_text(encoding='utf-8').splitlines()
+    for i, ln in enumerate(lines):
+        if 'Task.sleep(' in ln and '//' not in ln:
+            # 上方 ≤5 行的注释才视为对该 sleep 的论证
+            has_above = any(
+                lines[j].strip().startswith(('//', '///', '/*', '*'))
+                for j in range(max(0, i - 5), i)
+            )
+            if not has_above:
+                bad.append(f"{f}:{i+1}: {ln.strip()[:90]}")
+print('\n'.join(bad))
+PYEOF
+)
+if [ -n "$HIT2" ]; then
+  redline "裸 Task.sleep 无论证" "上方 ≤5 行需有论证注释（原因 + 时长依据）" "$HIT2"
+fi
+
+# 红线 3：错误分类靠 `contains("中文文案")` 回潮。已结构化到
+# `NetDownloadError` / `LaunchError` 精确 case（桥接层抛点直接抛 case，适配层
+# switch / 透传直达）。生产代码再出现 `contains("中文")` 即违规；
+# 只查活代码（注释引用历史模式不算）。
+HIT3=$(grep -rn 'contains("[^"]*[^ -~][^"]*")' qwq --include='*.swift' | grep -vE ':[0-9]+:[[:space:]]*(//|/\*)' || true)
+if [ -n "$HIT3" ]; then
+  redline "contains(\"中文\") 错误分类" "改用 NetDownloadError 结构化 case" "$HIT3"
+fi
+
+# 告警上限：防"告警数静默回涨"。基线（2026-10-02）：
+#   口径一 57 条唯一 = 56 条 ignoring-import 产物（= 测试文件数，每文件 +1）
+#                    + 1 条真实告警（NoticeCenterTests:108 Sendable 捕获）
+#   口径二 12 条唯一 = 12 条真实告警（配置文件见脚本头注释的逐文件列举）
+# 上限口径：
+#   - 口径一：57 + max(0, 测试文件数 - 56)（新增测试文件允许 +1，其余 +1 即失败）
+#   - 口径二：12（全真实告警，任何新增即失败）
+UNIQ2=$(printf '%s\n' "$OUT2" | grep 'warning:' | grep -E '^[^ |]' | sort -u | wc -l | tr -d ' ')
+TESTFILES=$(ls qwqTests/*.swift | wc -l | tr -d ' ')
+UNIQ1=$(printf '%s\n' "$OUT1" | grep 'warning:' | grep -E '^[^ |]' | sort -u | wc -l | tr -d ' ')
+CAP1=$((57 + (TESTFILES - 56)))
+CAP2=12
+if [ "$UNIQ1" -gt "$CAP1" ]; then
+  redline "口径一告警超上限（$UNIQ1 > $CAP1）" "基线 57 + 新增测试文件数；多出即真实告警回潮" "见上方口径一告警清单，逐一核对新增原因"
+fi
+if [ "$UNIQ2" -gt "$CAP2" ]; then
+  redline "口径二告警超上限（$UNIQ2 > $CAP2）" "基线 12 条真实告警，新增即失败" "见上方口径二告警清单，逐一核对新增原因"
+fi
+
+echo
+if [ "$fail" -eq 0 ]; then
+  echo "结果: 三条防回潮红线 + 告警上限全部通过（测试文件数 $TESTFILES，口径一 $UNIQ1/$CAP1，口径二 $UNIQ2/$CAP2）"
+else
+  echo "结果: 防回潮红线失败，禁止提交"
+  exit 1
+fi

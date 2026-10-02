@@ -136,6 +136,8 @@ public actor NetManager {
         let ids = pending
         let progressTask = Task.detached(priority: .utility) {
             while !Task.isCancelled {
+                // 进度 tick 周期 200ms：批次进度不要求实时性（UI 刷新 5 次/秒足够平滑），
+                // 且 tick 越密整体进度回调越频——200ms 是「平滑 vs 开销」的既有折中。
                 try? await Task.sleep(for: .milliseconds(200))
                 let (p, count) = await self.overallProgressValue(for: ids)
                 await MainActor.run { overallProgress?(p, count) }

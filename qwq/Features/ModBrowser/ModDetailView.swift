@@ -207,6 +207,8 @@ struct ModDetailView: View {
             }
             backNavTask?.cancel()
             backNavTask = Task { @MainActor in
+                // 等 400ms 让滑动动画播完再弹回前置栈：动画 response 0.35s，
+                // 立刻 removeLast 会让视觉上「还没滑走就换了内容」。
                 try? await Task.sleep(nanoseconds: 400_000_000)
                 guard !Task.isCancelled else { return }
                 if !prerequisiteStack.isEmpty {
@@ -225,11 +227,14 @@ struct ModDetailView: View {
             bounceScale = 1.25
         }
         bounceTask = Task { @MainActor in
+            // 弹跳三段时序：180ms 保持 1.25 → 回落到 0.92 → 再等 170ms → 复位 1.0。
+            // 两个间隔是「动画帧间隔」而非网络/IO 等待：过短弹跳视觉糊成一团，过长显得卡顿。
             try? await Task.sleep(nanoseconds: 180_000_000)
             guard !Task.isCancelled else { return }
             withAnimation(.interpolatingSpring(stiffness: 200, damping: 16)) {
                 bounceScale = 0.92
             }
+            // 170ms 保持回弹中间态，再复位（同一段三段时序，见上方 230-231 行论证）
             try? await Task.sleep(nanoseconds: 170_000_000)
             guard !Task.isCancelled else { return }
             withAnimation(.interpolatingSpring(stiffness: 220, damping: 18)) {

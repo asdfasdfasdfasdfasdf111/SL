@@ -178,7 +178,9 @@ private func slLaunchInternal(
     )
 
     guard let instance = MinecraftInstance.create(minecraftDir, version) else {
-        completion(nil, .failure(MyLocalizedError(reason: "无法创建实例: \(version)")))
+        // 2026-10-02：结构化错误（此前用 MyLocalizedError("无法创建实例: …") 携带文案，
+        // mapFailure 再按文案反猜归类）。LaunchError.errorDescription 与此前文案逐字一致。
+        completion(nil, .failure(LaunchError.instanceNotFound(version: version)))
         return
     }
 
@@ -306,7 +308,9 @@ private func slLaunchInternal(
         //     不会阻塞本次流程——本函数已经 return，后续走完 `.launchFailed` 通道。
         fixAbandoned.set()
         fixTask.cancel()
-        completion(nil, .failure(MyLocalizedError(reason: "启动前补全超时（10 分钟），请检查网络连接")))
+        // 2026-10-02：结构化错误。此前 mapFailure 靠 `contains("启动前补全")` 文案反猜
+        // 归类；现在直接落 fileVerificationFailed（补全即文件校验的一环）。
+        completion(nil, .failure(LaunchError.fileVerificationFailed(reason: "启动前补全超时（10 分钟），请检查网络连接")))
         return
 
     case .finished:
@@ -314,7 +318,8 @@ private func slLaunchInternal(
     }
 
     if let fixError = fixResultBox.error {
-        completion(nil, .failure(MyLocalizedError(reason: "启动前补全失败：\(fixError.localizedDescription)")))
+        // 2026-10-02：结构化错误（此前 MyLocalizedError 携带文案，mapFailure 文案反猜）。
+        completion(nil, .failure(LaunchError.fileVerificationFailed(reason: "启动前补全失败：\(fixError.localizedDescription)")))
         return
     }
 
@@ -373,7 +378,9 @@ private func slLaunchInternal(
         let available = DataManager.shared.javaVirtualMachines.map { "\($0.executableURL.path) (major=\($0.version), \($0.callMethod))" }
         log("未找到满足版本要求 (Java \(minJavaVersion)+) 的 Java 安装")
         log("DataManager JVMs: \(available.joined(separator: "; "))")
-        completion(nil, .failure(MyLocalizedError(reason: "未找到满足版本要求 (Java \(minJavaVersion)+) 的 Java 安装，请先在「Java 管理」中扫描或下载 Java。")))
+        // 2026-10-02：结构化错误（此前 MyLocalizedError 携带文案，mapFailure 靠
+        // requiredJavaMajor 正则从文案提取版本号反猜）。errorDescription 逐字一致。
+        completion(nil, .failure(LaunchError.javaNotFound(requiredMajorVersion: minJavaVersion)))
         return
     }
 
@@ -451,6 +458,8 @@ private func slLaunchInternal(
                 }
                 for line in lines { logHandler(line) }
             } else {
+                // 本次读取无完整日志行：让出 400ms 再读下一批（日志事实上的生产节奏比这快，
+                // 但空读时不能忙轮询空转 CPU；400ms 上限让日志面板刷新不至于肉眼可辨滞后）。
                 try? await Task.sleep(nanoseconds: 400 * 1_000_000)
             }
         }
@@ -482,6 +491,8 @@ private func slLaunchInternal(
                     }
                 }
             }
+            // 窗口未出现：每 2s 重查一次（CGWindowList 是快照式 API，立即重查无意义；
+            // 2s 让「窗口检测」不忙轮询，同时游戏窗口出现后首次检测的滞后可接受）。
             try? await Task.sleep(nanoseconds: 2 * 1_000_000_000)
         }
     }
@@ -499,9 +510,11 @@ private func slLaunchInternal(
             case .launchFailed(let error):
                 // 进程未拉起与「游戏崩溃退出」必须区分：前者没有退出码，
                 // 统一返回 .failure 让 UI 展示「启动失败：<原因>」而不是「异常退出（退出码 1）」。
+                // 2026-10-02：结构化错误（此前 MyLocalizedError("启动失败：…")，mapFailure 靠
+                // contains 反猜）；processStartFailed 的 errorDescription 即「游戏进程启动失败：」。
                 let reason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 log("启动失败：\(reason)")
-                completion(launcher, .failure(MyLocalizedError(reason: "启动失败：\(reason)")))
+                completion(launcher, .failure(LaunchError.processStartFailed(reason: reason)))
             }
         }
     }

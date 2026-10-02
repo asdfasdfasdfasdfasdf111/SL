@@ -44,6 +44,8 @@ final class SpeedMeter: ObservableObject {
         tickerTask = Task { @MainActor [weak self] in
             var idleSeconds = 0
             while !Task.isCancelled {
+                // 1s 计量周期：速度条以 1 次/秒刷新（下载速度天然是「每秒字节数」，
+                // 更细粒度无意义且徒增唤醒）；连续 3 个空闲周期后自停（见类型注释）。
                 try? await Task.sleep(for: .seconds(1))
                 guard let self else { break }
                 let intervalBytes = await self.counter.takeInterval()

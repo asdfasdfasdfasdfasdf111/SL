@@ -211,7 +211,7 @@ public final class MinecraftInstanceLaunchService: LaunchService, @unchecked Sen
                             // 先投递原始错误（UI 文案以它为准），再把契约要求的类型化错误抛给调用方
                             events?(.failed(error))
                             // 进程未成功拉起：按契约抛错，不返回 LaunchResult
-                            let launchError = Self.mapFailure(error, version: request.version)
+                            let launchError = Self.mapFailure(error)
                             await self?.sessionStore?.update(.failed(launchError), for: sessionID)
                             self?.forget(sessionID: sessionID)
                             continuation.resume(throwing: launchError)
@@ -287,6 +287,8 @@ public final class MinecraftInstanceLaunchService: LaunchService, @unchecked Sen
                     )
                     return
                 }
+                // 进程引用尚未就绪：每 50ms 重查（上限 0..<100 次 = 5s，见下方兜底日志）。
+                // 50ms 比进程启动本身快一个数量级，重查开销可忽略，同时不忙轮询空转。
                 try? await Task.sleep(for: .milliseconds(50))
             }
             log("[LaunchService] 5s 内未取得进程引用，会话 \(sessionID) 未登记（启动与终止不受影响）")
@@ -317,40 +319,21 @@ public final class MinecraftInstanceLaunchService: LaunchService, @unchecked Sen
 
     // MARK: - 错误映射
 
-    /// 桥接层以 `MyLocalizedError(reason:)` 携带中文文案返回失败，没有类型化错误码，
-    /// 故此处按文案前缀做一次映射。**这是临时桥接**：
-    /// 文案本地化或改写都会静默退化为 `.unknown`（见 LAUNCH_FLOW.md 风险点 R5）。
-    static func mapFailure(_ error: Error, version: String) -> LaunchError {
-        // 取消是**预期内的收尾**，不是失败：直接原样透传，避免落进下面的文案前缀匹配，
-        // 退化成 `.unknown("启动已取消")`（UI 侧据此判定「不弹错误框」，语义必须保住）。
-        if let launchError = error as? LaunchError, launchError == .cancelled {
-            return .cancelled
+    /// 桥接层失败收口（2026-10-02 重构）：**桥接层直接抛 `LaunchError` 精确 case**
+    /// （`SLLaunchBridge` 内取消/实例/补全/Java/进程拉起五类抛点均已结构化），
+    /// 本函数只做两件事：已是 `LaunchError` 的**原样透传**（含 `.cancelled`——
+    /// UI 侧据此判定「不弹错误框」，语义必须保住）；其余未知错误兜底 `.unknown`。
+    ///
+    /// 此前这里按中文文案前缀 `contains` 反猜归类（"无法创建实例"/"启动前补全"/
+    /// "启动失败：" 前缀剥离 + `requiredJavaMajor` 正则提取版本号），属「字符串当
+    /// 类型系统」，改文案即静默退化为 `.unknown`——已随桥接层结构化一并删除
+    /// （LAUNCH_FLOW.md 风险点 R5 关闭）。
+    static func mapFailure(_ error: Error) -> LaunchError {
+        if let launchError = error as? LaunchError {
+            return launchError
         }
-
         let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-
-        // 桥接层对「进程未拉起」统一加「启动失败：」前缀（与「游戏异常退出（退出码 N）」区分），
-        // 此处剥掉前缀后交给 .processStartFailed，避免与 errorDescription 的前缀重复。
-        if let range = message.range(of: "启动失败：") {
-            let reason = String(message[range.upperBound...])
-            return .processStartFailed(reason: reason.isEmpty ? message : reason)
-        }
-        if message.contains("无法创建实例") {
-            return .instanceNotFound(version: version)
-        }
-        if message.contains("启动前补全") {
-            return .fileVerificationFailed(reason: message)
-        }
-        if let major = requiredJavaMajor(in: message) {
-            return .javaNotFound(requiredMajorVersion: major)
-        }
         return .unknown(message)
-    }
-
-    /// 从「未找到满足版本要求 (Java 21+) 的 Java 安装」这类文案中提取最低 Java 主版本
-    private static func requiredJavaMajor(in message: String) -> Int? {
-        guard let range = message.range(of: #"Java (\d+)\+"#, options: .regularExpression) else { return nil }
-        return Int(message[range].dropFirst(5).dropLast())
     }
 }
 
