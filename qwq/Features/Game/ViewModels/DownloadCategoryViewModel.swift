@@ -1,32 +1,18 @@
 //
 //  DownloadCategoryViewModel.swift
-//  模块化收口：下载分类页（DownloadCategoryView）的状态与业务决策唯一持有者。
+//  下载分类页（DownloadCategoryView）的状态与业务决策唯一持有者。
 //
-//  收口范围（对标 ContentView → NavigationState / HomeInteractionState / DropInstallCoordinator）：
-//  - 持有侧边栏选中态、列表数据、搜索与分页、详情页选中态；
-//  - 承担数据来源决策（本地全量目录 / 游戏版本清单 / Modrinth 检索）、搜索过滤决策树、
-//    分页决策、请求归属校验，以及游戏版本清单 → 列表项的转换；
-//  - 版本清单取数与分类规则分别委托 Game 模块的 `VersionCatalogService` 与
-//    `VersionFilterUseCase`（Features/Game/Module/），本视图层不再直接触碰 `GameVersionManifest`。
+//  职责边界：持有侧边栏选中态、列表数据、搜索分页、详情页选中态；承担数据来源决策
+//  （本地全量目录 / 游戏版本清单 / Modrinth 检索）、搜索过滤决策树、请求归属校验与
+//  游戏版本清单 → 列表项转换；版本清单取数与分类规则委托 Game 模块的
+//  `VersionCatalogService` / `VersionFilterUseCase`。
 //
-//  刻意留在视图层的部分：
-//  - 布局计算（GeometryReader 列宽/卡片宽）、滚动网格、所有 withAnimation 调用与动画参数；
-//  - 侧边栏高亮 y 偏移（SidebarHighlight.offsets）、子项弹入透明度、内容淡入淡出等
-//    纯视图坐标与视觉状态；
-//  - 翻译状态对象 `CardTranslationModel`（视图以 @StateObject 持有，本视图模型按需接收其引用
-//    以调度预取，不接管其生命周期与订阅）。
+//  刻意留在视图层的部分：布局计算、滚动网格、动画调用、侧栏高亮偏移、翻译状态
+//  `CardTranslationModel` 的持有与调度（生命周期归视图层）。
 //
-//  线程约定：与收口前一致——所有异步回写都经 `MainActor.run`，派生状态刷新延迟到渲染事务外执行。
-//
-//  隔离标注说明：本类型标注 `@MainActor`，与 `NavigationState`（App/ViewModels）一致。
-//  收口前这些决策方法位于 `DownloadCategoryView`，而 `View` 协议带全局 actor 标注，
-//  遵循类型会被推断为同一 actor 隔离，故标注后隔离语义与收口前相同；
-//  这同时满足对 `CardTranslationModel`（`@MainActor` 类型）同步调用 `prefetch` 的要求。
-//
-//  依据条目：SwiftUI《View》/ Swift《Attributes》——被全局 actor 标注的协议，
-//  其遵循类型推断为该 actor 隔离。
-//  官方链接：https://developer.apple.com/documentation/swiftui/view
-//  官方链接：https://docs.swift.org/swift-book/documentation/the-swift-programming-language/attributes/
+//  线程约定：所有异步回写经 `MainActor.run`，派生状态刷新延迟到渲染事务外执行；
+//  本类型标注 `@MainActor`（View 协议带全局 actor 标注，与收口前隔离语义一致，
+//  并满足对 `CardTranslationModel` 同步调用 `prefetch` 的要求）。
 //
 
 import SwiftUI
