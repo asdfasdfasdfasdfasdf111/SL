@@ -179,6 +179,23 @@ cd "/Users/apple/Downloads/Swim111Launcher_副本" && SL_DERIVED=/tmp/SL-DD-r8 .
 同用例同地址 abort；隔离跑该 suite 4/4 通过；改动前后全量都是 0 断言失败。abort 后
 `xcodebuild` 退出码 65 属预期现象，**不是**代码问题判据，换全新 `SL_DERIVED` 重试即可。
 
+### 真机启动冒烟（2026-10-02 实测：路径 B 可行，路径 A 被宿主 abort 挡住）
+
+- **路径 A（`RealLaunchIntegrationTests`）**：当前环境**无条件不可用**——用例启动瞬间必崩
+  `pointer being freed was not allocated`（地址恒定 `0x2874d83d0`，ASLR 下同地址 = 确定性宿主
+  缺陷，即 TESTING.md §五「真实启动路径析构 `MinecraftInstance`/`MinecraftDirectory` 时踩到」）。
+  **已做 131b515 基线对照：同样必崩** ⇒ 与任何代码改动无关，别在测试宿主里反复试真实启动。
+- **路径 B（`SL_DEBUG_AUTO_LAUNCH=1`，推荐）**：直接跑 Debug app，走按钮同一条路径，
+  **实测成功**。证据（`versions/26.2-Fabric/logs/latest.log`）：
+  `Loading Minecraft 26.2 with Fabric Loader 0.19.3` +
+  `Backend library: LWJGL version 3.4.1-snapshot` + `Sound engine started` +
+  `Render thread: Created: ...atlas`（主菜单渲染）+ 三类致命错误（UnsatisfiedLinkError /
+  NoClassDefFoundError / Could not find or load main class）**全部为 0**。
+  用法：`xcodebuild ... -configuration Debug build` 后
+  `SL_DEBUG_AUTO_LAUNCH=1 SL_DEBUG_AUTO_LAUNCH_DELAY=4 /path/to/qwq.app/Contents/MacOS/qwq`，
+  约 15s 后 Java 进程（KnotClient + microsoft-25.jdk）被拉起；验完 `pkill -f KnotClient`。
+  注：Latest.log 里的 Realms 认证报错是离线假 token 的预期行为，非缺陷。
+
 ### 决策记录（后续接手者据此继续，勿重复下述判断）
 
 | 项 | 决策 | 依据 |
