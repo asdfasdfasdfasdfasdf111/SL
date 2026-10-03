@@ -51,12 +51,17 @@ final class DownloadDetailManager: ObservableObject {
     /// 同时同步到 DataManager.inprogressInstallTasks——MinecraftInstaller.createTask 内部靠它
     /// 查找加载器任务（tasks["fabric"/"forge"/"neoforge"]）来串联加载器安装
     /// 详情页跳入带非线性动画（interpolatingSpring 回弹，对标 PCL.Mac 页面切换手感），
+    /// 圆按钮弹入动画与详情页共用同一段 withAnimation（收口自 ModDetailView 的 0.28s 延迟点亮）。
     /// 在 manager 内部包裹，任何调用方（含后台回调）都能获得动画，不依赖调用方 withAnimation
     func start(_ tasks: InstallTasks) {
         self.tasks = tasks
         DataManager.shared.inprogressInstallTasks = tasks
         showCircleButton = true
+        circleScale = 0.01
+        circleOpacity = 0
         withAnimation(.interpolatingSpring(stiffness: 170, damping: 14, initialVelocity: 6)) {
+            circleScale = 1.0
+            circleOpacity = 1.0
             isPresented = true
         }
     }
@@ -74,6 +79,20 @@ final class DownloadDetailManager: ObservableObject {
         }
         tasks = .empty()
         showCircleButton = false
+        circleScale = 0.01
+        circleOpacity = 0
+    }
+
+    /// 报错路径收起圆按钮（resolve / 前置校验失败时调用）。
+    /// 仅在「当前没有任何任务在跑」时收起：若有别的下载正在进行（tasks 非空），
+    /// 按钮属于那个任务，绝不能收（误收与崩溃 #4 是同一类竞态）。
+    /// 与 dismiss(ownerID:) 的区别：dismiss 要求任务组已登记且归属匹配，报错路径
+    /// 任务从未 start()，dismiss 会被归属校验拒绝；本方法只复位按钮状态，不动 tasks。
+    func retractCircleButtonIfIdle() {
+        guard tasks.tasks.isEmpty else { return }
+        showCircleButton = false
+        circleScale = 0.01
+        circleOpacity = 0
     }
 
     /// 详情页开关（圆按钮点击触发：进详情页 / 回到刚才的页面，无返回键）

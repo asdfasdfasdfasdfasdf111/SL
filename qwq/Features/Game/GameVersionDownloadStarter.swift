@@ -101,8 +101,11 @@ enum GameVersionDownloadStarter {
                 await MainActor.run {
                     // 只操作全局单例与 settings（引用类型，生命周期与视图解耦）
                     // 带 ownerID：若已有其它下载正在进行（start 已把其任务组放进 manager），
-                    // 归属不一致 → 拒绝清理，绝对不动正在下载的任务引用
+                    // 归属不一致 → 拒绝清理，绝对不动正在下载的任务引用。
+                    // 报错发生时任务从未 start() → dismiss 的归属校验会拒绝清理（这是对的），
+                    // 但圆按钮可能已被本流程的"报错即失败"语义挂住 → 用空闲态收起兜底。
                     manager.dismiss(ownerID: ownerID)
+                    manager.retractCircleButtonIfIdle()
                     LaunchPanelState.shared.presentError("下载失败: \(error.localizedDescription)")
                 }
             }

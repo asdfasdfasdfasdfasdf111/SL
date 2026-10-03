@@ -254,16 +254,8 @@ struct ModDetailView: View {
         // 下载按钮弹动画（放大 → 缩小回弹，不消失；可取消 Task，视图销毁后不再写 @State）
         playDownloadBounce()
 
-        // 圆按钮弹入动画状态：先提取局部引用（闭包绝不隐式捕获 self 的 @State 指针）
-        let manager = downloadDetail
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
-            manager.showCircleButton = true
-            withAnimation(.interpolatingSpring(stiffness: 170, damping: 14)) {
-                manager.circleScale = 1.0
-                manager.circleOpacity = 1.0
-            }
-        }
-        
+        // 圆按钮不再在此提前点亮：点亮 + 弹入动画统由 DownloadDetailManager.start() 完成
+        // （resolve / 前置校验失败时任务从未 start，报错路径因此不会残留一个亮着的圆按钮）。
         // 下载路径决策（游戏版本页 → 版本安装；其余页面 → 文件下载）与加载器支持判定在 ViewModel；
         // 本视图只保留上述提示与动画调度，调用时点与收口前逐字一致
         viewModel.performDownload(pageType: pageType, item: item, manager: downloadDetail)

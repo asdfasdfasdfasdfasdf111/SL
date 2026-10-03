@@ -83,9 +83,13 @@ enum ModFileDownloadStarter {
                 await MainActor.run {
                     // 只操作全局单例与 settings（引用类型，生命周期与视图解耦）
                     // 只有本次确实 start 过才 dismiss（ownerID 非 nil 且归属一致才清），
-                    // 否则绝不动管理器里可能正在进行的其它下载
+                    // 否则绝不动管理器里可能正在进行的其它下载；
+                    // resolve 阶段失败（从未 start）→ 用空闲态收起圆按钮兜底，
+                    // 避免"报错后圆按钮永远挂着"（按钮点亮已收口到 start()，报错路径不该有按钮）。
                     if let capturedOwner {
                         DownloadDetailManager.shared.dismiss(ownerID: capturedOwner)
+                    } else {
+                        DownloadDetailManager.shared.retractCircleButtonIfIdle()
                     }
                     LaunchPanelState.shared.presentError("下载失败: \(error.localizedDescription)")
                 }
