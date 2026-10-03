@@ -194,3 +194,9 @@ abort，表现为"前几个测试类通过、之后无限重启"）。详见 `qw
 6. UI 收口：**已完成**——`ContentView` 只保留窗口壳、导航、全局任务入口
    （163 行，只渲染只转发；业务决策全部外置到 NavigationState / DropInstallCoordinator /
    LaunchPanelState / DownloadDetailManager）。
+7. 项目名 SL / 应用内名 qwq 双名并存：**已决（保留）**——仓库/符号前缀/Bundle ID
+   （`io.github.asdfasdfasdfasdfasdf111.SL`）用 SL，源码目录/工程名/App 壳（`qwq/`、
+   `qwq.xcodeproj`、`qwqApp.swift`）用 qwq，README 首行已作「SL（应用内名 qwq）」的
+   如实声明。不执行全量统一：改 Bundle ID 属破坏性变更（影响已装用户钥匙串/偏好），
+   `SLApp`/`SLLaunch*` 符号前缀改名牵动 100+ 文件且触及启动链核心，`qwq/` 目录改名
+   会破坏 PBXFileSystemSynchronizedRootGroup 引用关系——三者风险均远超收益。

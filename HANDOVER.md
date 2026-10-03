@@ -250,6 +250,9 @@ D1–D9 九条缺陷关闭、失败分类结构化（去掉中文文案反猜与
 
 **长期保留项（勿动）**：`GameSessionStore` 待接线、纯协议三件、`gameSubCategory`
 中文 rawValue、`filter` 死字段删留（详见 `ARCHITECTURE.md` §十处置记录）。
+另：**项目名 SL / 应用内名 qwq 双名并存**为已决保留——README 首行「SL（应用内名 qwq）」
+即如实声明；改 Bundle ID / `SLApp`+`SLLaunch*` 符号前缀 / `qwq/` 目录名均为破坏性或
+高风险变更，判定依据见 `ARCHITECTURE.md` §十-7（2026-10-03）。
 
 ---
 
