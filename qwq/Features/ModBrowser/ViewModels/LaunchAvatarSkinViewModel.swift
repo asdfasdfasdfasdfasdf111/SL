@@ -171,7 +171,7 @@ final class LaunchAvatarSkinViewModel: ObservableObject {
         if let data = DefaultSkinService().skinData(forUUID: offlineUUID) {
             return data
         }
-        if let builtin = Bundle.main.url(forResource: "stf", withExtension: "png") {
+        if let builtin = Bundle.main.url(forResource: "avatar", withExtension: "png") {
             return try? Data(contentsOf: builtin)
         }
         return nil
@@ -205,6 +205,6 @@ final class LaunchAvatarSkinViewModel: ObservableObject {
             return skinURL
         }
 
-        return Bundle.main.url(forResource: "stf", withExtension: "png")
+        return Bundle.main.url(forResource: "avatar", withExtension: "png")
     }
 }

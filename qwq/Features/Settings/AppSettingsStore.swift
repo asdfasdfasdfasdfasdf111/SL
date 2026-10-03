@@ -91,7 +91,7 @@ final class AppSettingsStore: ObservableObject {
         if let path = UserDefaults.standard.string(forKey: UDK.avatarImagePath) {
             self.avatarImageURL = URL(fileURLWithPath: path)
         } else {
-            self.avatarImageURL = Bundle.main.url(forResource: "stf", withExtension: "png")
+            self.avatarImageURL = Bundle.main.url(forResource: "avatar", withExtension: "png")
         }
 
         if let path = UserDefaults.standard.string(forKey: UDK.skinImagePath) {

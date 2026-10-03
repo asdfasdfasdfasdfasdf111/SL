@@ -235,7 +235,7 @@ enum OfflineSkinService {
                 settings.skinImageURL = skinDestURL
             }
             settings.avatarImageURL = skinURL
-        } else if let builtinURL = Bundle.main.url(forResource: "stf", withExtension: "png") {
+        } else if let builtinURL = Bundle.main.url(forResource: "avatar", withExtension: "png") {
             settings.skinImageURL = builtinURL
             settings.avatarImageURL = builtinURL
         }
@@ -246,7 +246,7 @@ enum OfflineSkinService {
         guard !isLaunching else { return }
         if let existingURL = settings.avatarImageURL,
            FileManager.default.fileExists(atPath: existingURL.path),
-           !existingURL.lastPathComponent.hasPrefix("stf") {
+           !existingURL.lastPathComponent.hasPrefix("avatar") {
             return
         }
         // 此处原先无条件 `saveSkinImage(Data())`：返回值从未被使用（死赋值），
@@ -255,7 +255,7 @@ enum OfflineSkinService {
         // 撞上 loadDefaultIfNeeded 的「头像存在即提前返回」分支 → 皮肤文件被永久置空。
         // 去掉该写入；皮肤落盘统一由下面确有数据的 `saveSkinImage(skinData)` 负责。
         guard !settings.selectedMinecraftVersion.isEmpty else {
-            if let builtinURL = Bundle.main.url(forResource: "stf", withExtension: "png") {
+            if let builtinURL = Bundle.main.url(forResource: "avatar", withExtension: "png") {
                 if let avatarURL = saveAvatar(from: builtinURL, fileName: "default_avatar.png") {
                     settings.avatarImageURL = avatarURL
                 } else {
@@ -275,7 +275,7 @@ enum OfflineSkinService {
             let avatarName = "game_avatar_\(settings.selectedMinecraftVersion).png"
             if let avatarURL = saveAvatar(from: skinURL, fileName: avatarName) {
                 settings.avatarImageURL = avatarURL
-            } else if let builtinURL = Bundle.main.url(forResource: "stf", withExtension: "png") {
+            } else if let builtinURL = Bundle.main.url(forResource: "avatar", withExtension: "png") {
                 settings.avatarImageURL = builtinURL
             }
             // 保存皮肤原图
@@ -288,7 +288,7 @@ enum OfflineSkinService {
             } else {
                 settings.skinImageURL = skinURL
             }
-        } else if let builtinURL = Bundle.main.url(forResource: "stf", withExtension: "png") {
+        } else if let builtinURL = Bundle.main.url(forResource: "avatar", withExtension: "png") {
             settings.avatarImageURL = builtinURL
             settings.skinImageURL = builtinURL
         }

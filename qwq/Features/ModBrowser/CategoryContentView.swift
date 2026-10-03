@@ -312,8 +312,8 @@ struct CategoryContentView: View {
             case .sponsor:
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 180))], spacing: 20) {
-                        SponsorCard(imageName: "zanzhu1", title: "赞助方式一")
-                        SponsorCard(imageName: "zanzhu2", title: "赞助方式二")
+                        SponsorCard(imageName: "sponsor1", title: "赞助方式一")
+                        SponsorCard(imageName: "sponsor2", title: "赞助方式二")
                         ThanksCard()
                     }
                     .padding(.horizontal, 32)
