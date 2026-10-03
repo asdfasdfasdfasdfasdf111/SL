@@ -1,14 +1,17 @@
+//
+//  DownloadCategoryView.swift
+//  分类页主视图（原 GameViews.swift，2026-10-03 更名对齐内容）。
+//  搬迁历史：早期该文件混装多个组件，后逐项拆出——
+//  ScrollBounceModifier → UI/、VersionButton → UI/、JavaPickerView → Features/Java/、
+//  数据模型 → Models/GameModels.swift、状态与取数 → ViewModels/DownloadCategoryViewModel[+Orchestration]。
+//  现本文件只保留 `DownloadCategoryView` 一个视图（滚动锚点/分页切片/按需翻译在
+//  Features/ModBrowser/CategoryResultsGrid.swift）。
+//
+
 import SwiftUI
 import AppKit
 import Combine
 import zlib
-
-// ScrollBounceModifier → UI/ScrollBounceModifier.swift
-// VersionButton → UI/VersionButton.swift
-// JavaPickerView, JavaPickerRow → Features/Java/JavaPickerView.swift
-// GameSubCategory, GameSidebarSection, ModrinthTagMap, DownloadedItem → Models/GameModels.swift
-// 状态与业务决策（选中态/搜索/分页/取数）→ ViewModels/DownloadCategoryViewModel.swift
-// 视图入口编排决策（数据源预热/本地目录就绪刷新/详情页进出归属）→ ViewModels/DownloadCategoryViewModel+Orchestration.swift
 
 struct DownloadCategoryView: View {
     /// 主题来源由调用方注入（全局单例外部持有），本视图仅向下透传
