@@ -2,98 +2,13 @@ import Foundation
 import Cocoa
 import Combine
 
-/// 兼容层：桥接旧 UI 代码到启动核心（MinecraftLauncher）
-extension MinecraftLauncher {
-    /// 用户主动终止标志：terminate() 时置 true，completion 回调据此判断不报异常
-    public var isUserTerminated: Bool {
-        get { _objCIsUserTerminated }
-        set { _objCIsUserTerminated = newValue }
-    }
-    /// 终止游戏进程：标记为用户主动关闭
-    /// 注意：使用 launcher 自己的 currentProcess，避免多游戏共用 instance 时终止错误进程
-    public func terminate() {
-        _objCIsUserTerminated = true
-        currentProcess?.terminate()
-    }
-    /// 日志缓冲：logHandler 在 session 建立前到达时暂存于此，session 建立后 flush。
-    /// ⚠️ 它只为「会话建立前」那一小段窗口服务 —— 是否还处在那个窗口由
-    /// `hasEverHadSession` 判定，不是「当前有没有会话」。
-    public var pendingLogs: [String] {
-        get { _objCPendingLogs }
-        set { _objCPendingLogs = newValue }
-    }
-    /// 该 launcher 是否**建过**会话（不管现在还在不在）。
-    /// 用途：界定 `pendingLogs` 的合法生命周期。用户把日志卡关掉后，后续日志行已经
-    /// 没有消费者，必须丢弃 —— 否则会一直往 `pendingLogs` 追加，而唯一的清理点只有
-    /// `LaunchSessionManager.addSession`（只在建会话时执行一次），于是内存只涨不落：
-    /// Forge/NeoForge 刷屏级的长会话下，关掉日志卡反而让内存无限增长。
-    public var hasEverHadSession: Bool {
-        get { _objCHasEverHadSession }
-        set { _objCHasEverHadSession = newValue }
-    }
-}
-
-private var _objCIsUserTerminatedKey: UInt8 = 0
-private var _objCPendingLogsKey: UInt8 = 0
-private var _objCHasEverHadSessionKey: UInt8 = 0
-extension MinecraftLauncher {
-    /// 用 objc 关联对象存储 isUserTerminated（不修改 MinecraftLauncher 核心类的存储）
-    private var _objCIsUserTerminated: Bool {
-        get { (objc_getAssociatedObject(self, &_objCIsUserTerminatedKey) as? NSNumber)?.boolValue ?? false }
-        set { objc_setAssociatedObject(self, &_objCIsUserTerminatedKey, NSNumber(value: newValue), .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
-    }
-    private var _objCPendingLogs: [String] {
-        get { (objc_getAssociatedObject(self, &_objCPendingLogsKey) as? NSArray) as? [String] ?? [] }
-        set { objc_setAssociatedObject(self, &_objCPendingLogsKey, newValue as NSArray, .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
-    }
-    /// 同上：opaque 标志位，未设置时按 false（等价于「还没建过会话」）
-    private var _objCHasEverHadSession: Bool {
-        get { (objc_getAssociatedObject(self, &_objCHasEverHadSessionKey) as? NSNumber)?.boolValue ?? false }
-        set { objc_setAssociatedObject(self, &_objCHasEverHadSessionKey, NSNumber(value: newValue), .OBJC_ASSOCIATION_RETAIN_NONATOMIC) }
-    }
-}
-
 /// 兼容启动入口：从旧 UI 参数构建 MinecraftInstance 并启动
 /// 注意：本函数不阻塞，立即返回；启动过程通过回调通知 UI
 /// 前置条件：`username` 必须已通过用例层校验（trim 后非空、无英文引号、≤16 UTF-16 code unit，
 /// 空值调用方需自行兜底为 "Player"），本函数不再重复校验。
 /// 一次启动「准备阶段」的取消令牌。
-///
-/// **为什么需要它**：`GameSession.launcher.terminate()` 只能终止**已经起来**的进程。而从点「启动」
-/// 到进程真正 `run()` 之间，还要走「启动前补全」（内部 600s 超时，可能下载数百 MB）与 Java 选择，
-/// 这段时间里**根本还没有 launcher 对象可供终止**。于是用户在这段时间点取消，原先只是复位界面，
-/// 后台准备链完全感知不到，会一路跑完并把游戏拉起来 —— **点了取消，几十秒后游戏自己弹出来**。
-///
-/// **与 `isUserTerminated` 的分工**：后者语义是「进程已经起了、用户要终止它」；本令牌语义是
-/// 「进程还没起、别再起了」。两者不能互相替代，因为准备阶段取不到 launcher。
-///
-/// **消费方**：`slLaunchInternal` 在五个判定点读它（函数入口 / 补全前 / 补全等待期间 200ms 分片轮询 /
-/// Java 选择前 / 拉起进程前），任何一个命中都以 `LaunchError.cancelled` 收口，
-/// 且**不会再把游戏拉起来**。令牌由 `LaunchCoordinator.start` 每次启动新建一个，
-/// 挂在 `LaunchSessionManager` 上供电源按钮取消。
-///
-/// 显式 `nonisolated`：创建在主线程，读取在准备链的后台线程，必须脱离默认的 MainActor 推断
-/// （与 `LaunchFailureNoticeGate` 的治理方式一致）。锁内只做内存操作，不跨 `await` 持有。
-public nonisolated final class LaunchCancellationToken: @unchecked Sendable {
-    private let lock = NSLock()
-    private var cancelled = false
 
-    public init() {}
-
-    /// 置位取消。可重复调用（重复取消无副作用）。
-    public func cancel() {
-        lock.lock()
-        cancelled = true
-        lock.unlock()
-    }
-
-    /// 是否已被取消。准备链在每个**不可逆动作**之前读一次。
-    public var isCancelled: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return cancelled
-    }
-}
+/// 定义已拆出：`LaunchCancellationToken` 见 SLCore/LaunchCancellationToken.swift（2026-10-03 搬家）。
 
 public func slLaunch(
     version: String,
@@ -517,47 +432,5 @@ private func slLaunchInternal(
                 completion(launcher, .failure(LaunchError.processStartFailed(reason: reason)))
             }
         }
-    }
-}
-
-/// 跨线程传递启动前补全的错误结果（后台线程用信号量同步等待 Task 完成）
-private final class FixResultBox {
-    var error: Error?
-}
-
-/// 「启动前补全」等待的三种收尾方式。原先只有二元判定（超时 / 未超时），
-/// 加入取消后需要区分：取消要立刻返回且**不报错**（用户主动取消不是失败）。
-private enum FixWaitOutcome {
-    /// 补全 Task 已 signal（成功或失败，错误由 `FixResultBox` 携带）
-    case finished
-    /// 等待期间用户点击取消 → 立刻中止（不等补全跑完）
-    case cancelled
-    /// 600s 上限耗尽
-    case timedOut
-}
-
-/// 跨线程共享的一次性「已放弃」标志。
-///
-/// 用途：`slLaunchInternal` 在补全超时后置位，补全 Task 的进度回调据此**停止向 UI 投递**；
-/// 回调可能在主线程（`MultiFileDownloader` 经 `MainActor.run` 回调）而置位发生在等待线程，
-/// 故用锁保护（锁内只做内存读写，不回调外部、不跨 await 持有）。
-/// 显式 `nonisolated`：需脱离 `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` 的默认推断
-/// （仅靠 `@unchecked Sendable` 不足以阻止 MainActor 推断），锁内只做内存读写，不回调
-/// 外部、不跨 await 持有。与同形态的原子门控做法一致（原参照物
-/// `LaunchCoordinator.TerminationResumeGate` 已随 2026-10-02 死代码清理删除）。
-private nonisolated final class AbandonFlag: @unchecked Sendable {
-    private let lock = NSLock()
-    private var abandoned = false
-
-    var isSet: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return abandoned
-    }
-
-    func set() {
-        lock.lock()
-        defer { lock.unlock() }
-        abandoned = true
     }
 }
