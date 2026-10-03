@@ -2,11 +2,12 @@
 
 [![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-blue)](https://www.apple.com/macos/)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](./LICENSE)
-[![Status](https://img.shields.io/badge/status-Beta%200.1.10-orange)](./CHANGELOG.md)
+[![Status](https://img.shields.io/badge/status-1.0-orange)](./CHANGELOG.md)
 
 SL（应用内名 **qwq**）是一个使用 **Swift + SwiftUI** 原生编写的 macOS Minecraft 启动器。启动核心为从零实现的 Swift 原生代码（`qwq/SLCore`），部分算法（如离线 UUID 生成）移植自 PCL2，均在源码注释中标注了来源。
 
-> ⚠️ **项目处于早期 Beta 阶段**（v0.1.x），部分功能尚未完成，详见下方[功能状态](#功能状态)。欢迎提 Issue 和 PR，但请勿用于日常主力启动。
+> ⚠️ **外置登录与微软账号登录为桩实现**（运行期按离线账号处理，见[功能状态](#功能状态)）。
+> 欢迎提 Issue 和 PR。
 
 ## 功能状态
 
@@ -18,7 +19,7 @@ SL（应用内名 **qwq**）是一个使用 **Swift + SwiftUI** 原生编写的 
 - **Mod 下载**：内置 Modrinth 全量离线目录（约 12MB gzip，随包分发），支持分类浏览、搜索、中文项目名翻译
 - **模组包**：Modrinth 模组包下载与安装
 - **皮肤**：离线皮肤加载、头像裁剪、皮肤资源包应用
-- **其他**：崩溃自捕获（写入 `~/Library/Logs/qwq_crash.log`）、游戏日志实时管道（跨块 UTF-8 安全解码）、下载缓存治理（内存 LRU + 磁盘两级）
+- **其他**：崩溃自捕获（写入 `~/Library/Logs/SL_crash.log`）、游戏日志实时管道（跨块 UTF-8 安全解码）、下载缓存治理（内存 LRU + 磁盘两级）
 
 ### 🚧 未完成（计划中）
 
@@ -30,7 +31,7 @@ SL（应用内名 **qwq**）是一个使用 **Swift + SwiftUI** 原生编写的 
 ## 构建要求
 
 - macOS 13.0+
-- Xcode 15+（项目使用 Xcode 26.3 创建）
+- Xcode 26.3（工程以此为创建与验证环境；Swift 语言模式 5.0，`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`）
 - 依赖通过 Swift Package Manager 自动解析：[SwiftyJSON](https://github.com/SwiftyJSON/SwiftyJSON)、[ZIPFoundation](https://github.com/weichsel/ZIPFoundation)
 
 ## 构建
@@ -56,15 +57,15 @@ SL/
 │   ├── Core/               # 跨功能领域抽象（Download 引擎门面 / Events）
 │   ├── Features/           # 按功能划分（Launch / Game / Download / ModBrowser / Translation / Skin / Java / Settings / Theme）
 │   ├── SLCore/            # 原生重写的启动核心（下载 / 安装 / 启动 / 加载器）
-│   ├── Models/  Services/  UI/
+│   ├── Models/  UI/
 │   └── Assets.xcassets
 ├── qwqTests/               # 单元测试（XCTest target，目录自动同步）
 ├── docs/                   # 架构与重构文档
 ├── scripts/                # 辅助脚本（Modrinth 目录爬虫等）
 ├── README.md
 ├── HANDOVER.md             # 交接文档（接手者先读这个）
-├── REFACTOR_PLAN.md
-├── CHANGELOG.md            # 更新日志
+├── ARCHITECTURE.md         # 当前真实存在的架构与分层
+├── CHANGELOG.md            # 更新日志（2026-10 起冻结，变更看 git log）
 └── LICENSE
 ```
 
@@ -74,11 +75,11 @@ SL/
 |---|---|
 | **怎么上手、怎么验证、坑在哪** | **[`HANDOVER.md`](./HANDOVER.md)** ← 接手者从这里开始 |
 | 这是什么应用、功能状态 | `README.md`（本文） |
-| 重构的方向与分层原则 | `ARCHITECTURE.md` |
-| 重构计划与历史进度 | `REFACTOR_PLAN.md` |
-| 14 个模块的完成度盘点 | `docs/MODULE-INVENTORY.md` |
+| 当前真实存在的架构与分层 | `ARCHITECTURE.md` |
+| 重构的历史计划（多为已成历史） | `REFACTOR_PLAN.md` |
+| 模块完成度盘点（部分作废，见文首警示） | `docs/MODULE-INVENTORY.md` |
 | 测试怎么跑、覆盖了什么 | `qwqTests/TESTING.md` |
-| 每一轮改了什么、为什么 | `CHANGELOG.md` |
+| 每一轮改了什么、为什么 | `CHANGELOG.md`（2026-10 起冻结，变更看 git log） |
 | 哪些是桩实现 | `qwq/SLCore/STUBS_AUDIT.md` |
 
 ## 致谢与引用说明

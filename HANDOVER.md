@@ -16,9 +16,9 @@
 > | `CHANGELOG.md` | 每一轮改了什么、为什么（2026-10 起冻结，不再手写新条目） |
 > | `qwq/SLCore/STUBS_AUDIT.md` | 哪些是桩实现、哪些看着像桩其实是真代码 |
 >
-> 基线（2026-10-01）：分支 `refactor/modular`，
-> `qwq/` 下 **234 个 Swift 文件 / 30,493 行**，测试 **21 文件 / 250 用例**（`grep -c 'func test'` 口径）。
-> 用例数以 CI 为准（`.github/workflows/test.yml`）。
+> 基线（2026-10-02）：`qwq/` 下 **237 个 Swift 文件 / 约 31,000 行**，测试 **57 个文件**。
+> 文件数与行数会随每次改动漂移，复核用 `find qwq -name '*.swift' | wc -l`；用例数以 CI 为准
+> （`.github/workflows/test.yml`）。
 
 ---
 
@@ -65,13 +65,13 @@ SL_DEBUG_AUTO_LAUNCH=1 SL_DEBUG_AUTO_LAUNCH_DELAY=4 \
 qwq/
 ├── App/           13 文件  应用入口、装配根、窗口壳、App 级组件（ContentView 等）
 ├── Core/          12 文件  跨功能领域抽象：Download 引擎门面 / Events
-├── Features/     117 文件  按功能划分（最大的一块）
+├── Features/     118 文件  按功能划分（最大的一块）
 │   ├── Download/ Launch/ Game/ ModBrowser/
 │   └── Java/ Settings/ Skin/ Theme/ Translation/
-├── SLCore/        78 文件  原生重写的启动核心（下载 / 安装 / 启动 / 加载器 / 账号 / 存储）
-├── UI/            11 文件  Notices / Shell / Modifiers 等公共 UI
-├── Models/  Services/      少量未归口文件
-└── qwqTests/      21 文件  单元测试（目录自动同步，新增 .swift 会自动进 target）
+├── SLCore/        80 文件  原生重写的启动核心（下载 / 安装 / 启动 / 加载器 / 账号 / 存储）
+├── UI/            13 文件  Notices / Shell / Modifiers 等公共 UI
+├── Models/         1 文件  纯数据模型（GameModels 等）
+└── qwqTests/      57 文件  单元测试（目录自动同步，新增 .swift 会自动进 target）
 ```
 
 **从哪读起**（按推荐顺序）：
@@ -113,7 +113,10 @@ qwq/
 - **有编译错误时后续文件的告警会被吞掉**，所以「告警数变少」可能是被短路了，不是变好。
 - 裸 `grep -c 'error:'` 会把源码上下文行也计进去。
 
-**当前基线：口径一 0 错 / 48 告警，口径二 0 错 / 24 告警。**
+**当前基线：口径一 0 错 / 57 条唯一告警（2026-10-02），口径二 0 错 / 12 条唯一告警。**
+口径一的 57 = 56 条「ignoring import」脚本产物（= 测试文件数）+ 1 条真实告警
+（`NoticeCenterTests` 的 Sendable 捕获）；口径二的 12 条全是真实告警。
+上限即「基线值」，任何真实告警新增都会让 typecheck 红线失败（具体见 `scripts/typecheck.sh` 注释）。
 复核方式（只读，安全）：
 
 ```bash
@@ -230,22 +233,23 @@ abort 之后**换全新的 `SL_DERIVED`**（旧派生目录会退化，`build-fo
 
 ## 六、当前状态与下一步
 
-**已完成**（详见 `REFACTOR_PLAN.md` 与 `CHANGELOG.md`）：模块骨架、装配根收口、
-`Stubs.swift` 按职责拆分、JavaResolverBridge / DropInstallCoordinator 注入点与用例、
-`AnyAccount` 持久化契约前置用例、D1–D9 九条已确认缺陷全部关闭。
+**已完成**（详见 `REFACTOR_PLAN.md`、`ARCHITECTURE.md` 与 `git log`）：
+模块骨架、装配根收口、`Stubs.swift` 按职责拆分（`Notices/`、`Storage/`、`Account/`
+等，原文件已删除）、双启动流程合并（`MinecraftInstance.launch()` 流程 A 已删除，
+收敛到 `slLaunchInternal` 单一流程）、`AnyAccount` 持久化契约前置用例、
+D1–D9 九条缺陷关闭、失败分类结构化（去掉中文文案反猜与假进度分母）、
+`LaunchFix` 拆分接线、VersionUtils 规范化隔离、注释文化末轮收口。
 
-**待办**（按风险从低到高）：
+**待办（剩余实义项很少）**：
 
 | # | 事项 | 状态 |
 |---|---|---|
-| ① | 接入 CI | 🧱 **卡在凭据权限**：本机 git 凭据是 `gho_` OAuth token，scope 无 `workflow`，推不动 workflow 文件。需人工处理（`gh auth login` 重登 / 补 scope / 网页建） |
-| ② | `AnyAccount` 模型分层 | **风险最高**。前置**已完成**（持久化契约已钉死）。注意 `getAccount()` 的回写分支仍无覆盖 —— 要安全测它，需先给 `CodableAppStorage` 注入 `UserDefaults` 实例 |
-| ③ | 旧兼容层清理 | **被「双启动流程合并」阻塞**（先合并，否则会断掉回退路径）。⚠️ `Stubs.swift` 这个文件**已经不存在了** —— 已按职责拆成 7 个名副其实的文件（`Notices/`、`Storage/`、`Account/`、`DataManager.swift` 等，见 `fc541af`）。剩下的活是清理**其中普查出的 9 项无引用成员**，不是拆文件 |
-| ④ | 双启动流程合并 | 验证门槛已过（真机启动已跑通），合并本体未开始 |
+| ① | CI 首次实跑 | 🧱 workflow 文件（`test.yml` / `probe.yml`）已就位，但**尚未在 CI 上实际跑过**（本地无网络出口验证 runner 环境）。启用前先手动触发 `probe.yml` 看清 runner 的 Xcode 版本，再依赖门禁 —— 否则「绿在本地、红在 CI」 |
+| ② | `AnyAccount` 模型分层 | **已决：保持现状**（SLOP-AUDIT REV3 C）。枚举形状保留为兼容历史持久化数据解码，运行期经 `unimplementedError` 显式告警；实现 OAuth 属新功能，超出当前范畴。仅存的未知是 `getAccount()` 回写分支无覆盖（与 ③ 同类） |
+| ③ | 已知覆盖缺口 | 装配根幂等门无用例、`ModDragInstaller.findInstances` 匹配规则、`AccountManager.getAccount()` 回写分支、`NoticeCenter` 300s 兜底超时（登记在 `qwqTests/TESTING.md`，属有意延后，非遗漏） |
 
-**已知的覆盖缺口**（登记在 `qwqTests/TESTING.md`，不是遗漏）：
-装配根幂等门无用例、`ModDragInstaller.findInstances` 的匹配规则、
-`AccountManager.getAccount()` 回写分支、`NoticeCenter` 的 300s 兜底超时。
+**长期保留项（勿动）**：`GameSessionStore` 待接线、纯协议三件、`gameSubCategory`
+中文 rawValue、`filter` 死字段删留（详见 `ARCHITECTURE.md` §十处置记录）。
 
 ---
 
