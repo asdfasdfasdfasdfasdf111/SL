@@ -7,7 +7,7 @@
 //
 //  职责：弹窗的四个模型类型（`PopupButton` / `PopupButtonStyle` / `PopupType` / `PopupModel`）
 //        与投递入口 `PopupManager`。
-//  边界：不含界面绘制（展示由 `UI/Notices/NoticeCenter.swift` 与 `NoticeOverlay` 承担）；
+//  边界：不含界面绘制（展示由 `SLCore/Notices/NoticeCenter.swift` 与 `UI/Notices/NoticeOverlay` 承担）；
 //        `showAsync` 当前无生产侧调用方，保留原因见其注释，**不得因「无调用方」删除**。
 //
 //  注释引用约定：一律写「文件 + 符号/场景」，**不写行号**（行号会随任何一次编辑漂移）。
@@ -18,7 +18,7 @@ import Combine
 
 /// 弹窗按钮模型。
 /// 使用方：`SLCore/Minecraft/Download/MinecraftInstallTask.swift`、`LoaderInstallTasks.swift`
-/// （`[PopupButton.ok]`）；另有 `UI/Notices/NoticeCenter.swift` 的映射实现
+/// （`[PopupButton.ok]`）；另有 `SLCore/Notices/NoticeCenter.swift` 的映射实现
 /// 与 `qwqTests/NoticeCenterTests.swift` 的构造。
 public struct PopupButton {
     public let label: String
@@ -29,14 +29,14 @@ public struct PopupButton {
         self.style = style
     }
 }
-/// 按钮样式。使用方：`PopupButton` 的默认参数、`UI/Notices/NoticeCenter.swift`、
+/// 按钮样式。使用方：`PopupButton` 的默认参数、`SLCore/Notices/NoticeCenter.swift`、
 /// `qwqTests/NoticeCenterTests.swift`（`.danger`）。
 public enum PopupButtonStyle { case normal, accent, danger }
-/// 弹窗类型。使用方：`UI/Notices/NoticeCenter.swift`（`NoticeLevel(_ type: PopupType)`）、
+/// 弹窗类型。使用方：`SLCore/Notices/NoticeCenter.swift`（`NoticeLevel(_ type: PopupType)`）、
 /// `qwqTests/NoticeCenterTests.swift`。
 public enum PopupType { case info, warning, error }
 /// 弹窗内容模型。使用方：`PopupManager.show(_:)` / `showAsync(_:)`（本文件）、
-/// `UI/Notices/NoticeCenter.swift`（`Notice(_ model: PopupModel)`）、
+/// `SLCore/Notices/NoticeCenter.swift`（`Notice(_ model: PopupModel)`）、
 /// `qwqTests/NoticeCenterTests.swift`。
 public struct PopupModel {
     public let type: PopupType

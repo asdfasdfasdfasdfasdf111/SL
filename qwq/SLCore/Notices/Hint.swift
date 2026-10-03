@@ -8,7 +8,9 @@
 //
 //  职责：`hint(_:_:)` 与其级别枚举 `HintType`。
 //  边界：只做「写日志 + 投递提示」，不含任何界面代码；实际展示由
-//        `UI/Notices/NoticeCenter.swift` 与根视图上的 `NoticeOverlay` 承担。
+//        `SLCore/Notices/NoticeCenter.swift` 与根视图上的 `UI/Notices/NoticeOverlay` 承担。
+//        （NoticeCenter 于 2026-10-04 从 UI/Notices 下沉到 SLCore/Notices，
+//        消除 SLCore→UI 分层倒置，见 ARCHITECTURE.md §二。）
 //
 //  注释引用约定：一律写「文件 + 符号/场景」，**不写行号**（行号会随任何一次编辑漂移）。
 //
@@ -34,6 +36,6 @@ public func hint(_ message: String, _ type: HintType = .info) {
     )
 }
 /// 提示级别。使用方：本文件的 `hint(_:_:)` 默认参数，以及
-/// `UI/Notices/NoticeCenter.swift` 的 `NoticeLevel.init(_ type: HintType)` 映射；
+/// `SLCore/Notices/NoticeCenter.swift` 的 `NoticeLevel.init(_ type: HintType)` 映射；
 /// 三个 case 在 `qwqTests/NoticeCenterTests.swift` 有断言覆盖。
 public enum HintType { case info, finish, critical }

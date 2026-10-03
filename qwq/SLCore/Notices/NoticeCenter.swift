@@ -116,6 +116,12 @@ public extension Notice {
 
 /// 全局统一的用户提示通道。
 ///
+/// **归属**：本类型 2026-10-04 从 `UI/Notices/` 下沉到 `SLCore/Notices/`。
+/// 它是 `@MainActor` 的全局通知通道（不渲染任何 UI——渲染在 `UI/Notices/NoticeOverlay`），
+/// 本质是基础设施层组件；放 UI 目录导致 `SLCore/Notices/Hint.swift`/`Popup.swift`
+/// 反向依赖 UI 层（分层倒置，SLOP-AUDIT REV2 §2 判据 A）。下沉后 SLCore 内部自洽，
+/// UI 层只保留渲染（NoticeOverlay 消费 `NoticeCenter.shared`，方向 UI→SLCore 正确）。
+///
 /// 设计约定：
 ///  - 唯一的可变状态（`current` / `history` / `pending`）都在 MainActor 上，
 ///    因此对 SwiftUI 是安全的；
