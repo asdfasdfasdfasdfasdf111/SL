@@ -263,3 +263,36 @@ D1–D9 九条缺陷关闭、失败分类结构化（去掉中文文案反猜与
 - **不新增功能**：主题、多目录、新动画一律冻结
 - **不做**「顺手一起改」：删死代码 /「现代化」换 API 一律不做
 - **不做**注释性产出：注释不是产出，改动要有硬依据
+
+## 八、多模型并行工作区清扫记录（2026-10-03）
+
+> 背景：2026-10-02~03 期间有多个模型会话（本主会话、微软登录会话、Kimi 只读扫描、
+> Deepseek 会话）并行操作同一工作区。Kimi 会话只读、未产生改动；**微软登录会话在工作树
+> 层面写入了完整登录实现**（未提交），与本文「七、不实现微软登录」的已决方针直接冲突，
+> 且引用不存在的类型（`MicrosoftAccount` / `MicrosoftAuthService` / `ms.isUsable`），
+> 属半成品。Deepseek 会话无独立改动落盘。
+
+### 清扫动作（2026-10-03）
+
+1. **还原 6 个被污染的已跟踪文件**（污染 diff 备份于 `/tmp/sl-junk/parallel-cleanup-*/` 各 `.patch`）：
+   - `SLCore/SLLaunchBridge.swift`（微软账号选择分支，33 增/9 删）
+   - `Features/Launch/LaunchCoordinator.swift`（删离线校验逻辑，41 增/30 删）
+   - `Features/Launch/Adapters/MinecraftInstanceLaunchService.swift`（令牌刷新链路，13 增/2 删）
+   - `SLCore/Account/AnyAccount.swift`（`.microsoft` 桩→真实实现，118 增/28 删）
+   - `Features/ModBrowser/CategoryContentView.swift`（微软登录 UI 接线，20 增/1 删）
+   - `qwqTests/AccountPersistenceCompatTests.swift`（测试随实现改写，72 增/25 删）
+2. **隔离未跟踪微软草稿**（移至 `/tmp/sl-junk/parallel-cleanup-*/`）：
+   `Features/Account/`（MicrosoftLoginCardView/ViewModel）、`SLCore/Account/MicrosoftAccount.swift`、
+   `MicrosoftAuthService.swift`，及 4 个 `.tmpdir` 残留。
+3. **还原后验收**：typecheck 两口径 0 错误；真实编译 BUILD SUCCEEDED；
+   全量 **731 passed / 2 skipped / 0 failed**（abort 地址与基线一致）。
+4. **无代码 diff 说明**：污染全部停留于工作树（从未提交），还原即回到 HEAD 基线，
+   本次不产生代码提交；本登记为清扫行为的唯一落盘。
+
+### 教训（供后续会话）
+
+- 微软登录会话的产出**未提交、未通过编译**（引用了不存在的 API），其工作树改动与
+  「不实现微软登录」方针冲突——若需续做，源码见 `/tmp/sl-junk/ms-auth-draft/` 与
+  `/tmp/sl-junk/parallel-cleanup-*/`，但必须先变更本文「七、不实现」决策再动代码。
+- 多会话并行同一工作区时：**一切产出先 `git status` 确认是否已跟踪**；未跟踪文件不参与
+  任何提交，还原用 `git checkout --`（先备份 diff），防交叉污染。
