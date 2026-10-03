@@ -244,7 +244,7 @@ D1–D9 九条缺陷关闭、失败分类结构化（去掉中文文案反猜与
 
 | # | 事项 | 状态 |
 |---|---|---|
-| ① | CI 首次实跑 | 🧱 workflow 文件（`test.yml` / `probe.yml`）已就位，但**尚未在 CI 上实际跑过**（本地无网络出口验证 runner 环境）。启用前先手动触发 `probe.yml` 看清 runner 的 Xcode 版本，再依赖门禁 —— 否则「绿在本地、红在 CI」 |
+| ① | CI 首次实跑 | 🧱 workflow 文件（`test.yml` / `probe.yml`）已就位，但**尚未在 CI 上实际跑过**。启用唯一解 = **仓库管理员本机 `gh auth login`（授权 `workflow` scope）或网页 UI 推送**。2026-10-03 已实测三条通路全部被 GitHub 拒绝（勿再重复尝试）：① API 创建 workflow 文件 → 404；② PAT push（含 workflow）→ refusing to allow ... without workflow scope；③ **deploy key（SSH）push → 同样拒绝**（错误 `refusing to allow an OAuth App to create or update workflow ... without workflow scope`）。识别出的 deploy key 实为 OAuth App 凭据形态，无 workflow scope 一律拦。启用后先手动触发 `probe.yml` 看清 runner 的 Xcode 版本，再依赖门禁 —— 否则「绿在本地、红在 CI」 |
 | ② | `AnyAccount` 模型分层 | **已决：保持现状**（SLOP-AUDIT REV3 C）。枚举形状保留为兼容历史持久化数据解码，运行期经 `unimplementedError` 显式告警；实现 OAuth 属新功能，超出当前范畴。仅存的未知是 `getAccount()` 回写分支无覆盖（与 ③ 同类） |
 | ③ | 已知覆盖缺口 | **已闭合（2026-10-03）**：装配根幂等门 → `AppCompositionRoot.registerCallCount` 单调计数 + `testCompositionRootIdempotencyGateBlocksSecondCall`；`ModDragInstaller.findInstances` 匹配规则 → 拆「扫描/匹配」两层 + `ModDragInstallerTests` 6 条（临时目录驱动）；`NoticeCenter` 300s 兜底 → `responseTimeoutNanos` 可注入 + 0.05s 断言。`AccountManager.getAccount()` 回写分支已在 2026-10-02 F 节覆盖（本条为过期登记）。详见 TESTING.md §4.5/4.6 |
 
