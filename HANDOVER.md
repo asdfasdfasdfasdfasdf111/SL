@@ -246,7 +246,7 @@ D1–D9 九条缺陷关闭、失败分类结构化（去掉中文文案反猜与
 |---|---|---|
 | ① | CI 首次实跑 | 🧱 workflow 文件（`test.yml` / `probe.yml`）已就位，但**尚未在 CI 上实际跑过**（本地无网络出口验证 runner 环境）。启用前先手动触发 `probe.yml` 看清 runner 的 Xcode 版本，再依赖门禁 —— 否则「绿在本地、红在 CI」 |
 | ② | `AnyAccount` 模型分层 | **已决：保持现状**（SLOP-AUDIT REV3 C）。枚举形状保留为兼容历史持久化数据解码，运行期经 `unimplementedError` 显式告警；实现 OAuth 属新功能，超出当前范畴。仅存的未知是 `getAccount()` 回写分支无覆盖（与 ③ 同类） |
-| ③ | 已知覆盖缺口 | 装配根幂等门无用例、`ModDragInstaller.findInstances` 匹配规则、`AccountManager.getAccount()` 回写分支、`NoticeCenter` 300s 兜底超时（登记在 `qwqTests/TESTING.md`，属有意延后，非遗漏） |
+| ③ | 已知覆盖缺口 | **已闭合（2026-10-03）**：装配根幂等门 → `AppCompositionRoot.registerCallCount` 单调计数 + `testCompositionRootIdempotencyGateBlocksSecondCall`；`ModDragInstaller.findInstances` 匹配规则 → 拆「扫描/匹配」两层 + `ModDragInstallerTests` 6 条（临时目录驱动）；`NoticeCenter` 300s 兜底 → `responseTimeoutNanos` 可注入 + 0.05s 断言。`AccountManager.getAccount()` 回写分支已在 2026-10-02 F 节覆盖（本条为过期登记）。详见 TESTING.md §4.5/4.6 |
 
 **长期保留项（勿动）**：`GameSessionStore` 待接线、纯协议三件、`gameSubCategory`
 中文 rawValue、`filter` 死字段删留（详见 `ARCHITECTURE.md` §十处置记录）。

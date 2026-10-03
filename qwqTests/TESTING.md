@@ -441,12 +441,14 @@ func preScan() {
   ⚠️ 顺带把类显式标了 `@MainActor`（口径二下语义不变，因为它本来就被推断为主 actor 隔离）：
   闭包参数标 `@MainActor` 后，只有显式隔离的调用方才被允许同步调它，否则「默认隔离」口径报
   `#ActorIsolatedCall`。这也是「显式标注能把静默的隔离误用变成编译错误」的一个实例。
-- **未覆盖（有意不覆盖）**：真实的 `ModVersionDetector.detectVersion` 与 `ModDragInstaller.findInstances`
-  不在用例里驱动 —— **不是因为没有注入点（现在有了），而是因为驱动它们会写用户的真实游戏目录**：
-  `findInstances` 除「选定根目录」外还会全盘扫描本机游戏目录，并对每个扫到的根目录调
-  `MinecraftVersionManager.getVersions` → 内部 `normalizeVersionFolderNames` **会重命名磁盘上的版本文件夹
-  并改写其中的 json**。测试不该触发这类写副作用。代价：`findInstances` 自身的匹配规则（含它那个
-  `savedRoot` 分支）仍无用例；要覆盖它得先把「扫描」与「匹配」拆开，或注入一个目录列举器。
+- **匹配规则已覆盖（2026-10-03）**：`ModDragInstallerTests`（+6 条）直接驱动
+  `findInstances(versionRange:savedRoot:scanning:)` —— 把「扫描根目录」与「匹配+去重」
+  拆成两层后，测试传**临时目录**即可驱动真实逻辑（去重 / 精确匹配 / 段边界前缀防误判
+  / 空数组 / savedRoot 单独匹配 / 多根目录）。安全前提：`getVersions(from:)` 自
+  2026-10-02 起**默认零写副作用**（`autoNormalizeOnRead` 默认关闭，不再重命名磁盘文件夹、
+  改写 json），本段「驱动它会写用户真实游戏目录」的旧结论已过时。
+  仍不驱动的是生产入口 `findInstances(for:savedRoot:)`（内部调 `findGameRootDirectories`
+  全盘扫描）与 `ModVersionDetector.detectVersion`。
 - `confirmModpackInstall` 的成功分支**不可达**（不是「没测」）：`ModpackInstaller.install` 的最后一步
   `installLoader` 无条件抛 `InstallError.loaderInstallUnsupported`（刻意为之，见其文档注释：
   宁可真失败，也不假装装上加载器）⇒ `presentMessage("整合包安装完成")` 永远执行不到。
@@ -454,10 +456,10 @@ func preScan() {
 
 ### 4.6 `NoticeCenter` 的 300s 兜底超时
 
-- 未覆盖：`responseTimeoutNanos`（300s）到期后按默认按钮（下标 0）应答。
-  真等 5 分钟不现实，时限被 `private static let` 固定，无注入点。
-- 已覆盖的等价分支：`dismiss()` 走同一个 `choose(notice, index: 0)`。
-- 计划：把超时时长改为可注入（`init` 参数或 internal static var）后，用 0.05s 断言。
+- **已覆盖（2026-10-03）**：`responseTimeoutNanos` 由 `private static let` 放宽为
+  `internal static var`（默认值仍 300s，生产行为不变），
+  `testPresentAndWaitTimesOutToDefaultIndex` 注入 0.05s 后断言超时到期按默认按钮
+  （下标 0）应答且关闭当前提示 —— 这正是 §4.5 同类「需注入点」缺口的收口方式。
 
 ### 4.7 `DownloadMerger` 的真实实现 —— **已随删除闭合（2026-10-01）**
 
