@@ -45,6 +45,12 @@ struct CategoryContentView: View {
     /// `@StateObject` 的理由同上：生命周期绑在本视图上，自己创建、自己持有。
     @StateObject private var skinPatch = SkinPatchCoordinator()
 
+    /// 微软账号登录（设备码流程）的状态机与副作用编排归
+    /// Features/Account/MicrosoftLoginViewModel.swift：账号行按钮驱动它发起登录，
+    /// 设备码覆盖层卡片订阅它的 `phase` 渲染；登录成功经 `AccountManager.upsert`
+    /// 持久化并设为已选账号。`@StateObject` 的理由同上：生命周期绑在本视图上。
+    @StateObject private var microsoftLogin = MicrosoftLoginViewModel()
+
     /// 用户名输入框聚焦时的放大反馈（1.0 ↔ 1.1），配合 `.punchySpring`。
     @State private var usernameFieldScale: CGFloat = 1.0
     @FocusState private var isUsernameFocused: Bool
@@ -62,7 +68,7 @@ struct CategoryContentView: View {
             // ⚠️ 这个数字是各子元素高度的**手工累加**（上下留白 + 头像 + 间距 + 用户名框 +
             // 启动按钮 + 预留日志位 + 皮肤按钮 + 间距 + 版本文案）——
             // 增删卡片内元素时必须同步改它，否则卡片会被内容撑开或压扁。
-            let cardHeight: CGFloat = 20 + avatarSize + 12 + 44 + 50 + 80 + 64 + 4 + 28
+            let cardHeight: CGFloat = 20 + avatarSize + 12 + 44 + 50 + 80 + 64 + 4 + 28 + 44
             launchContent(cardWidth: cardWidth, buttonWidth: buttonWidth, avatarSize: avatarSize, logCardHeight: logCardHeight, cardHeight: cardHeight)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -71,6 +77,8 @@ struct CategoryContentView: View {
         // 是窗口中第一个可聚焦控件时，AppKit 会在成为 key window 时自动将其置为 firstResponder。
         // 显式声明默认焦点为 false，让用户主动点击/按 Tab 才聚焦，而不是打开启动器就被选中。
         .defaultFocus($isUsernameFocused, false)
+        // 启动页出现时恢复已选微软账号（AccountManager 有可用账号 → 账号行直接显示已登录）
+        .onAppear { microsoftLogin.loadStoredAccount() }
         // ⚠️ .defaultFocus(false) 只约束 SwiftUI 默认焦点，AppKit 仍会把窗口首个 TextField
         // 自动置为 firstResponder（表现为打开即聚焦/全选）。此处挂一个占位 NSView，
         // 在页面加入窗口、布局完成后主动 makeFirstResponder(nil) 清掉焦点，仅启动生效
@@ -115,6 +123,15 @@ struct CategoryContentView: View {
                     .transition(.opacity)
                     .animation(.punchySpring, value: skinPatch.state.presentationKey)
             }
+            // 微软登录设备码卡片：**居中覆盖层**（与皮肤补丁卡同一层约定）。
+            // 只有「等用户在浏览器输入设备码」期间显示；登录成功/取消/失败时
+            // 条件不再成立自动移除（失败文案显示在账号行，见 MicrosoftAccountRow）。
+            if microsoftLogin.isWaitingForCode {
+                MicrosoftLoginCardView(viewModel: microsoftLogin)
+                    .zIndex(10)
+                    .transition(.opacity)
+                    .animation(.punchySpring, value: microsoftLogin.phase)
+            }
         }
     }
     /// 左侧主卡片：自上而下＝版本文案 → 头像 → 用户名输入 → 皮肤按钮 →（弹簧）→ 启动按钮。
@@ -130,6 +147,9 @@ struct CategoryContentView: View {
             avatarView(avatarSize: avatarSize)
             usernameField
             skinButton
+            // 微软账号行：未登录 → 「微软账号登录」按钮；已登录 → 档案名 + 退出。
+            // 高度约 28 + 卡片 spacing 16 ≈ 44，已计入上方 cardHeight 的手工累加。
+            MicrosoftAccountRow(viewModel: microsoftLogin)
             Spacer(minLength: 0)
             LaunchButton(
                 buttonWidth: buttonWidth,

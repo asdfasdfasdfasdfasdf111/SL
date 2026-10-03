@@ -145,8 +145,19 @@ public final class MinecraftInstanceLaunchService: LaunchService, @unchecked Sen
     /// 令牌语义与判定点见 `SLLaunchBridge.swift` 的 `LaunchCancellationToken`。
     @discardableResult
     public func launch(_ request: LaunchRequest, cancellation: LaunchCancellationToken?) async throws -> LaunchResult {
-        // 启动前参数预处理：离线用户名校验（原桥接层 slLaunchInternal 首段上移至用例层，判定逐条等价）
-        let safeUsername = try Self.validatedUsername(request.offlineUsername)
+        // 启动前参数预处理：
+        //  - 选中**可用**的微软账号时：身份来自账号档案（用户名 / UUID / 令牌都在
+        //    `MicrosoftAccount` 里），先刷新令牌链——令牌临近过期（needsRefresh）时
+        //    重走 MSA refresh → XBL → XSTS → MC 全链路，失败（如 refresh token 失效）
+        //    直接抛 `MicrosoftAuthError`，由调用方以 `localizedDescription` 提示用户重新登录；
+        //  - 否则：离线用户名校验（原桥接层 slLaunchInternal 首段上移至用例层，判定逐条等价）。
+        let safeUsername: String
+        if let ms = AccountManager.shared.getAccount()?.microsoftAccount, ms.isUsable {
+            try await ms.refreshIfNeeded()
+            safeUsername = ms.name
+        } else {
+            safeUsername = try Self.validatedUsername(request.offlineUsername)
+        }
         let sessionID = UUID()
         let startedAt = Date()
         // 桥接层理论上只回调一次 completion（MinecraftLauncher 内部有一次性门控），

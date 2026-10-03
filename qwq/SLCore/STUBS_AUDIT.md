@@ -23,6 +23,11 @@
 >
 > 下文中形如 `qwq/SLCore/Stubs.swift` / `qwq/SLCore/Stubs.swift:195` 的位置标注**描述的是拆分前的状态**，
 > 按上表换算即可 —— 这些表格是第二轮普查的快照，本身不再逐格改写（见下面的「阅读须知」）。
+>
+> **后续变更（2026-10-04）：`.microsoft` 已由桩变为真实实现**（设备码流程 + 令牌链 +
+> 旧数据迁移，见 `SLCore/Account/MicrosoftAccount.swift` 与 `MicrosoftAuthService.swift`，
+> 决策与验收见 `HANDOVER.md` §九）。下文凡断言「微软登录未实现 / 按离线处理 / 无 UI 入口」
+> 的表格行，描述的是 2026-10-02 审计快照的旧状态，已不反映现状；`.yggdrasil` 维持桩不变。
 
 ## 0. 结论摘要
 

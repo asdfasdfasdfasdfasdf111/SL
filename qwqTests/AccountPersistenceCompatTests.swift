@@ -100,6 +100,23 @@ final class AccountPersistenceCompatTests: XCTestCase {
         .offline(OfflineAccount(name, UUID(uuidString: uuid)!))
     }
 
+    /// 微软账号夹具（新形状载荷）。id 显式固定，与 `OfflineAccount` 夹具一样避免依赖随机值。
+    /// 字段集合即 MicrosoftAccount 的持久化形状
+    /// （id/uuid/name/msaRefreshToken/accessToken/accessTokenExpiry），
+    /// 由本文件的 `testCurrentEncoderStillProducesSynthesizedShape` 与
+    /// `testRoundTripPreservesIdentityFieldsAndKind` 钉住。
+    private func makeMicrosoft(id: String = AccountPersistenceCompatTests.fixedId,
+                               name: String = "Steve") -> MicrosoftAccount {
+        MicrosoftAccount(
+            id: UUID(uuidString: id)!,
+            uuid: UUID(uuidString: AccountPersistenceCompatTests.fixedUuid)!,
+            name: name,
+            msaRefreshToken: "msa-refresh-token",
+            accessToken: "mc-access-token",
+            accessTokenExpiry: Date().addingTimeInterval(3600)
+        )
+    }
+
     private static func snapshotRealAccountKeys() -> (accounts: Data?, accountId: Data?) {
         (UserDefaults.standard.data(forKey: accountsKey),
          UserDefaults.standard.data(forKey: accountIdKey))
@@ -118,26 +135,38 @@ final class AccountPersistenceCompatTests: XCTestCase {
         XCTAssertNil(decoded[0].unimplementedError, "`.offline` 是已实现种类，不得自报未实现")
     }
 
-    /// `.microsoft` / `.yggdrasil` 这两个**只为兼容历史数据而保留**的 case 必须仍能解码
-    /// —— 删掉它们就等于让老用户的整份 `[AnyAccount]` 一起解码失败。
-    /// 同时钉住「解出来的未实现账号仍会自报未实现」，不得被静默当成已实现。
-    func testLegacyUnimplementedKindsStillDecodeAndSelfReport() async throws {
+    /// 模型变更（2026-10-…，微软登录落地）后的兼容契约：
+    ///  - **`.microsoft` 旧载荷（OfflineAccount 形状）** 必须仍能解码，且被**迁移为 `.offline`**
+    ///    —— 桩时代微软账号运行期本就按离线账号处理，迁移不丢用户名/UUID，
+    ///    也不因一条旧数据拖垮整份 `[AnyAccount]` 解码；
+    ///  - **`.yggdrasil`** 仍是桩：解码后自报未实现，不得被当成已实现。
+    func testLegacyMicrosoftPayloadMigratesToOfflineAndYggdrasilSelfReports() async throws {
         for caseName in ["microsoft", "yggdrasil"] {
             let decoded = try JSONDecoder().decode([AnyAccount].self,
                                                   from: legacyAccountsJSON(caseName: caseName))
             XCTAssertEqual(decoded.count, 1, "\(caseName) 的历史数据应能解码")
 
-            switch decoded[0].unimplementedError {
-            case .microsoftLoginNotImplemented:
-                XCTAssertEqual(caseName, "microsoft")
-            case .yggdrasilLoginNotImplemented:
-                XCTAssertEqual(caseName, "yggdrasil")
-            case nil:
-                XCTFail("\(caseName) 解码后必须自报未实现，实际返回 nil")
+            if caseName == "microsoft" {
+                // 旧微软件数据迁移为 .offline：
+                //  - 字段（id/uuid/name）必须逐字保留（迁移不得丢数据）
+                //  - 迁移后是已实现种类，不得自报未实现
+                //  - 不出现微软账号形状（microsoftAccount 为 nil）
+                switch decoded[0] {
+                case .offline: break
+                default: XCTFail("旧 .microsoft 载荷必须迁移为 .offline，实际为别的 case")
+                }
+                XCTAssertEqual(decoded[0].id.uuidString, Self.fixedId)
+                XCTAssertEqual(decoded[0].uuid.uuidString, Self.fixedUuid)
+                XCTAssertEqual(decoded[0].name, "Steve")
+                XCTAssertNil(decoded[0].unimplementedError, "迁移为 .offline 后是已实现种类，不得自报未实现")
+                XCTAssertNil(decoded[0].microsoftAccount, "旧载荷不包含微软账号字段，microsoftAccount 必须为 nil")
+            } else {
+                // yggdrasil 保持桩语义：解码后自报未实现
+                XCTAssertEqual(decoded[0].unimplementedError, .yggdrasilLoginNotImplemented,
+                               "yggdrasil 解码后必须自报未实现")
+                XCTAssertTrue(decoded[0].accountKindDescription.contains("尚未实现"),
+                              "yggdrasil 的展示文案必须显式标注尚未实现，避免 UI 把它呈现为可用登录方式")
             }
-
-            XCTAssertTrue(decoded[0].accountKindDescription.contains("尚未实现"),
-                          "\(caseName) 的展示文案必须显式标注尚未实现，避免 UI 把它呈现为可用登录方式")
         }
     }
 
@@ -161,10 +190,11 @@ final class AccountPersistenceCompatTests: XCTestCase {
 
     // MARK: - B. 写方向：编码器必须仍然产出同一形状
 
-    /// 当前编码器必须仍产出「合成形状」：顶层数组 → 单键 case 名 → `_0` → `{id,uuid,name}`。
+    /// 当前编码器必须仍产出「合成形状」：顶层数组 → 单键 case 名 → `_0` → 载荷字段集合。
     /// 这是「旧版本能不能读新数据」的判据。
     /// ⚠️ 只比**结构**（键集合），不比字符串：实测合成 Codable 的键序不稳定。
     func testCurrentEncoderStillProducesSynthesizedShape() async throws {
+        // 离线形状：`{offline:{_0:{id,uuid,name}}}`
         let data = try JSONEncoder().encode([makeOffline()])
         let shape = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [Any])
         XCTAssertEqual(shape.count, 1)
@@ -179,15 +209,29 @@ final class AccountPersistenceCompatTests: XCTestCase {
         let fields = try XCTUnwrap(payload["_0"] as? [String: Any])
         XCTAssertEqual(Set(fields.keys), ["id", "uuid", "name"],
                        "OfflineAccount 的持久化字段集合不得增减；增减都会让旧数据解码失败")
+
+        // 微软形状：`{microsoft:{_0:{id,uuid,name,msaRefreshToken,accessToken,accessTokenExpiry}}}`。
+        // 字段集合必须与 `MicrosoftAccount` 的 Codable 合成形状一致（键序不稳定，只比键集合）。
+        let msData = try JSONEncoder().encode([AnyAccount.microsoft(makeMicrosoft())])
+        let msShape = try XCTUnwrap(try JSONSerialization.jsonObject(with: msData) as? [Any])
+        let msEntry = try XCTUnwrap(msShape[0] as? [String: Any])
+        XCTAssertEqual(Set(msEntry.keys), ["microsoft"], "微软账号 case 键必须是 `microsoft`")
+        let msPayload = try XCTUnwrap(msEntry["microsoft"] as? [String: Any])
+        XCTAssertEqual(Set(msPayload.keys), ["_0"], "微软账号关联值同样以 `_0` 为键")
+        let msFields = try XCTUnwrap(msPayload["_0"] as? [String: Any])
+        XCTAssertEqual(Set(msFields.keys),
+                       ["id", "uuid", "name", "msaRefreshToken", "accessToken", "accessTokenExpiry"],
+                       "MicrosoftAccount 的持久化字段集合不得增减")
     }
 
-    /// 往返：三种 case 编解码一轮后，`id` / `uuid` / `name` 逐一保留，且 case 不被换掉。
+    /// 往返：offline / microsoft（新形状）/ yggdrasil 编解码一轮后，字段逐一保留，且 case 不被换掉。
     func testRoundTripPreservesIdentityFieldsAndKind() async throws {
-        let payload = OfflineAccount("Steve", UUID(uuidString: Self.fixedUuid)!)
+        let offline = OfflineAccount("Steve", UUID(uuidString: Self.fixedUuid)!)
+        let microsoft = makeMicrosoft()
         let cases: [(name: String, value: AnyAccount)] = [
-            ("offline", .offline(payload)),
-            ("microsoft", .microsoft(payload)),
-            ("yggdrasil", .yggdrasil(payload))
+            ("offline", .offline(offline)),
+            ("microsoft", .microsoft(microsoft)),
+            ("yggdrasil", .yggdrasil(offline))
         ]
 
         for (caseName, original) in cases {
@@ -201,9 +245,19 @@ final class AccountPersistenceCompatTests: XCTestCase {
             // case 必须原样保留（`.microsoft` 不得被降级成 `.offline` 或反之）
             switch (caseName, roundTripped.unimplementedError) {
             case ("offline", nil): break
-            case ("microsoft", .microsoftLoginNotImplemented): break
+            case ("microsoft", nil): break // 微软登录已实现（2026-10-…），不得自报未实现
             case ("yggdrasil", .yggdrasilLoginNotImplemented): break
             default: XCTFail("\(caseName) 往返后被换成了别的 case")
+            }
+
+            // 微软账号的专属字段逐一保留（新形状契约）
+            if caseName == "microsoft" {
+                let rt = try XCTUnwrap(roundTripped.microsoftAccount, "往返后必须仍是微软账号")
+                XCTAssertEqual(rt.msaRefreshToken, microsoft.msaRefreshToken)
+                XCTAssertEqual(rt.accessToken, microsoft.accessToken)
+                XCTAssertEqual(rt.accessTokenExpiry, microsoft.accessTokenExpiry,
+                               "accessTokenExpiry 应精确保留（Date 按秒精度落盘）")
+                XCTAssertEqual(rt.uuid, microsoft.uuid)
             }
         }
     }
@@ -275,8 +329,12 @@ final class AccountPersistenceCompatTests: XCTestCase {
     /// 很容易顺手改成「case + 字段全比」，那会改变去重与列表刷新的行为。
     func testEqualityIsByIDOnlyAndIgnoresKind() async {
         let payload = OfflineAccount("Steve", UUID(uuidString: Self.fixedUuid)!)
-        XCTAssertEqual(AnyAccount.offline(payload), AnyAccount.microsoft(payload))
         XCTAssertEqual(AnyAccount.offline(payload), AnyAccount.yggdrasil(payload))
+        // 微软账号与离线账号虽 id 相同（夹具显式传入 fixedId），但种类不同——仍按 id 判等。
+        // 这钉住的是「`==` 只比 id、不看 case」的既成事实（微软登录落地后语义不变）。
+        let microsoft = makeMicrosoft(id: payload.id.uuidString)
+        XCTAssertEqual(AnyAccount.offline(payload), AnyAccount.microsoft(microsoft))
+        XCTAssertEqual(AnyAccount.microsoft(microsoft), AnyAccount.yggdrasil(payload))
     }
 
     /// `id`（随机、`getAccount()` 的匹配依据）与 `uuid`（由用户名按 PCL2 算法确定）是**两件不同的事**：

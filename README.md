@@ -6,7 +6,7 @@
 
 SL（应用内名 **qwq**）是一个使用 **Swift + SwiftUI** 原生编写的 macOS Minecraft 启动器。启动核心为从零实现的 Swift 原生代码（`qwq/SLCore`），部分算法（如离线 UUID 生成）移植自 PCL2，均在源码注释中标注了来源。
 
-> ⚠️ **外置登录与微软账号登录为桩实现**（运行期按离线账号处理，见[功能状态](#功能状态)）。
+> ⚠️ **外置登录（Yggdrasil）为桩实现**（运行期按离线账号处理，见[功能状态](#功能状态)）。
 > 欢迎提 Issue 和 PR。
 
 ## 功能状态
@@ -19,11 +19,15 @@ SL（应用内名 **qwq**）是一个使用 **Swift + SwiftUI** 原生编写的 
 - **Mod 下载**：内置 Modrinth 全量离线目录（约 12MB gzip，随包分发），支持分类浏览、搜索、中文项目名翻译
 - **模组包**：Modrinth 模组包下载与安装
 - **皮肤**：离线皮肤加载、头像裁剪、皮肤资源包应用
+- **MSA 微软账号登录**：**已实现**。复用微软官方 Minecraft Launcher 的公开
+  client id（`00000000402b5328`，public client，无 secret、无需注册 Azure 应用），
+  走 OAuth 2.0 设备码流程：浏览器打开 microsoft.com/link 输入设备码 → 轮询拿
+  MSA 令牌 → 补齐 XBL→XSTS→MC 全链路（见 `qwq/SLCore/Account/MicrosoftAuthService.swift`）。
+  登录成功持久化账号（`AccountManager`），启动前自动刷新令牌链
 - **其他**：崩溃自捕获（写入 `~/Library/Logs/SL_crash.log`）、游戏日志实时管道（跨块 UTF-8 安全解码）、下载缓存治理（内存 LRU + 磁盘两级）
 
 ### 🚧 未完成（计划中）
 
-- **微软账号登录**：当前为桩实现（`SLCore/Account/AnyAccount.swift` 中 `AnyAccount.microsoft` 退化为离线账号）
 - **外置登录（authlib-injector / Yggdrasil）**：桩实现
 - **主题系统**：仅基础框架
 - **多 Minecraft 目录管理**：仅默认目录

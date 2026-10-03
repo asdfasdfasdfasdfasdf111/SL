@@ -99,18 +99,31 @@ private func slLaunchInternal(
         return
     }
 
-    // 设置离线账号（PCL2 移植：UUID 走 McLoginLegacyUuid，accessToken = UUID）
-    let account = OfflineAccount(username)
+    // 账号选择（微软登录已实现，2026-10-…）：
+    // 若 AccountManager 选中了**可用的微软账号**，用它的档案身份与令牌启动；
+    // 否则回退原离线逻辑（username 参数来自 UI 的离线用户名输入）。
+    // 无论走哪条分支，`options.account` 都承载真实的账号种类，
+    // 后续「启动前的最小化设置」处按种类注入对应令牌。
     let options = LaunchOptions()
-    options.playerName = username
-    options.uuid = account.uuid
-    options.account = .offline(account)
     options.skipResourceCheck = true
+    if let selected = AccountManager.shared.getAccount(),
+       case .microsoft(let ms) = selected, ms.isUsable {
+        options.playerName = ms.name
+        options.uuid = ms.uuid
+        options.account = .microsoft(ms)
+    } else {
+        // 离线账号（PCL2 移植：UUID 走 McLoginLegacyUuid，accessToken = UUID）
+        let account = OfflineAccount(username)
+        options.playerName = username
+        options.uuid = account.uuid
+        options.account = .offline(account)
+    }
 
     // 未实现账号告警（迁自原启动流程，治理口径不变）：
-    // 微软 / Yggdrasil 登录流程尚未实现，运行期一律按离线账号处理，必须显式告知用户，
-    // 避免其误以为本次启动已完成联网登录。本路径只构造离线账号，
-    // 因此未实现账号只可能来自持久化的账号选择（AccountManager）。
+    // 微软登录已实现（2026-10-…）；Yggdrasil 登录流程尚未实现，运行期按离线账号处理，
+    // 必须显式告知用户，避免其误以为本次启动已完成联网登录。本路径在上方账号选择
+    // 分支按 AccountManager 的已选账号构造（离线 or 微软），未实现账号只可能来自
+    // 持久化的账号选择（AccountManager 的 .yggdrasil 旧数据）。
     if let selectedAccount = AccountManager.shared.getAccount(),
        let unimplemented = selectedAccount.unimplementedError {
         warn("\(selectedAccount.accountKindDescription)：\(unimplemented.errorDescription ?? "该功能尚未实现")")
@@ -249,7 +262,18 @@ private func slLaunchInternal(
     let launcher = MinecraftLauncher(instance)
 
     // 沿用原启动流程中启动前的最小化设置
-    account.putAccessToken(options: options)
+    // 令牌注入按账号种类分派：离线/Yggdrasil 注入「UUID 本身」（PCL2 规则），
+    // 微软账号注入真实的 Minecraft access token（三种 `putAccessToken` 均为同步实现）。
+    switch options.account {
+    case .offline(let account):
+        account.putAccessToken(options: options)
+    case .microsoft(let ms):
+        ms.putAccessToken(options: options)
+    case .yggdrasil(let account):
+        account.putAccessToken(options: options)
+    case nil:
+        break
+    }
 
     // MARK: Java 选择：统一走 manifest 优先的动态策略（收口到 JavaResolver，P3-1）
     // 原先这里有一段「DataManager 为空时触发 JavaManager.preScanJavaAsync + 3s 等待」的预扫描：

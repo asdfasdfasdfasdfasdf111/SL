@@ -259,8 +259,8 @@ D1–D9 九条缺陷关闭、失败分类结构化（去掉中文文案反猜与
 ## 七、不要做什么
 
 - **不做**：动态 `.bundle` 加载、`NSClassFromString`、XPC、插件市场、`Plugin.json` 清单
-- **不实现**：微软登录 / Yggdrasil 登录（本轮范围外，只做「不再假装支持」）
-- **不新增功能**：主题、多目录、新动画一律冻结
+- **不实现**：Yggdrasil 外置登录（仍在桩态，仅保留枚举形状兼容旧数据解码）；~~微软登录~~ **已于 2026-10-04 采纳落地**（见 §九：设备码流程 + MSA→XBL→XSTS→MC 令牌链 + 旧数据迁移，连带推翻本行原「不实现微软登录」决策）
+- **不新增功能**：主题、多目录、新动画一律冻结（微软登录为上述例外，因实现已就绪且评估合格）
 - **不做**「顺手一起改」：删死代码 /「现代化」换 API 一律不做
 - **不做**注释性产出：注释不是产出，改动要有硬依据
 
@@ -308,3 +308,40 @@ D1–D9 九条缺陷关闭、失败分类结构化（去掉中文文案反猜与
   `/tmp/sl-junk/parallel-cleanup-*/`，但必须先变更本文「七、不实现」决策再动代码。
 - 多会话并行同一工作区时：**一切产出先 `git status` 确认是否已跟踪**；未跟踪文件不参与
   任何提交，还原用 `git checkout --`（先备份 diff），防交叉污染。
+
+## 九、微软账号登录采纳登记（2026-10-04）
+
+> **决策**：采纳工作树中的微软登录实现（含 `MicrosoftAccount.swift` /
+> `MicrosoftAuthService.swift` / `Features/Account/` UI 与启动接线），
+> 推翻 §七「不实现微软登录」旧方针。质量评估合格（typecheck 0 错 → 真实编译
+> BUILD SUCCEEDED → 全量 732/2/0），实现细节见提交信息。
+
+### 实现摘要（供后续维护）
+
+- **认证**：`MicrosoftAuthService`（nonisolated 无状态纯函数）。设备码流程复用微软官方
+  Minecraft Launcher 公开 client id `00000000402b5328`（public client，无 secret，
+  PCL2/HMCL 通行做法）；五步令牌链 MSA→XBL→XSTS→MC→档案一个不省。
+- **账号模型**：`MicrosoftAccount`（`Account` 协议真实实现）：持 `msaRefreshToken` +
+  `accessToken` + 过期时刻；`refresh()` 重走全链并原地回写；`needsRefresh` 提前 5 分钟
+  判定；`profile.id` 32-hex → 标准 UUID。
+- **旧数据兼容**：桩时代写入的 `.microsoft` 载荷（OfflineAccount 形状）解码失败后按旧
+  形状解并**迁移为 `.offline`**（与桩时代运行期行为一致），不丢用户名/UUID；
+  `testLegacyMicrosoftPayloadMigratesToOfflineAndYggdrasilSelfReports` 钉死契约。
+- **错误语义**：`MicrosoftAuthError`（认证失败：网络/拒绝/无 Xbox/无正版/已占用/
+  refresh 失效/取消）与 `AccountError`（未实现）刻意分离，语义相反。
+- **UI**：`MicrosoftLoginViewModel`（@MainActor 状态机 + OSAllocatedUnfairLock 取消令牌）
+  + `MicrosoftLoginCardView`（纯展示设备码卡片）。
+- **启动接线**：SLLaunchBridge 账号选择分支（可用微软账号→档案身份+令牌；否则回退离线）；
+  MinecraftInstanceLaunchService 启动前 `refreshIfNeeded()`；令牌注入按种类分派。
+- **保留桩**：Yggdrasil 不实现（枚举形状留作旧数据解码兼容，运行期按离线处理）。
+
+### 与 §八清扫记录的关系
+
+§八的「还原 6 个文件、隔离微软草稿」是**当时的方针内动作**（不实现微软登录）；
+本 §九是**此后**的采纳决策，二者不矛盾——还原防污染、采纳定去留，最终以本 §九为准。
+被 §八隔离备份的实现草稿即本次采纳的主体（已在 `/tmp/sl-junk/` 留档）。
+
+### 维护提示
+
+- client id 为借用的官方公开 id（无自有 Azure 应用）；若微软收紧策略需改为自有应用注册。
+- access/refresh token 随账号明文存 UserDefaults（CodableAppStorage），如需更安全可改 Keychain。
