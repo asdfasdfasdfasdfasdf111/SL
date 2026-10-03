@@ -54,7 +54,9 @@ public nonisolated struct SharedConstants {
         self.tempURL = applicationSupportURL.appendingPathComponent("Temp")
         self.authlibInjectorURL = applicationSupportURL.appendingPathComponent("authlib-injector.jar")
         
-        let branch = Bundle.main.object(forInfoDictionaryKey: "BRANCH") as? String
-        self.branch = (branch?.isEmpty ?? true) ? "本地构建" : branch!
+        let branch = (Bundle.main.object(forInfoDictionaryKey: "BRANCH") as? String)?
+            .trimmingCharacters(in: .whitespaces) ?? ""
+        // 空串/缺失一律回退「本地构建」，唯一一处分支信息来源
+        self.branch = branch.isEmpty ? "本地构建" : branch
     }
 }

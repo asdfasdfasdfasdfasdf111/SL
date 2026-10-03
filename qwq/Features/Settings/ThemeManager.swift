@@ -62,7 +62,7 @@ class ThemeManager: ObservableObject {
 /// 「固定」的离线 UUID —— 名字有误导：它并**不**按用户名生成，永远返回同一个硬编码值。
 /// 作用只是让离线模式下跨启动保持同一身份（皮肤能生效）。
 /// ⚠️ 因为不随用户名变化，用不同用户名的多个离线实例在服务端看起来是同一个账号。
-func generateFixedUUIDForSteve() -> String {
+func fixedOfflineUUIDValue() -> String {
     return "f47ac10b-58cc-4372-a567-0e02b2c3d479"
 }
 

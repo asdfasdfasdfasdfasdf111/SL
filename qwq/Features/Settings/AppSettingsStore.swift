@@ -83,7 +83,7 @@ final class AppSettingsStore: ObservableObject {
         if let saved = UserDefaults.standard.string(forKey: UDK.fixedOfflineUUID) {
             self.fixedOfflineUUID = saved
         } else {
-            let uuid = generateFixedUUIDForSteve()
+            let uuid = fixedOfflineUUIDValue()
             self.fixedOfflineUUID = uuid
             UserDefaults.standard.set(uuid, forKey: UDK.fixedOfflineUUID)
         }
