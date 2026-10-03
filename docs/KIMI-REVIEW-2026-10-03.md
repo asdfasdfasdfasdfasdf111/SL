@@ -1,0 +1,42 @@
+# Kimi-K3 只读细扫处置记录（2026-10-03）
+
+> 本文是对 Kimi-K3 只读细扫（8 大病因 + 1 条补扫）的逐条裁决记录。
+> 原则：可安全处置的已当场修（提交号见各条）；与已决架构/方针冲突的逐条给出依据，
+> **不因外部评审意见推翻既有决策**（既有决策均以 `ARCHITECTURE.md` / `HANDOVER.md` /
+> `qwqTests/TESTING.md` 为准）；历史快照文档不篡改。
+
+## 核心结论的回应
+
+「原始代码债真实存在，但治理过程本身成了更大的新债（转发层 + 考古注释 + 审计文档）」
+——本记录对该判断**部分采纳**：
+- 采纳面：命名与注释确实是可继续收敛的方向（本轮已修两处）；
+- 不采纳面：「考古注释」与「审计文档」是**本项目明确的工程纪律**（ARCHITECTURE §九
+  「注释记录为什么」；审计文档是历史快照、原文不改写），不是无意识累积的债。
+  测试覆盖健康（58 文件/732 用例）——**按评审意见不动**，本轮未触碰测试结构。
+
+## 逐条裁决
+
+| # | 病因 | 裁决 | 依据 / 处置 |
+|---|---|---|---|
+| ① | 注释膨胀 32.7% | 🟡 **不动作** | 注释文化是 ARCHITECTURE §九明文的工程纪律（记录为什么），非无意识债。AppCompositionRoot 76% 因含重构依据长文（Kimi 举的正是「为什么要幂等」的逐条依据），属文档契约范畴 |
+| ② | 兼容层套娃 / 4 重单例 | 🟡 **不动作（已核实非债）** | ThemeManager / LauncherSettings 是**已收敛的转发层**（注释含完整收敛说明：单一存储点 + objectWillChange 桥接）；AppSettings 是**下载链/启动链兼容层**（不是设置界面数据源，头部注释明确边界）；AppSettingsStore 是个性化页存储。四个单例职责分属两层、并不重叠 |
+| ③ | 死状态活化石 | 🟡 **不动作（已决保留）** | debouncedSearchText 等已核实「只写不读」，但代码注释已自我登记「历史遗留字段，保持原状不删除」（DownloadCategoryViewModel.swift）；showDetail 的 withAnimation 事务归属无法离线判定 —— 均为 ARCHITECTURE §十处置记录过的已决保留 |
+| ④ | 双轨下载永久化 | 🟢 **不动作（已决架构）** | ARCHITECTURE §十-2 明文「NetManager 保留为最终后端，批量路径不接入引擎」；MinecraftInstallerDownloads.swift:13 注释自述批量路径经 MultiFileDownloader→NetManager 为有意设计 |
+| ⑤ | 上帝函数 slLaunchInternal + 手搓轮询 | 🟡 **不动作（风险/收益）** | 393 行含 5 个取消判定点的完整论证；SLLaunchBridge 本轮已拆出三文件（8880b19）瘦身 22%，函数内拆分改动面大、需真机验证启动链，超出「参考评审修债」范畴；手搓轮询（DispatchSemaphore + 200ms 分片）是启动链路既有超时模型的实现，非通用债 |
+| ⑥ | 命名债（verify×4/removeResourcePack×4 等） | 🟢 **部分已修** | 「同名」均为协议声明+实现配对 / 不同类型同名方法（Swift 不构成撞名）。实际名不副实项 `generateFixedUUIDForSteve`（自注「名字有误导」）→ 已改 `fixedOfflineUUIDValue`（提交 6529d82） |
+| ⑦ | 单例 26 处 + branch! 强解包 | 🟢 **强解包已修** | `SharedConstants.swift:58 branch!`（全库唯一漏网）→ 无强解包写法 + trim（提交 6529d82）。单例并存为设计形态（各具职责），已核 |
+| ⑧ | 文档互相作废 / MODULE-INVENTORY 自认过期 | 🟢 **不动作（已治理）** | docs/MODULE-INVENTORY.md 头部已自注「部分作废（2026-10-01）+ 以 ARCHITECTURE.md 为准」，正是历史快照的正确治理形态；docs/ 各文档均含「以 git 为准 / 以本文为准 / 快照不改写」等指引 |
+| 补扫 | SLCore 直调 JavaResolverBridge 分层倒置 | 🟡 **不动作（已决收口）** | 该调用是 P3-1 JavaResolver 收口的**有意产物**（注释记录「不做预扫描——JavaResolver 内部已覆盖同样语义」）；Java 选择统一走 Features/Java 解析器属既决分层决策 |
+
+## 本轮实际修复（提交 6529d82）
+
+1. `SharedConstants.swift`：消除全库唯一强解包 `branch!`（改为 trim + 判空回退，行为更稳）。
+2. `generateFixedUUIDForSteve` → `fixedOfflineUUIDValue`：消除名不副实（自注「名字有误导」）。
+
+验收：typecheck 两口径 0 错误，三条防回潮红线通过。
+
+## 未处置项的共同特征
+
+标注 🟡 的条目全部指向「既有决策的边界」而不是遗漏：每一条都能在代码注释或架构文档里
+找到当时的裁决记录与理由。若未来要动其中任何一条，应先变更对应决策（ARCHITECTURE §十），
+再改代码 —— 不应以评审意见直接推翻。
