@@ -173,83 +173,15 @@ private func slLaunchInternal(
 
     // MARK: 启动前补全（PCL2 DlClientFix 移植）：分析缺失/损坏的库与资源 → 仅下载缺失项
     // 补全期间 UI 显示 downloading 进度条；完成后才进入 launching（避免相位回退）
-    // 补全失败则终止启动（与 PCL2 一致），避免缺文件启动后崩溃
-    let fixResultBox = FixResultBox()
-    // 超时后置位：闸断后续进度回调（见下方超时分支注释）
-    let fixAbandoned = AbandonFlag()
-    let fixSemaphore = DispatchSemaphore(value: 0)
-    phaseHandler("downloading")
-    let fixTask = Task {
-        do {
-            try await LaunchPreflightBridge.prepare(instance: instance) { p in
-                // 补全已被放弃（超时或被用户取消）后不再回调 UI：两种情况 UI 都已复位到 idle
-                //（超时会弹错误提示），若继续回调进度，用户会看到「已复位 + 进度条继续走」的并存状态。
-                guard !fixAbandoned.isSet else { return }
-                progressHandler(p)
-            }
-            log("启动前补全完成：缺失的库/资源已补齐")
-        } catch {
-            fixResultBox.error = error
-            log("启动前补全失败: \(error.localizedDescription)")
-        }
-        fixSemaphore.signal()
-    }
-    // 等待补全完成 —— **可被取消打断**。
-    // 原实现是一次性 `wait(timeout: .now() + 600)`：用户在这段时间里点取消，最早也要等补全
-    // 整个跑完才可能被察觉（最多白等 10 分钟、白下载数百 MB），而请求发出后不久游戏仍会被拉起。
-    // 改成 200ms 分片轮询后，可感知的等待从「最多 600s」降到「≤0.2s」。
-    // 分片数即超时上限：3000 × 0.2s = 600s（与原先一致，不用时钟，免得受系统时间调整影响）。
-    var fixSignalled = false
-    for _ in 0..<3000 {
-        if fixSemaphore.wait(timeout: .now() + 0.2) == .success { fixSignalled = true; break }
-        if cancellation?.isCancelled == true { break }
-    }
-    // 3000 片耗尽仍未 signal：区分「用户取消」与「真超时」——前者优先
-    let fixWaitOutcome: FixWaitOutcome = fixSignalled
-        ? .finished
-        : (cancellation?.isCancelled == true ? .cancelled : .timedOut)
-
-    switch fixWaitOutcome {
-    case .cancelled:
-        // 取消判定点 ③：补全等待期间被取消。
-        // 与超时分支同样处理：置 `fixAbandoned` 闸断 UI 回调，`fixTask.cancel()` 尽力而为。
-        // 注意这里**不能**等补全真结束才返回 —— 用户的诉求是「立刻停」，不是「等它跑完」。
-        fixAbandoned.set()
-        fixTask.cancel()
-        log("启动已被用户取消：中止启动前补全")
-        completion(nil, .failure(LaunchError.cancelled))
-        return
-
-    case .timedOut:
-        // MARK: 超时处理（缺陷：超时后任务仍继续跑且无取消路径）
-        // 原实现只 `completion(.failure)` 就 return：补全 Task 仍在后台下载并持续回调
-        // `progressHandler`，UI 报错之后又被进度回调推着继续走，且没有任何取消入口。
-        // 现做两件事，并把「能做到什么程度」写清：
-        //  1) 置 `fixAbandoned`：**强保证**切断 UI 回调（不再有进度事件流向界面）；
-        //  2) `fixTask.cancel()`：**尽力而为**。真正的网络中止需要下载层有取消检查点，
-        //     而 `LaunchPreflightBridge` → `DefaultLaunchPreflight` 底层的
-        //     `MultiFileDownloader.start()` → `NetManager.downloadAll`
-        //     内部没有任何 `Task.isCancelled` / `checkCancellation` 判定
-        //     （`SLCore/Download/MultiFileDownloader.swift:110-152`），
-        //     且该层不在本轮允许修改的范围内，因此取消只能传递给仍会响应的 await 点，
-        //     无法保证立即停止在途 TCP 下载。残留下载只会继续写入本地缓存目录（下次启动可直接复用），
-        //     不会阻塞本次流程——本函数已经 return，后续走完 `.launchFailed` 通道。
-        fixAbandoned.set()
-        fixTask.cancel()
-        // 2026-10-02：结构化错误。此前 mapFailure 靠 `contains("启动前补全")` 文案反猜
-        // 归类；现在直接落 fileVerificationFailed（补全即文件校验的一环）。
-        completion(nil, .failure(LaunchError.fileVerificationFailed(reason: "启动前补全超时（10 分钟），请检查网络连接")))
-        return
-
-    case .finished:
-        break
-    }
-
-    if let fixError = fixResultBox.error {
-        // 2026-10-02：结构化错误（此前 MyLocalizedError 携带文案，mapFailure 文案反猜）。
-        completion(nil, .failure(LaunchError.fileVerificationFailed(reason: "启动前补全失败：\(fixError.localizedDescription)")))
-        return
-    }
+    // 补全失败则终止启动（与 PCL2 一致），避免缺文件启动后崩溃。
+    // 2026-10-04：整段抽为 `runPreflightAndWait`（R2 拆分），本处只剩编排。
+    if !runPreflightAndWait(
+        instance: instance,
+        cancellation: cancellation,
+        phaseHandler: phaseHandler,
+        progressHandler: progressHandler,
+        completion: completion
+    ) { return }
 
     // MARK: 客户端 JAR 校验已前移到本函数开头（补全之前）——见该处注释。
     // 补全后不再重复判定：同一路径同一次启动内不可能由补全产生（preflight 不写客户端本体）。
@@ -457,4 +389,101 @@ private func slLaunchInternal(
             }
         }
     }
+}
+
+// MARK: - 启动前补全（R2 拆分抽出的私有函数）
+
+/// 执行启动前补全并等待结果（可被取消/超时打断）。
+///
+/// 返回值约定：
+/// - `true` —— 补全成功，调用方继续后续启动步骤；
+/// - `false` —— 已取消 / 超时 / 补全失败，本函数已走 `completion` 收口，调用方**立即 return**。
+///
+/// 本函数承载取消判定点 ③（补全等待期间）与超时处理（600s 上限）。
+/// 取消/超时/失败的全部语义与拆分前逐字一致（R2 行为中性），论证注释随代码一并迁入。
+private func runPreflightAndWait(
+    instance: MinecraftInstance,
+    cancellation: LaunchCancellationToken?,
+    phaseHandler: @escaping (String) -> Void,
+    progressHandler: @escaping (Double) -> Void,
+    completion: @escaping (MinecraftLauncher?, Result<Int32, Error>) -> Void
+) -> Bool {
+    let fixResultBox = FixResultBox()
+    // 超时后置位：闸断后续进度回调（见下方超时分支注释）
+    let fixAbandoned = AbandonFlag()
+    let fixSemaphore = DispatchSemaphore(value: 0)
+    phaseHandler("downloading")
+    let fixTask = Task {
+        do {
+            try await LaunchPreflightBridge.prepare(instance: instance) { p in
+                // 补全已被放弃（超时或被用户取消）后不再回调 UI：两种情况 UI 都已复位到 idle
+                //（超时会弹错误提示），若继续回调进度，用户会看到「已复位 + 进度条继续走」的并存状态。
+                guard !fixAbandoned.isSet else { return }
+                progressHandler(p)
+            }
+            log("启动前补全完成：缺失的库/资源已补齐")
+        } catch {
+            fixResultBox.error = error
+            log("启动前补全失败: \(error.localizedDescription)")
+        }
+        fixSemaphore.signal()
+    }
+    // 等待补全完成 —— **可被取消打断**。
+    // 原实现是一次性 `wait(timeout: .now() + 600)`：用户在这段时间里点取消，最早也要等补全
+    // 整个跑完才可能被察觉（最多白等 10 分钟、白下载数百 MB），而请求发出后不久游戏仍会被拉起。
+    // 改成 200ms 分片轮询后，可感知的等待从「最多 600s」降到「≤0.2s」。
+    // 分片数即超时上限：3000 × 0.2s = 600s（与原先一致，不用时钟，免得受系统时间调整影响）。
+    var fixSignalled = false
+    for _ in 0..<3000 {
+        if fixSemaphore.wait(timeout: .now() + 0.2) == .success { fixSignalled = true; break }
+        if cancellation?.isCancelled == true { break }
+    }
+    // 3000 片耗尽仍未 signal：区分「用户取消」与「真超时」——前者优先
+    let fixWaitOutcome: FixWaitOutcome = fixSignalled
+        ? .finished
+        : (cancellation?.isCancelled == true ? .cancelled : .timedOut)
+
+    switch fixWaitOutcome {
+    case .cancelled:
+        // 取消判定点 ③：补全等待期间被取消。
+        // 与超时分支同样处理：置 `fixAbandoned` 闸断 UI 回调，`fixTask.cancel()` 尽力而为。
+        // 注意这里**不能**等补全真结束才返回 —— 用户的诉求是「立刻停」，不是「等它跑完」。
+        fixAbandoned.set()
+        fixTask.cancel()
+        log("启动已被用户取消：中止启动前补全")
+        completion(nil, .failure(LaunchError.cancelled))
+        return false
+
+    case .timedOut:
+        // MARK: 超时处理（缺陷：超时后任务仍继续跑且无取消路径）
+        // 原实现只 `completion(.failure)` 就 return：补全 Task 仍在后台下载并持续回调
+        // `progressHandler`，UI 报错之后又被进度回调推着继续走，且没有任何取消入口。
+        // 现做两件事，并把「能做到什么程度」写清：
+        //  1) 置 `fixAbandoned`：**强保证**切断 UI 回调（不再有进度事件流向界面）；
+        //  2) `fixTask.cancel()`：**尽力而为**。真正的网络中止需要下载层有取消检查点，
+        //     而 `LaunchPreflightBridge` → `DefaultLaunchPreflight` 底层的
+        //     `MultiFileDownloader.start()` → `NetManager.downloadAll`
+        //     内部没有任何 `Task.isCancelled` / `checkCancellation` 判定
+        //     （`SLCore/Download/MultiFileDownloader.swift:110-152`），
+        //     且该层不在本轮允许修改的范围内，因此取消只能传递给仍会响应的 await 点，
+        //     无法保证立即停止在途 TCP 下载。残留下载只会继续写入本地缓存目录（下次启动可直接复用），
+        //     不会阻塞本次流程——本函数已经 return，后续走完 `.launchFailed` 通道。
+        fixAbandoned.set()
+        fixTask.cancel()
+        // 2026-10-02：结构化错误。此前 mapFailure 靠 `contains("启动前补全")` 文案反猜
+        // 归类；现在直接落 fileVerificationFailed（补全即文件校验的一环）。
+        completion(nil, .failure(LaunchError.fileVerificationFailed(reason: "启动前补全超时（10 分钟），请检查网络连接")))
+        return false
+
+    case .finished:
+        break
+    }
+
+    if let fixError = fixResultBox.error {
+        // 2026-10-02：结构化错误（此前 MyLocalizedError 携带文案，mapFailure 文案反猜）。
+        completion(nil, .failure(LaunchError.fileVerificationFailed(reason: "启动前补全失败：\(fixError.localizedDescription)")))
+        return false
+    }
+
+    return true
 }
