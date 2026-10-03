@@ -328,10 +328,10 @@ extension NetManager {
             throw NetDownloadError.fileFailed("下载记录已不存在，无法创建分片临时文件")
         }
         try FileManager.default.createDirectory(
-            at: SharedConstants.shared.temperatureURL,
+            at: SharedConstants.shared.tempURL,
             withIntermediateDirectories: true
         )
-        let tempURL = SharedConstants.shared.temperatureURL.appendingPathComponent(UUID().uuidString + ".tmp")
+        let tempURL = SharedConstants.shared.tempURL.appendingPathComponent(UUID().uuidString + ".tmp")
         guard FileManager.default.createFile(atPath: tempURL.path, contents: nil) else {
             throw NetDownloadError.fileFailed("无法创建临时文件")
         }

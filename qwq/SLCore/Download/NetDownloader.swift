@@ -54,7 +54,7 @@ public actor NetManager {
     private init() {
         // 分片文件统一写入应用缓存目录；首次运行该目录不存在时 createFile 会直接失败。
         try? FileManager.default.createDirectory(
-            at: SharedConstants.shared.temperatureURL,
+            at: SharedConstants.shared.tempURL,
             withIntermediateDirectories: true
         )
     }

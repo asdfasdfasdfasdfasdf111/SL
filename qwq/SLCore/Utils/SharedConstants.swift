@@ -28,7 +28,7 @@ public nonisolated struct SharedConstants {
     public let applicationResourcesURL: URL
     public let logURL: URL
     public let applicationSupportURL: URL = URL.applicationSupportDirectory.appendingPathComponent("SL启动器")
-    public let temperatureURL: URL
+    public let tempURL: URL
     public let authlibInjectorURL: URL
     
     /// 已删除的成员：`public let dateFormatter = DateFormatter()`（连同 init 里为它设置的
@@ -51,7 +51,7 @@ public nonisolated struct SharedConstants {
         self.applicationContentsURL = Bundle.main.bundleURL.appendingPathComponent("Contents")
         self.applicationResourcesURL = self.applicationContentsURL.appendingPathComponent("Resources")
         self.logURL = applicationSupportURL.appendingPathComponent("Logs").appendingPathComponent("app.log")
-        self.temperatureURL = applicationSupportURL.appendingPathComponent("Temp")
+        self.tempURL = applicationSupportURL.appendingPathComponent("Temp")
         self.authlibInjectorURL = applicationSupportURL.appendingPathComponent("authlib-injector.jar")
         
         let branch = Bundle.main.object(forInfoDictionaryKey: "BRANCH") as? String

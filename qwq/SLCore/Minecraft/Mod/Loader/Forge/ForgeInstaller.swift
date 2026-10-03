@@ -32,7 +32,7 @@ public class ForgeInstaller {
     let minecraftDirectory: MinecraftDirectory
     let versionPath: URL
     let manifest: ClientManifest
-    let temp: TemperatureDirectory
+    let temp: TempDirectory
     var installProfile: ForgeInstallProfile?
     var values: [String: String] = [:]
     var isOld: Bool = false

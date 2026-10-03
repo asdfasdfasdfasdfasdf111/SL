@@ -1,5 +1,5 @@
 //
-//  TemperatureManager.swift
+//  TempDirectory.swift
 //  SL启动器
 //
 //  Created by YiZhiMCQiu on 2025/8/1.
@@ -15,21 +15,22 @@
 //  会互相踩**。新增使用点时请取一个能体现归属的名字。
 //
 //  ── 维护提示 ───────────────────────────────────────────────
-//  1. 文件名与文件头注释不一致（注释写的是 `TemperatureManager.swift`，
-//     实际文件名是 `TemperatureDirectory.swift`）—— 是改名后漏改的注释，非功能问题。
-//  2. `root` 是**计算属性**，每次访问都重新拼一次路径。所以拿到 `TemperatureDirectory`
+//  1. `root` 是**计算属性**，每次访问都重新拼一次路径。所以拿到 `TempDirectory`
 //     之后立刻 `free()`、再访问 `root`，得到的仍是同一条路径（不会报错，只是目录已不在）。
-//  3. 活代码：`Minecraft` 加载器安装链路（`ForgeInstaller`）用它做工作目录。
+//  2. 活代码：`Minecraft` 加载器安装链路（`ForgeInstaller`）用它做工作目录。
 //     原「导出崩溃报告」（`MinecraftCrashHandler.exportErrorReport`）已于 2026-10-02
 //     随死代码清理删除，不再使用本类型。
+//  3. 2026-10-03：类名 `TemperatureDirectory` → `TempDirectory`、常量 `temperatureURL` →
+//     `tempURL`（"Temperature" 是拼写错误，本类型管理**临时目录**而非温度）；磁盘路径
+//     `<App Support>/Temp` 不变，无持久化影响。
 //
 
 import Foundation
 
 /// `<Application Support>/Temp/<name>` 形式的一次性工作目录。
-public class TemperatureDirectory {
+public class TempDirectory {
     /// 本目录的绝对路径。注意是计算属性，每次访问都重新拼（见文件头「维护提示 2」）。
-    public var root: URL { SharedConstants.shared.temperatureURL.appendingPathComponent(name) }
+    public var root: URL { SharedConstants.shared.tempURL.appendingPathComponent(name) }
     /// 目录名。`init` 之后不可变，也是「同名独占」的判据。
     private let name: String
     

@@ -14,7 +14,7 @@
 //  全库（含 qwqTests）零调用方——`SLCore/Notices/Popup.swift` 的 `PopupManager.showAsync`
 //  注释明确记着「本启动器当前仍缺失『崩溃后可导出错误报告』这条能力」，
 //  用户看到的「导出错误报告」按钮点下去没反应，是接线缺失而非本文件 bug。
-//  若未来接该能力，需重写导出（本文件已不保留实现）；TemperatureDirectory 仍为活代码
+//  若未来接该能力，需重写导出（本文件已不保留实现）；TempDirectory 仍为活代码
 //  （ForgeInstaller 在用它），可作工作目录。
 //
 
