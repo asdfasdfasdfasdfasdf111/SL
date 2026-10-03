@@ -132,136 +132,14 @@ enum LaunchCoordinator {
             // 终止入口实际走 `GameSession.launcher.terminate()`（closeSession / handlePowerTap），
             // 补上 store 会同时启用一条与现有 UI 并行的状态通道，属于合并阶段的任务。
             let service = MinecraftInstanceLaunchService(events: { event in
-                switch event {
-                case .progress(let progress):
-                    DispatchQueue.main.async {
-                        if progress > sessionManager.launchProgress {
-                            sessionManager.launchProgress = progress
-                        }
-                        if sessionManager.launchPhase == .downloading || sessionManager.launchPhase == .installing {
-                            sessionManager.lightProgress = progress
-                        }
-                    }
-                case .phase(let phase):
-                    DispatchQueue.main.async {
-                        switch phase {
-                        case "downloading":
-                            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                                sessionManager.launchPhase = .downloading
-                            }
-                        case "installing":
-                            withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                                sessionManager.launchPhase = .installing
-                            }
-                        case "launching":
-                            sessionManager.lightProgress = 1.0
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                                    sessionManager.launchPhase = .launching
-                                }
-                                sessionManager.darkProgress = 0.2
-                                sessionManager.darkBarTarget = 1.0
-                                sessionManager.darkBarActive = true
-                                sessionManager.startDarkBarAnimation()
-                            }
-                        default:
-                            break
-                        }
-                    }
-                case .log(let logLine):
-                    DispatchQueue.main.async {
-                        guard let l = boundLauncher else { return }
-                        if let session = sessionManager.session(for: l) {
-                            // 走会话的唯一写入口：合并窗口内批量落地，
-                            // 避免 Forge/NeoForge 刷屏时逐行广播（见 GameSession.appendLogs 的说明）
-                            session.appendLog(logLine)
-                        } else if !l.hasEverHadSession {
-                            // session 尚未建立：暂存到 launcher，建立后 flush
-                            l.pendingLogs.append(logLine)
-                        } else {
-                            // 已经建过会话、但现在不在列表里 —— 用户把日志卡关掉了，
-                            // 这些行没有消费者，直接丢弃。
-                            // 不能继续 append：pendingLogs 的唯一清理点是 addSession（只跑一次），
-                            // 关掉日志卡后游戏还在跑，日志会一直堆积到进程结束（内存只涨不落）。
-                        }
-                    }
-                case .launcherReady(let launcher):
-                    // 残余窗口兜底：桥接层最后一次取消判定（判定点 ④）与 `launch()` 之间仍有
-                    // 极短间隙（主线程的取消可能恰好插在这里）。此时进程可能已被拉起，
-                    // 所以**不能建会话**——否则界面会留下一个没有进程、也无法终止的幽灵日志卡。
-                    // 直接终止刚拉起的进程（`terminate()` 对 currentProcess == nil 是安全的幂等操作），
-                    // 并跳过 `boundLauncher` 绑定，让后续 `.log` / `.finished` 事件自然丢弃。
-                    guard !cancellation.isCancelled else {
-                        DispatchQueue.main.async { launcher.terminate() }
-                        return
-                    }
-                    // 绑定同步完成（与旧实现一致）：后续 log 事件依赖该引用，晚绑定会丢日志；
-                    // 面板动画与 session 插入仍在主线程执行
-                    boundLauncher = launcher
-                    DispatchQueue.main.async {
-                        let wasEmpty = sessionManager.sessions.isEmpty
-                        // 先触发面板弹出动画（offset/opacity 过渡）
-                        if wasEmpty {
-                            withAnimation(.exaggeratedSpring) {
-                                sessionManager.showLogView = true
-                            }
-                        }
-                        // 再插入 session（带 transition）；索引分配与暂存日志 flush 在 addSession 内完成
-                        _ = withAnimation(.exaggeratedSpring) {
-                            sessionManager.addSession(launcher: launcher)
-                        }
-                    }
-                case .running:
-                    DispatchQueue.main.async {
-                        if let l = boundLauncher,
-                           let session = sessionManager.session(for: l) {
-                            session.isLaunching = false
-                            // 缺陷 D7：进程已确认拉起（窗口出现，或退出码 0 兜底）→ 置「运行中」。
-                            // 此前该标志全代码库无人置 true，导致两处终止入口
-                            // （日志卡关闭按钮 closeSession / 电源按钮 handlePowerTap）
-                            // 的终止分支恒不可达，点了也杀不掉游戏进程。
-                            // 取值直接读 launcher 自身 currentProcess 的实时状态：退出码 0 兜底
-                            // 触发时进程已退出，此处不会被误置为运行中；该引用亦是 terminate()
-                            // 的定向目标（多开时各自终止自己的进程，不共用 instance.process）。
-                            session.isProcessRunning = (l.currentProcess?.isRunning ?? false)
-                        }
-                        withAnimation(.exaggeratedSpring) {
-                            sessionManager.darkBarTarget = 1.0
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                            withAnimation(.easeOut(duration: 0.4)) {
-                                sessionManager.launchPhase = .idle
-                            }
-                            sessionManager.resetProgress()
-                        }
-                    }
-                case .finished(let result):
-                    DispatchQueue.main.async {
-                        guard let launcher = boundLauncher,
-                              let session = sessionManager.session(for: launcher) else { return }
-                        session.isProcessRunning = false
-                        session.isLaunching = false
-                        let userTerminated = launcher.isUserTerminated
-                        if result.exitCode != 0 && !userTerminated {
-                            LaunchPanelState.shared.presentError("Minecraft 异常退出 (退出码: \(result.exitCode))，请查看日志")
-                        }
-                        if result.exitCode == 0 || userTerminated {
-                            // 正常退出或被用户终止：自动清掉会话，避免日志面板残留
-                            let willBeEmpty = sessionManager.sessions.count == 1
-                            withAnimation(.exaggeratedSpring) {
-                                sessionManager.removeSession(session)
-                                if willBeEmpty { sessionManager.showLogView = false }
-                            }
-                        }
-                        sessionManager.resetProgress()
-                        withAnimation(.easeOut(duration: 0.3)) {
-                            sessionManager.launchPhase = .idle
-                        }
-                    }
-                case .failed(let error):
-                    // 启动失败（进程未拉起）：复位进度 + 提示，与 launcher 引用是否建立无关（D8）
-                    reportLaunchFailure(error)
-                }
+                handleLaunchEvent(
+                    event,
+                    sessionManager: sessionManager,
+                    cancellation: cancellation,
+                    boundLauncher: { boundLauncher },
+                    setBoundLauncher: { boundLauncher = $0 },
+                    reportLaunchFailure: reportLaunchFailure
+                )
             })
             // 用例层入口是 async：发起后立即返回（与旧 slLaunch 同为非阻塞）。
             // 用例层在进入桥接之前抛出的失败（离线用户名非法等）不会产生 `.failed` 事件，
@@ -367,6 +245,157 @@ enum LaunchCoordinator {
                 sessionManager.launchPhase = .idle
                 sessionManager.showLogView = false
             }
+        }
+    }
+}
+
+// MARK: - 启动事件处理（R3 拆分抽出的私有函数）
+
+/// 处理用例层回传的启动事件（进度 / 相位 / 日志 / launcher 就绪 / 运行中 / 结束 / 失败）。
+///
+/// 2026-10-04 从 `start` 抽出：事件 → UI 的翻译逻辑原与启动编排混在一个函数里（~130 行）。
+/// 全部事件语义与拆分前逐字一致，缺陷修复论证注释（D7/D8/残余窗口兜底/日志去向判定）随代码迁入。
+///
+/// `boundLauncher` 以「读 / 写」两个闭包传入：它是 `start` 的局部 var，事件回调在后台线程触发，
+/// 闭包捕获比 inout 更适合跨调用共享（Swift 值类型语义）。
+private extension LaunchCoordinator {
+    static func handleLaunchEvent(
+        _ event: LaunchEvent,
+        sessionManager: LaunchSessionManager,
+        cancellation: LaunchCancellationToken,
+        boundLauncher: @escaping () -> MinecraftLauncher?,
+        setBoundLauncher: @escaping (MinecraftLauncher) -> Void,
+        reportLaunchFailure: @escaping (Error) -> Void
+    ) {
+        switch event {
+        case .progress(let progress):
+            DispatchQueue.main.async {
+                if progress > sessionManager.launchProgress {
+                    sessionManager.launchProgress = progress
+                }
+                if sessionManager.launchPhase == .downloading || sessionManager.launchPhase == .installing {
+                    sessionManager.lightProgress = progress
+                }
+            }
+        case .phase(let phase):
+            DispatchQueue.main.async {
+                switch phase {
+                case "downloading":
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                        sessionManager.launchPhase = .downloading
+                    }
+                case "installing":
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                        sessionManager.launchPhase = .installing
+                    }
+                case "launching":
+                    sessionManager.lightProgress = 1.0
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                            sessionManager.launchPhase = .launching
+                        }
+                        sessionManager.darkProgress = 0.2
+                        sessionManager.darkBarTarget = 1.0
+                        sessionManager.darkBarActive = true
+                        sessionManager.startDarkBarAnimation()
+                    }
+                default:
+                    break
+                }
+            }
+        case .log(let logLine):
+            DispatchQueue.main.async {
+                guard let l = boundLauncher() else { return }
+                if let session = sessionManager.session(for: l) {
+                    // 走会话的唯一写入口：合并窗口内批量落地，
+                    // 避免 Forge/NeoForge 刷屏时逐行广播（见 GameSession.appendLogs 的说明）
+                    session.appendLog(logLine)
+                } else if !l.hasEverHadSession {
+                    // session 尚未建立：暂存到 launcher，建立后 flush
+                    l.pendingLogs.append(logLine)
+                } else {
+                    // 已经建过会话、但现在不在列表里 —— 用户把日志卡关掉了，
+                    // 这些行没有消费者，直接丢弃。
+                    // 不能继续 append：pendingLogs 的唯一清理点是 addSession（只跑一次），
+                    // 关掉日志卡后游戏还在跑，日志会一直堆积到进程结束（内存只涨不落）。
+                }
+            }
+        case .launcherReady(let launcher):
+            // 残余窗口兜底：桥接层最后一次取消判定（判定点 ④）与 `launch()` 之间仍有
+            // 极短间隙（主线程的取消可能恰好插在这里）。此时进程可能已被拉起，
+            // 所以**不能建会话**——否则界面会留下一个没有进程、也无法终止的幽灵日志卡。
+            // 直接终止刚拉起的进程（`terminate()` 对 currentProcess == nil 是安全的幂等操作），
+            // 并跳过 `boundLauncher` 绑定，让后续 `.log` / `.finished` 事件自然丢弃。
+            guard !cancellation.isCancelled else {
+                DispatchQueue.main.async { launcher.terminate() }
+                return
+            }
+            // 绑定同步完成（与旧实现一致）：后续 log 事件依赖该引用，晚绑定会丢日志；
+            // 面板动画与 session 插入仍在主线程执行
+            setBoundLauncher(launcher)
+            DispatchQueue.main.async {
+                let wasEmpty = sessionManager.sessions.isEmpty
+                // 先触发面板弹出动画（offset/opacity 过渡）
+                if wasEmpty {
+                    withAnimation(.exaggeratedSpring) {
+                        sessionManager.showLogView = true
+                    }
+                }
+                // 再插入 session（带 transition）；索引分配与暂存日志 flush 在 addSession 内完成
+                _ = withAnimation(.exaggeratedSpring) {
+                    sessionManager.addSession(launcher: launcher)
+                }
+            }
+        case .running:
+            DispatchQueue.main.async {
+                if let l = boundLauncher(),
+                   let session = sessionManager.session(for: l) {
+                    session.isLaunching = false
+                    // 缺陷 D7：进程已确认拉起（窗口出现，或退出码 0 兜底）→ 置「运行中」。
+                    // 此前该标志全代码库无人置 true，导致两处终止入口
+                    // （日志卡关闭按钮 closeSession / 电源按钮 handlePowerTap）
+                    // 的终止分支恒不可达，点了也杀不掉游戏进程。
+                    // 取值直接读 launcher 自身 currentProcess 的实时状态：退出码 0 兜底
+                    // 触发时进程已退出，此处不会被误置为运行中；该引用亦是 terminate()
+                    // 的定向目标（多开时各自终止自己的进程，不共用 instance.process）。
+                    session.isProcessRunning = (l.currentProcess?.isRunning ?? false)
+                }
+                withAnimation(.exaggeratedSpring) {
+                    sessionManager.darkBarTarget = 1.0
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    withAnimation(.easeOut(duration: 0.4)) {
+                        sessionManager.launchPhase = .idle
+                    }
+                    sessionManager.resetProgress()
+                }
+            }
+        case .finished(let result):
+            DispatchQueue.main.async {
+                guard let launcher = boundLauncher(),
+                      let session = sessionManager.session(for: launcher) else { return }
+                session.isProcessRunning = false
+                session.isLaunching = false
+                let userTerminated = launcher.isUserTerminated
+                if result.exitCode != 0 && !userTerminated {
+                    LaunchPanelState.shared.presentError("Minecraft 异常退出 (退出码: \(result.exitCode))，请查看日志")
+                }
+                if result.exitCode == 0 || userTerminated {
+                    // 正常退出或被用户终止：自动清掉会话，避免日志面板残留
+                    let willBeEmpty = sessionManager.sessions.count == 1
+                    withAnimation(.exaggeratedSpring) {
+                        sessionManager.removeSession(session)
+                        if willBeEmpty { sessionManager.showLogView = false }
+                    }
+                }
+                sessionManager.resetProgress()
+                withAnimation(.easeOut(duration: 0.3)) {
+                    sessionManager.launchPhase = .idle
+                }
+            }
+        case .failed(let error):
+            // 启动失败（进程未拉起）：复位进度 + 提示，与 launcher 引用是否建立无关（D8）
+            reportLaunchFailure(error)
         }
     }
 }
