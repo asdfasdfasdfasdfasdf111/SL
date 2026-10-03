@@ -137,7 +137,9 @@ public final class NoticeCenter: ObservableObject {
 
     public static let historyLimit = 20
     /// 等待用户点选的兜底超时：超时按默认按钮（下标 0）返回，避免调用方永久挂起。
-    private static let responseTimeoutNanos: UInt64 = 300 * 1_000_000_000
+    /// `internal static var`（2026-10-03 由 `private static let` 放宽）：供测试注入短时长
+    /// 直接断言超时路径（真等 300s 不现实）。默认值保持 300s，生产行为不变。
+    static var responseTimeoutNanos: UInt64 = 300 * 1_000_000_000
 
     /// 尚未应答的 `showAsync` 等待者。
     private var pending: [UUID: CheckedContinuation<Int, Never>] = [:]

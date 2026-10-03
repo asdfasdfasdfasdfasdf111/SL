@@ -393,13 +393,41 @@ final class NoticeCenterTests: XCTestCase {
         let other = Notice(level: .info, title: "标题", message: "正文")
         XCTAssertNotEqual(lhs, other)
     }
+
+    // MARK: - 300s 兜底超时（2026-10-03 补覆盖）
+
+    /// 兜底超时到期后必须按默认按钮（下标 0）应答，调用方不得永久挂起。
+    ///
+    /// 注入短超时（`responseTimeoutNanos` 已放宽为 internal static var，默认仍 300s）：
+    /// 0.05s 到期后 `presentAndWait` 应返回 0，且当前提示被关闭。
+    func testPresentAndWaitTimesOutToDefaultIndex() async {
+        let original = NoticeCenter.responseTimeoutNanos
+        NoticeCenter.responseTimeoutNanos = 50_000_000 // 0.05s
+        defer { NoticeCenter.responseTimeoutNanos = original }
+
+        center.setPresenter(true)
+        let notice = Notice(level: .warning,
+                            title: "注意",
+                            message: "无人应答",
+                            buttons: [NoticeButton(label: "取消"),
+                                      NoticeButton(label: "继续", style: .accent)])
+
+        async let pending = center.presentAndWait(notice)
+        await waitUntilCurrent(notice.id)
+
+        let chosen = await pending
+
+        XCTAssertEqual(chosen, 0, "超时后必须按默认按钮（下标 0）应答，调用方不得永久挂起")
+        XCTAssertNil(center.current, "超时应答后应关闭当前提示")
+    }
 }
 
 // MARK: - 覆盖率缺口（本文件不覆盖的原因）
 //
-//  1. `presentAndWait` 的 300s 兜底超时（`responseTimeoutNanos`）不做断言：
-//     等待真实超时会把测试挂起 5 分钟；把常量改小又需要改动被测源码。
-//     已覆盖的等价路径是 `dismiss()` 按默认按钮应答（同一 `choose(notice, index: 0)` 分支）。
+//  1. `presentAndWait` 的 300s 兜底超时（`responseTimeoutNanos`）：**已覆盖**（2026-10-03，
+//     `testPresentAndWaitTimesOutToDefaultIndex`）。做法：`responseTimeoutNanos` 由
+//     `private static let` 放宽为 `internal static var`（默认值仍 300s，生产行为不变），
+//     测试注入 0.05s 直接断言超时到期按默认按钮应答。
 //  2. `NoticeOverlay` 的 onAppear/onDisappear → `setPresenter` 挂载时机依赖 SwiftUI
 //     视图生命周期，无 UI 承载时无法验证，本文件只直接驱动 `setPresenter`。
 //  3. `shared` 单例的历史无法在用例间清空（无 reset 接口），因此断言一律写成

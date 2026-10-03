@@ -345,6 +345,31 @@ final class MemoryPressureTests: XCTestCase {
                        "重复注册往订阅表里塞了额外处理器 —— 幂等守卫失效（会重复清缓存）")
     }
 
+    // MARK: - 装配根幂等门（2026-10-03 补覆盖）
+
+    /// `AppCompositionRoot.registerRuntimeServices()` 的幂等门：第二次调用不产生第二次副作用。
+    ///
+    /// 两难背景（见本文件尾注释第 6 条）：要断言「第二次调用不产生副作用」必须重置
+    /// `didRegisterRuntimeServices`，而重置恰好抹掉「装配根跑过」的唯一证据。解法是
+    /// `AppCompositionRoot.registerCallCount` —— **单调递增**的独立证据源（2026-10-03 新增）：
+    /// 在幂等门放行时 +1、被门挡下不计数，因此「重复调用后计数不再 +1」⇔「幂等门生效」。
+    ///
+    /// ⚠️ 不重置任何标志：宿主（`SLApp.init()`）已先跑过装配入口，测试里再调两次，
+    /// 第二次必须被门挡下 —— 断言**差值**（调用前后计数不变），不依赖绝对数。
+    ///
+    /// 反证：摘掉 `registerRuntimeServices()` 里的 `guard !didRegisterRuntimeServices`，
+    /// 本用例**精确只红这一条**（计数 +1）。
+    func testCompositionRootIdempotencyGateBlocksSecondCall() async {
+        let before = AppCompositionRoot.registerCallCount
+
+        AppCompositionRoot.registerRuntimeServices()
+        AppCompositionRoot.registerRuntimeServices()
+
+        XCTAssertEqual(AppCompositionRoot.registerCallCount, before,
+                       "幂等门未挡住第二次装配 —— 重复调用会再起一次 LocalModCatalog.warmUp()"
+                           + "（重复读盘 + 重复发 localCatalogReady 通知）")
+    }
+
     // MARK: - 无订阅者
 
     /// 订阅者为空时发布不得崩、也不得有任何延迟副作用。
@@ -400,8 +425,8 @@ final class MemoryPressureTests: XCTestCase {
 //     那是**正确**的失败（装配根确实不再被执行），按该用例注释里的三步排查，不要直接删断言。
 //  6. **`AppCompositionRoot.registerRuntimeServices()` 的幂等门没有对应用例**（它靠
 //     `guard !didRegisterRuntimeServices` 收口，防的是「别处再调一次」这类误用）。
-//     不测的原因是一个两难：要断言「第二次调用不产生副作用」，就必须把标志重置掉；
-//     而把标志重置掉正好抹掉「装配根跑过」的**唯一证据**（见上面第 5 条），
-//     于是这条用例会顺手破坏上一条的性质。在不引入第二个证据源之前，这里只做代码级的收口，
-//     不假装有测试覆盖 —— 若将来真需要在测试里反复驱动装配入口，应先给它一个独立的证据源
-//     （例如按调用次数计数），而不是复用这个单调标志。
+//     **已闭合（2026-10-03）**：原两难是「要断言第二次调用无副作用，就必须重置标志；
+//     重置又抹掉『装配根跑过』的唯一证据」。按本条当初记下的出路（「先给它一个独立的
+//     证据源，例如按调用次数计数」）新增 `AppCompositionRoot.registerCallCount`（单调
+//     递增、被门挡下不计数），`testCompositionRootIdempotencyGateBlocksSecondCall` 断言
+//     调用前后计数不变，直接验证幂等门、零触碰 `didRegisterRuntimeServices` 的证据语义。

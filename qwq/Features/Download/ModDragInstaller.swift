@@ -10,9 +10,23 @@ import Foundation
 
 /// 拖拽安装模组的纯逻辑（实例匹配 + 文件拷贝）
 enum ModDragInstaller {
-    /// 在所有游戏根目录（含用户选择的根目录）中查找匹配模组版本范围的实例
+    /// 在所有游戏根目录（含用户选择的根目录）中查找匹配模组版本范围的实例。
+    ///
+    /// 「扫描全部根目录」与「匹配 + 去重」拆成两层（2026-10-03）：本入口负责前者
+    /// （驱动 `MinecraftVersionManager.findGameRootDirectories`，测试不驱动，理由见 TESTING.md §4.5），
+    /// 匹配逻辑下沉到 `findInstances(versionRange:savedRoot:scanning:)` —— 接受显式根目录数组，
+    /// 可被测试用临时目录直接驱动（`getVersions` 自 2026-10-02 起默认零写副作用，见 VersionUtils.swift）。
     static func findInstances(for versionRange: String, savedRoot: String) -> [GameInstance] {
         let roots = MinecraftVersionManager.findGameRootDirectories()
+        return findInstances(versionRange: versionRange, savedRoot: savedRoot, scanning: roots)
+    }
+
+    /// 在**给定**的游戏根目录集合（含用户选择的根目录）中查找匹配模组版本范围的实例。
+    ///
+    /// `scanning` 即「全部扫描根目录」，生产由上层传入 `findGameRootDirectories()` 的结果；
+    /// 测试直接传临时目录，从而安全驱动「去重 + 版本匹配 + 实例构造」的真实逻辑
+    /// （不碰用户的真实游戏目录，也不需要注入目录列举器替身）。
+    static func findInstances(versionRange: String, savedRoot: String, scanning roots: [String]) -> [GameInstance] {
         var seen = Set<String>()
         var instances: [GameInstance] = []
 

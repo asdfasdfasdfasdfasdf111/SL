@@ -21,6 +21,9 @@
 //  ⚠️ 不要为了「测入口本身」而在用例里调用 `registerRuntimeServices()`：一旦测试自己调过，
 //     这个标志就不再能证明「应用装配根跑过」，那条用例会退化成假绿。
 //     要测的是注册动作本身时，请直接测 `MemoryCacheReclaimer.register()`。
+//     （例外：2026-10-03 起的幂等门用例 `testCompositionRootIdempotencyGateBlocksSecondCall`
+//     会在测试里再调两次 —— 它断言的是 `registerCallCount` 的**差值**，不触碰
+//     `didRegisterRuntimeServices`，证据语义不受影响。）
 //  ⚠️ 也不要提供 `resetForTesting()`：把标志重置掉等于把唯一证据抹掉。
 //     需要隔离状态的用例请用 `MemoryCacheReclaimer.resetForTesting()`。
 //
@@ -41,6 +44,19 @@ enum AppCompositionRoot {
     @MainActor
     private(set) static var didRegisterRuntimeServices = false
 
+    /// 装配入口的**调用次数**（2026-10-03 新增，独立证据源）。
+    ///
+    /// 为什么需要它（MemoryPressureTests 文件尾注释第 6 条的两难）：幂等门
+    /// `guard !didRegisterRuntimeServices` 没有对应用例 —— 要断言「第二次调用不产生
+    /// 副作用」，就必须重置 `didRegisterRuntimeServices`；而重置会抹掉「装配根跑过」的
+    /// **唯一证据**。本计数是**单调递增**的独立观察点：断言「第二次调用后计数不再 +1」
+    /// 即可直接验证幂等门，完全不触碰 `didRegisterRuntimeServices` 的证据语义。
+    ///
+    /// 置位点：在幂等门**放行**时 +1（即实际执行装配的那次）。被门挡下的调用不计数，
+    /// 因此「计数 == 1」⇔「装配动作恰好执行过一次」。
+    @MainActor
+    private(set) static var registerCallCount = 0
+
     /// 执行运行时装配。**幂等**：已装配过则直接返回，不会产生第二次副作用。
     ///
     /// 为什么这道门必须有（2026-09-25 复核提出后**逐条读实现**得到的依据，不是预防性写法）——
@@ -59,6 +75,8 @@ enum AppCompositionRoot {
         // 防误用门：见上面注释里逐条核对的成员语义。重复调用在这里被收口，
         // 而不是依赖「调用方记得只调一次」。
         guard !didRegisterRuntimeServices else { return }
+
+        registerCallCount += 1
 
         // 崩溃自捕获：崩溃后把线程堆栈写到 ~/Library/Logs/SL_crash.log（LLDB 拦截时系统不落 .ips）
         CrashReporter.install()
