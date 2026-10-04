@@ -152,7 +152,7 @@ extension LoaderSupportChecker {
     private static func requestOnce(url: URL, authoritativeEmpty: Bool, key: String, version: String) async -> LoaderCheckResult {
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
-        req.setValue(SharedConstants.shared.userAgent, forHTTPHeaderField: "User-Agent")
+        req.setLaunchUserAgent()
         do {
             let (data, resp) = try await metaSession.data(for: req)
             if let http = resp as? HTTPURLResponse, !(200...299).contains(http.statusCode) {

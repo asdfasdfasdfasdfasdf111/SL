@@ -26,7 +26,7 @@ enum SearchTranslator {
         ]
         guard let url = components.url else { return [] }
         var req = URLRequest(url: url)
-        req.setValue(SharedConstants.shared.userAgent, forHTTPHeaderField: "User-Agent")
+        req.setLaunchUserAgent()
         req.timeoutInterval = 10
         guard let (data, _) = try? await AppContext.shared.apiSession.data(for: req),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

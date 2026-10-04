@@ -190,7 +190,7 @@ enum LocalModCatalog {
                 let encoded = facets.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
                 guard let url = URL(string: "https://api.modrinth.com/v2/search?query=&limit=10&facets=\(encoded)") else { continue }
                 var req = URLRequest(url: url)
-                req.setValue(SharedConstants.shared.userAgent, forHTTPHeaderField: "User-Agent")
+                req.setLaunchUserAgent()
                 guard let (data, _) = try? await AppContext.shared.apiSession.data(for: req),
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let hits = json["hits"] as? [[String: Any]] else { continue }

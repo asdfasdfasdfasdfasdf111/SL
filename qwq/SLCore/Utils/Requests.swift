@@ -153,3 +153,17 @@ public class Requests {
         return await request(url: resolvedURL, method: "POST", headers: headers, body: body, encodeMethod: encodeMethod, ignoredFailureStatusCodes: ignoredFailureStatusCodes)
     }
 }
+
+// MARK: - User-Agent 统一收口
+
+extension URLRequest {
+    /// 设置启动器统一 User-Agent。
+    ///
+    /// 历史：全库曾逐字复制 `setValue(SharedConstants.shared.userAgent, forHTTPHeaderField: "User-Agent")`
+    /// 10 处（ModDownloader / ModrinthSearcher / LocalModCatalog / SearchTranslator /
+    /// TranslationSourceFetcher / ModpackDownloader / LoaderSupportProbe）——复制点一旦改 UA
+    /// 极易漏改，且某个来源改了、别的来源还是旧 UA，行为不一致。收口后所有请求只经这一个入口。
+    public nonisolated mutating func setLaunchUserAgent() {
+        setValue(SharedConstants.shared.userAgent, forHTTPHeaderField: "User-Agent")
+    }
+}

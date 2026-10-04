@@ -100,7 +100,7 @@ public class ModDownloader {
         let url = URL(string: baseURL + path)!
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
-        req.setValue(SharedConstants.shared.userAgent, forHTTPHeaderField: "User-Agent")
+        req.setLaunchUserAgent()
         return req
     }
 
@@ -155,7 +155,7 @@ public class ModDownloader {
                 URLQueryItem(name: "facets", value: facets)
             ]
             var req = URLRequest(url: components.url!)
-            req.setValue(SharedConstants.shared.userAgent, forHTTPHeaderField: "User-Agent")
+            req.setLaunchUserAgent()
             let (data, response) = try await session.data(for: req)
             // 先验状态码再解码：429/5xx 的错误体不是 SearchResult，直接解码会报「数据格式不正确」
             try validate(data, response)
@@ -196,7 +196,7 @@ public class ModDownloader {
         }
         components.queryItems = queryItems.isEmpty ? nil : queryItems
         var req = URLRequest(url: components.url!)
-        req.setValue(SharedConstants.shared.userAgent, forHTTPHeaderField: "User-Agent")
+        req.setLaunchUserAgent()
         let (data, response) = try await session.data(for: req)
         // 先验状态码再解码（同 getProject：429/5xx 的错误体不是版本数组）
         try validate(data, response)

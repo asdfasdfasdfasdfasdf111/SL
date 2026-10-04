@@ -61,7 +61,7 @@ public class ModpackDownloader {
     public func versions(packId: String) async throws -> [ModpackVersion] {
         guard let url = URL(string: "\(base)/project/\(packId)/version") else { throw ModpackError.invalidURL }
         var req = URLRequest(url: url)
-        req.setValue(SharedConstants.shared.userAgent, forHTTPHeaderField: "User-Agent")
+        req.setLaunchUserAgent()
         let (data, _) = try await session.data(for: req)
         return try JSONDecoder().decode([ModpackVersion].self, from: data)
     }

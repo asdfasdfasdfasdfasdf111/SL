@@ -53,7 +53,7 @@ enum TranslationSourceFetcher {
     private static func fetchModrinthProject(projectId: String, fallback: String, session: URLSession) async -> String? {
         guard let url = URL(string: "https://api.modrinth.com/v2/project/\(projectId)") else { return nil }
         var req = URLRequest(url: url)
-        req.setValue(SharedConstants.shared.userAgent, forHTTPHeaderField: "User-Agent")
+        req.setLaunchUserAgent()
         req.timeoutInterval = 8
 
         guard let (data, response) = try? await session.data(for: req),
@@ -89,7 +89,7 @@ enum TranslationSourceFetcher {
     private static func fetchMirrorTranslation(projectId: String, session: URLSession) async -> String? {
         guard let url = URL(string: "https://mod.mcimirror.top/translate/modrinth?project_id=\(projectId)") else { return nil }
         var req = URLRequest(url: url)
-        req.setValue(SharedConstants.shared.userAgent, forHTTPHeaderField: "User-Agent")
+        req.setLaunchUserAgent()
         req.timeoutInterval = 8
 
         guard let (data, response) = try? await session.data(for: req),
