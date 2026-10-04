@@ -25,7 +25,7 @@ final class DataManagerTests: XCTestCase {
     /// 用局部副本驱动，不触碰单例字段（避免污染其它用例）。
     func testFieldsArePlainContainers() async {
         // javaVirtualMachines：数组容器
-        var vms: [JavaVirtualMachine] = []
+        let vms: [JavaVirtualMachine] = []
         XCTAssertEqual(vms.count, 0)
         // versionManifest：可选容器
         let manifest: VersionManifest? = nil
