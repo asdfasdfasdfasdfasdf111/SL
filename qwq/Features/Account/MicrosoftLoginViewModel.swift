@@ -123,7 +123,7 @@ final class MicrosoftLoginViewModel: ObservableObject {
                 self.phase = .signedIn(account)
             } catch {
                 guard let self, !Task.isCancelled else { return }
-                if error is MicrosoftAuthError, case .cancelled = error as! MicrosoftAuthError {
+                if case .cancelled = error as? MicrosoftAuthError {
                     // 用户主动取消：回到初始态，不显示错误
                     self.phase = .idle
                 } else {
