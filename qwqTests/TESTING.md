@@ -12,7 +12,7 @@
 - **target**：`qwqTests`，产物 `qwqTests.xctest`，类型 unit-test bundle。
 - **目录自动同步**：`qwqTests/` 作为 `PBXFileSystemSynchronizedRootGroup` 自动纳入编译，测试文件放在该目录下即生效，不需要拖进 Xcode 或在 File Inspector 里勾选 Target Membership。
 - **运行**：Xcode 中 ⌘U；或执行 `./scripts/verify-test.sh run`（编译 + 运行，约 40 秒）。
-  2026-09-24 复核：**AI 会话里就能跑**（沙箱已由用户关闭）—— 旧文档「必须脱离沙箱在 Terminal 里跑」
+  2026-09-24 复核：**自动化会话里就能跑**（沙箱已由用户关闭）—— 旧文档「必须脱离沙箱在 Terminal 里跑」
   的结论已作废，根因就是调用方沙箱。
 - **接线记录**：见 `REFACTOR_PLAN.md` 第 15 项（`8172dbf`，TEST BUILD SUCCEEDED，14 文件 181 用例可编译）。
 

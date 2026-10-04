@@ -154,7 +154,7 @@ init(versionCatalog: VersionCatalogService = DefaultVersionCatalogService(),
 
 ## 八、测试与 CI
 
-- 目录：`qwqTests/`，当前 **61 个测试文件**（用例数以 CI 结果为准；2026-10-04 并行会话
+- 目录：`qwqTests/`，当前 **61 个测试文件**（用例数以 CI 结果为准；2026-10-04 随后
   补 `DataManagerTests` / `MultiFileDownloaderTests` 两个零触达枢纽的测试后由 59 → 61）
 - 跑法：`./scripts/verify-test.sh run`（真实 xcodebuild，编译 + 运行）
 - 快速反馈：`./scripts/typecheck.sh`（`swiftc -typecheck` 两口径，比 xcodebuild 快一个数量级）

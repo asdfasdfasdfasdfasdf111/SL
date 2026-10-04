@@ -18,7 +18,7 @@
 >
 > 基线（2026-10-02）：`qwq/` 下 **237 个 Swift 文件 / 约 31,000 行**，测试 **57 个文件**。
 > 文件数与行数会随每次改动漂移，复核用 `find qwq -name '*.swift' | wc -l`；用例数以 CI 为准
-> （`.github/workflows/test.yml`）。**2026-10-04 实测**：测试文件已 **61 个**（并行会话补
+> （`.github/workflows/test.yml`）。**2026-10-04 实测**：测试文件已 **61 个**（随后补
 > `DataManagerTests` / `MultiFileDownloaderTests` 后由 59 → 61），全量 **740 passed / 2 skipped / 0 failed**。
 
 ---
@@ -48,7 +48,7 @@ xcodebuild -project qwq.xcodeproj -scheme qwq -configuration Debug build
 
 ### 无人值守启动一次游戏（验证启动链用）
 
-AI 会话里点不到按钮（无辅助功能权限），所以有个仅 DEBUG 的开关：
+自动化会话里点不到按钮（无辅助功能权限），所以有个仅 DEBUG 的开关：
 
 ```bash
 SL_DEBUG_AUTO_LAUNCH=1 SL_DEBUG_AUTO_LAUNCH_DELAY=4 \
@@ -180,7 +180,7 @@ abort 之后**换全新的 `SL_DERIVED`**（旧派生目录会退化，`build-fo
 | 断言读**进程级状态** | 单例 / `static var` / 订阅条数被先前用例污染 → 假绿 | 无重置接口的一律断言**差值**，收尾还原成进程启动态 |
 | 被测代码有**按环境早退**的分支 | 测试恰好跑在该环境里 → 整段真实路径从未执行 | 把调用环境变成**显式选择**的入口，并把环境前提钉成断言 |
 | 同步用例 | 宿主 abort、无限重启 | 一律 `async`（见 §三） |
-| 沙箱内跑 XCTest | `The test runner hung before establishing connection` | 宿主型 XCTest 依赖 testmanagerd 的 XPC，**AI 沙箱内跑不了**；编译可以在沙箱内完成，运行要在 Terminal |
+| 沙箱内跑 XCTest | `The test runner hung before establishing connection` | 宿主型 XCTest 依赖 testmanagerd 的 XPC，**沙箱内跑不了**；编译可以在沙箱内完成，运行要在 Terminal |
 
 ### 环境
 
@@ -265,13 +265,13 @@ D1–D9 九条缺陷关闭、失败分类结构化（去掉中文文案反猜与
 - **不做**「顺手一起改」：删死代码 /「现代化」换 API 一律不做
 - **不做**注释性产出：注释不是产出，改动要有硬依据
 
-## 八、多模型并行工作区清扫记录（2026-10-03）
+## 八、并行开发污染清扫记录（2026-10-03）
 
-> 背景：2026-10-02~03 期间有多个模型会话（本主会话、微软登录会话、Kimi 只读扫描、
-> Deepseek 会话）并行操作同一工作区。Kimi 会话只读、未产生改动；**微软登录会话在工作树
+> 背景：2026-10-02~03 期间有并行协作方在同一工作区作业（本交接方之外另有
+> 微软登录实现方与只读审查方）。只读审查不产生改动；**微软登录实现方在工作树
 > 层面写入了完整登录实现**（未提交），与本文「七、不实现微软登录」的已决方针直接冲突，
 > 且引用不存在的类型（`MicrosoftAccount` / `MicrosoftAuthService` / `ms.isUsable`），
-> 属半成品。Deepseek 会话无独立改动落盘。
+> 属半成品。其余协作方无独立改动落盘。
 
 ### 清扫动作（2026-10-03）
 
@@ -304,10 +304,10 @@ D1–D9 九条缺陷关闭、失败分类结构化（去掉中文文案反猜与
 
 ### 教训（供后续会话）
 
-- 微软登录会话的产出**未提交、未通过编译**（引用了不存在的 API），其工作树改动与
+- 微软登录实现的产出**未提交、未通过编译**（引用了不存在的 API），其工作树改动与
   「不实现微软登录」方针冲突——若需续做，源码见 `/tmp/sl-junk/ms-auth-draft/` 与
   `/tmp/sl-junk/parallel-cleanup-*/`，但必须先变更本文「七、不实现」决策再动代码。
-- 多会话并行同一工作区时：**一切产出先 `git status` 确认是否已跟踪**；未跟踪文件不参与
+- 多路并行协作同一工作区时：**一切产出先 `git status` 确认是否已跟踪**；未跟踪文件不参与
   任何提交，还原用 `git checkout --`（先备份 diff），防交叉污染。
 
 ## 九、微软账号登录采纳登记（2026-10-04）

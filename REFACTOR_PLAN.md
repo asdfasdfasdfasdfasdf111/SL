@@ -56,11 +56,11 @@
 | # | 事项 | 风险 | 状态 / 需要什么才能收尾 |
 |---|---|---|---|
 | A | 剩余下载调用方切换 | 低-中 | ✅ **已收口**（`037b007`）：可等价切换的调用点已全部切完。剩余 4 处（`MultiFileDownloader` 批量、`MinecraftInstallerDownloads` 三处批量、`DownloadSourceManager` 测速、`SingleFileDownloader` 自身）经判定**不可等价切换**——批量路径的字节加权进度分母依赖 `NetDownloader` 内部中间态，测速返回值是墙钟差、引擎跳步会落在计时窗口内。切换需扩展 `DownloadEngine` 的进度语义，超出「不新增功能」范围，按 `MIGRATION.md` 判据记录为不切 |
-| B | `qwqTests` 加入工程 target | 中 | ✅ **已完成**（`8172dbf`）：可编译；**运行**需在 Terminal（脱离 AI 沙箱）执行 `./scripts/verify-test.sh run`，AI 沙箱内 testmanagerd 的 XPC 连接会被阻断 |
+| B | `qwqTests` 加入工程 target | 中 | ✅ **已完成**（`8172dbf`）：可编译；**运行**需在 Terminal（脱离沙箱）执行 `./scripts/verify-test.sh run`，沙箱内 testmanagerd 的 XPC 连接会被阻断 |
 | C | UI 剩余职责 | 中 | ✅ **已收口**（`6801bb6`）：抽出 `GameCategoryViewModel` / `DownloadCategoryViewModel+Orchestration` / `LaunchEntryViewModel`，`ModDetailViewModel` 补 `performDownload`。**窗口壳 / `searchText` / `isDropTargeted` / 画布手势与 spring 参数位于冻结的 `qwq/App`**，本轮不可动；`ModDetailView.settings` 订阅与 `CategoryContentView.searchText` 因无法静态证否而保留并记录 |
 | D | 启动缺陷 D1–D6 | 中 | ✅ **已全部收口**：D1 按你的决定落地——缺客户端文件 → 拦住不启动 + 弹窗（样式对齐「下载中」气泡），见 `708b3f9`；D2–D6 由 `cb93219` 修复（启动链路 5 处）。另 D7/D8 由 `03820d9` 修复。**§三 九条缺陷已全部关闭** |
 | E | 旧兼容层清理（`Stubs` / `SLLaunchBridge`） | 中-高 | **被 F 阻塞**：需先完成双流程合并，否则会断掉回退路径。`Stubs` 487 行，普查出 9 项无引用 |
-| F | 双启动流程合并 | **高** | 🟡 **验证门槛已过，合并本体未开始**：真机启动已由 AI 跑通（见 §七 证据），且走的是 `LaunchCoordinator` → 用例层 → 桥接的**生产同一条路径**。合并本体的四个验证点（Java 扫描等待、日志 flush、进程退出回调时序、`skipResourceCheck` 语义）现在是可跑可测的，不再是「AI 无法代跑」 |
+| F | 双启动流程合并 | **高** | 🟡 **验证门槛已过，合并本体未开始**：真机启动已由自动化会话跑通（见 §七 证据），且走的是 `LaunchCoordinator` → 用例层 → 桥接的**生产同一条路径**。合并本体的四个验证点（Java 扫描等待、日志 flush、进程退出回调时序、`skipResourceCheck` 语义）现在是可跑可测的，不再是「自动化会话无法代跑」 |
 | G | 配置回退遗留残留清理（`LockCompat` / `CompatModifiers`） | 低 | ✅ **已完成**（未提交）：根因是 `17cca21` 把部署目标由 12.0 回退到 13.0 时**只改 `project.pbxproj` 4 行、未清理为 12 写的兼容层**，两者从此成为孤儿。已删除 `SLCore/Utils/LockCompat.swift`、`UI/CompatModifiers.swift`（等 2 个文件），`withUnfairLock` → `OSAllocatedUnfairLock`、`withLockCompat` → 原生 `withLock`、`contentTransitionOpacityCompat` → 原生 `.contentTransition(.opacity)`，`semaphoreWait` 迁至 `SLCore/Utils/NoasyncBridge.swift`。判定依据是用户既定决定「macOS 12 支持单独隔离处理、主目标锁定 13.0」。**验证**：两口径 0 错误且告警集合与基线逐条一致（44/56），真实 `xcodebuild` 编译通过 |
 | H | 默认窗口尺寸 900×660 现无生效声明 | 低 | ⏸ **待你拍板，未动**：`e62d7f3`（降 12.0）删掉了 `qwqApp.swift` 的 `.defaultSize(width: 900, height: 660)`，改用 `AppDelegate` 里 `if #unavailable(macOS 13.0)` 的兜底；`17cca21` 回退到 13.0 后该分支**永不执行**（四处目标均为 13.0），而更晚的 `e624d33` 窗口尺寸审计只处理了 **minSize**、未发现 defaultSize 已丢。现状：全库无任何地方声明默认窗口尺寸（`ContentView.swift` 的 900×650 在 `PreviewProvider` 里，仅预览）。修法一行：在 `.windowStyle` 后恢复 `.defaultSize(width: 900, height: 660)`。属用户可见的行为改动，按规矩先问。**注**：曾尝试用 `CGWindowListCopyWindowInfo` 实测窗口尺寸，量得 81×102 且与 `.frame(minWidth: 800, minHeight: 590)` 下限矛盾，说明该环境下窗口未正常布局，**故不以实测为据**，仅采信代码事实 |
 
@@ -108,9 +108,9 @@
 | 拆分丢 `import` | 拆 `MinecraftLauncher.swift` 时丢了 `import SwiftyJSON`，裸 `typecheck` 报 0 错误，真实编译报 5 个 error，**工程在 `a5f639b`→`d95064c` 之间编译不过** | `import` 是**按文件**生效的；搬移代码必须核对新文件 import 是否覆盖该段代码用到的所有定义模块。行比对查不出这一类（那一行还在别的文件里），**只有编译器能查** |
 | 用类型检查代替真实编译 | 原计划表明文规定"统一用全量类型检查代替 xcodebuild" | 假阴性。已在本文档修正为三级阶梯验证 |
 | 并行任务抢派生目录 | 并发跑 `xcodebuild` 互相破坏中间产物 | 用 `SL_DERIVED` 给每个任务独立的 `derivedDataPath` |
-| 沙箱内跑测试 | `The test runner hung before establishing connection`（等 6 分钟才报错） | 宿主型 XCTest 依赖 testmanagerd 的 XPC，AI 沙箱内跑不了；编译可以在沙箱内完成，运行要在 Terminal |
+| 沙箱内跑测试 | `The test runner hung before establishing connection`（等 6 分钟才报错） | 宿主型 XCTest 依赖 testmanagerd 的 XPC，沙箱内跑不了；编译可以在沙箱内完成，运行要在 Terminal |
 | 沙箱内跑 git 写操作 | 留下 0 字节 `.git/index.lock`，后续 `git commit` 报 `File exists` | 出现时在沙箱外 `rm -f .git/index.lock` 再提交 |
-| 以为「离开 AI 沙箱就能跑测试」 | 用 `dangerouslyDisableSandbox` 跑 `test-without-building`，宿主 App 确实起来了（进程在），但 4 分钟无任何用例输出 —— 卡在 testmanagerd 握手 | 沙箱 profile 会**继承给子进程**：xcodebuild → 测试宿主 App 一路带着，宿主连 testmanagerd 的 XPC 照样被拒。**跑 XCTest 只能在用户自己的 Terminal 里**，不要在 AI 会话里反复试 |
+| 以为「离开沙箱就能跑测试」 | 用 `dangerouslyDisableSandbox` 跑 `test-without-building`，宿主 App 确实起来了（进程在），但 4 分钟无任何用例输出 —— 卡在 testmanagerd 握手 | 沙箱 profile 会**继承给子进程**：xcodebuild → 测试宿主 App 一路带着，宿主连 testmanagerd 的 XPC 照样被拒。**跑 XCTest 只能在用户自己的 Terminal 里**，不要在自动化会话里反复试 |
 | 用 `CGEvent.postToPid` 绕过辅助功能权限 | 投递成功（无报错），但最小化按钮/启动按钮都毫无反应 | 鼠标事件经 `postToPid` 基本不生效（键盘事件才相对可靠），且 `AXIsProcessTrusted=false` 时根本没有可靠的 UI 驱动路径。**要无人值守地跑一次启动，用 `SL_DEBUG_AUTO_LAUNCH=1`（见 §七）** |
 | `screencapture` 没有屏幕录制权限 | 命令成功返回、图片也有 4.5MB，但内容是**桌面壁纸**，不含任何窗口 | 无「屏幕录制」权限时截图不报错、只给壁纸。**不能用它验证 UI 改动**；UI 只能靠代码审查 + 你在本机肉眼看 |
 
@@ -129,7 +129,7 @@
 
 ### 怎么在无人点按钮的情况下跑起来
 
-AI 会话里既点不到按钮（无辅助功能权限），又跑不了 XCTest（沙箱继承到宿主）。
+自动化会话里既点不到按钮（无辅助功能权限），又跑不了 XCTest（沙箱继承到宿主）。
 因此加了一个**仅 DEBUG** 的开关 `qwq/App/DebugAutoLaunch.swift`：
 
 ```bash
