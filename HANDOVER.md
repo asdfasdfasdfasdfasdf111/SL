@@ -346,3 +346,45 @@ D1–D9 九条缺陷关闭、失败分类结构化（去掉中文文案反猜与
 
 - client id 为借用的官方公开 id（无自有 Azure 应用）；若微软收紧策略需改为自有应用注册。
 - access/refresh token 随账号明文存 UserDefaults（CodableAppStorage），如需更安全可改 Keychain。
+
+## 十、收尾验收（2026-10-05）
+
+> 本轮三件事（ARCHITECTURE 同步 / HANDOVER 同步 / 补两处高价值测试）之后的终态核实，
+> 回答「文档是否与代码一致、配置是否干净」。
+
+### pbxproj 噪音确认（8+14 动改）
+
+- **结论**：`project.pbxproj` 上线那轮出现的 8 insertions / 14 deletions 确认为
+  **build 后的区块重排噪音**（`PBXFileSystemSynchronizedRootGroup` 各 section 顺序漂移），
+  **不是新文件引用丢失**。证据链：
+  1. 同步组机制：`PBXFileSystemSynchronizedRootGroup` 自动纳入目录下新文件，
+     pbxproj 无显式条目可丢（新文件入 target 靠目录同步而非手写引用）。
+  2. 功能验证：微软实现（`MicrosoftAccount` 编译命中）、新增测试
+     （`UtilUnzipTests` 8 条用例实跑）均正常编译执行——引用完整。
+  3. 当前状态：`git diff qwq.xcodeproj/project.pbxproj` **零差异**；
+     该噪音已在采纳微软登录时（提交 `47bc4e3` 信息「project.pbxproj build
+     区块重排噪音已还原」）`git checkout` 还原，从未进入任何提交。
+- **处置**：无需也不应提交噪音。工作区 pbxproj 与 HEAD 逐字节一致。
+
+### 文档与代码一致性抽查（无理想化编造）
+
+逐条核实 ARCHITECTURE.md / HANDOVER.md 的关键断言均落到真实文件：
+
+| 断言 | 实证 |
+|---|---|
+| 下载双轨：SLCore/Download 17 文件 | ✅ 实测 17（实际下载算法） |
+| 下载双轨：Core/Download 10 文件（含 Adapters 子目录） | ✅ 实测 10（引擎门面+适配器） |
+| 四重设置：AppSettings / AppSettingsStore / ThemeManager / LauncherSettings | ✅ 四文件均存在，AppSettings 为下载链/启动链兼容层 |
+| 微软实现文件 MicrosoftAccount / MicrosoftAuthService | ✅ 2/2 存在，测试命中 |
+| 测试文件数 | ✅ 63 文件（HANDOVER 基线 61 已过期于本轮 +2，本轮测试提交后即 63；ARCHITECTURE §八 61 为本轮提交时点，随 9ba7bf5 后为 63）|
+| 启动双流程已合并（无 `MinecraftInstance.launch()`） | ✅ `func launch()` 在 MinecraftInstance.swift 零命中 |
+| Java 唯一入口 JavaResolver | ✅ `resolve(_:)` 存在 |
+
+> ⚠️ 上表「测试文件数」注意区分时点：ARCHITECTURE/HANDOVER 记录的是各自提交时点
+> （61），本轮 +2（UtilUnzipTests / AppSettingsStorePersistenceTests）后为 **63**，
+> 下轮接手以 `ls qwqTests/*.swift | wc -l` 实测为准。
+
+### 终态
+
+- 本地 = 远程 main = `9ba7bf5`；工作区零未跟踪零修改。
+- 全量测试 **753 passed / 2 skipped / 0 failed**（含本轮 +13 用例）。
