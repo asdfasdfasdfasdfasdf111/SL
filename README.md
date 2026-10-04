@@ -85,12 +85,22 @@ SL/
 | 测试怎么跑、覆盖了什么 | `qwqTests/TESTING.md` |
 | 每一轮改了什么、为什么 | `CHANGELOG.md`（2026-10 起冻结，变更看 git log） |
 | 哪些是桩实现 | `qwq/SLCore/STUBS_AUDIT.md` |
+| 第三方引用逐条清单（移植算法/来源/依据） | `docs/THIRD-PARTY-NOTICES.md` |
 
 ## 致谢与引用说明
 
 - **[PCL2（Plain Craft Launcher 2）](https://github.com/Hex-Dragon/PCL2)** by 龙腾猫跃：本项目参考了其启动流程、完整性补全（`DlClientFix`）、离线 UUID 算法（`McLoginLegacyUuid`）等实现思路，少量算法级移植已在源码注释中逐处标注。PCL2 源码库许可为保留所有权利、允许思路参考与少量引用（见其仓库 `LICENCE`），本项目未整段复制其代码。
 - **PCLMac**：项目早期参考过其架构，启动核心现为 Swift 原生重写，兼容层见 `qwq/SLCore/SLLaunchBridge.swift`。
 - **[Modrinth](https://modrinth.com)**：Mod 元数据来源，离线目录由 `scripts/crawl_modrinth.py` 生成。
+
+## 身份与合规
+
+> 以下为**分发前必须知悉**的合规事项。作为非商业个人项目可能足够，但正式对外分发请逐条核验。
+
+- **微软登录借助公开 client id `00000000402b5328`**（设备码流程，public client 无 secret，见 `MicrosoftAuthService.swift`）。这是启动器圈的通行做法，但属于**借用第三方应用身份**：微软一旦收紧该 client 的第三方用途（历史上有过先例），所有已发布版本的登录链路会**同时失效、且无平滑降级路径**。**计划**：注册自有 Azure AD 应用（device code 免费、无需 secret）后把 client id 提为可配置常量并保留 fallback；在此之前，登录功能按「可能随时失效」看待。
+- **GPL-3.0 与本项目的移植**：项目整体为 [GPL-3.0](./LICENSE)。对 PCL2 的移植均为**思路级/少量引用级**（未整段复制），已在源码注释与 `docs/THIRD-PARTY-NOTICES.md` 中逐条给出依据；如被质疑，以该清单为准自查。
+- **Modrinth 数据再分发**：内置 12MB 离线目录由 Modrinth API 生成，随包分发。请核阅 Modrinth 当前 API 条款对「项目元数据离线再分发」的要求（本项目保留源站信息，未二次改动内容）。
+- **macOS 分发**：签名与公证（notarization）未在 README 提供现成命令——因为本项目**尚未配置分发签名身份**。正式对外分发前需：① 注册 Apple Developer 并为构建产物签名；② 用 `xcrun notarytool submit` 提交公证；③ 把公证书 stapled 到 App。未公证的 App 若未右键打开会被 Gatekeeper 拦截——是否配置签名身份由项目所有者决定，本文仅如实记录现状。
 
 ## 许可证
 
