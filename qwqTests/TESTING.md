@@ -3,8 +3,6 @@
 本目录是给 `qwq` 工程补的单元测试，覆盖 `Core/`（下载抽象）、`Features/Java/`、
 `Features/Launch/`、`App/ViewModels/`、`UI/Notices/` 与下载适配器层。
 
-**当前状态：工程已包含 `qwqTests` unit-test target（`productType = com.apple.product-type.bundle.unit-test`）。`qwq.xcodeproj` 通过 `PBXFileSystemSynchronizedRootGroup` 自动同步整个 `qwqTests/` 目录，新增 / 删除测试文件无需手工加入 target；`qwq.xcscheme` 的 TestAction 已挂 `qwqTests.xctest`，直接 ⌘U 即可运行。详细进展见 `REFACTOR_PLAN.md`。**
-
 ## 一、XCTest target（已完成，无需手工创建）
 
 工程已包含 `qwqTests` unit-test target（`productType = com.apple.product-type.bundle.unit-test`）。`qwq.xcodeproj` 通过 `PBXFileSystemSynchronizedRootGroup` 自动同步整个 `qwqTests/` 目录，新增 / 删除测试文件无需手工加入 target；`qwq.xcscheme` 的 TestAction 已挂 `qwqTests.xctest`，直接 ⌘U 即可运行。详细进展见 `REFACTOR_PLAN.md`。
@@ -16,7 +14,7 @@
   的结论已作废，根因就是调用方沙箱。
 - **接线记录**：见 `REFACTOR_PLAN.md` 第 15 项（`8172dbf`，TEST BUILD SUCCEEDED，14 文件 181 用例可编译）。
 
-测试文件清单（共 **55** 个，目录自动同步，无需手工加入 target）：
+测试文件清单（数量以 `ls qwqTests/*.swift | wc -l` 实测为准——本清单历史手写，会随新增漂移，仅列代表文件与对应被测对象。目录自动同步，无需手工加入 target）：
 
 | 文件 | 被测对象 | 备注 |
 | --- | --- | --- |

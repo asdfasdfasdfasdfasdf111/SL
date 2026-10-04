@@ -31,6 +31,8 @@
 
 ## 最低系统要求降至 macOS 12.0（2026-08-17）
 
+> ⚠️ **本条为历史决策，已被后续变更覆盖**：当前 `project.pbxproj` 四处 `MACOSX_DEPLOYMENT_TARGET` 均为 **13.0**（README 亦写 macOS 13.0+）。12.0 的降级在某次工程配置回退/合并中不复存在，本条目保留仅作历史记录，勿据此判断当前系统要求。
+
 - 部署目标由 macOS 13.0 降至 macOS 12.0（README 系统要求同步更新）
 - 全量替换 macOS 13 专属 API 为 12 可用等价物（行为不变）：
   - `URL.appending(path:directoryHint:)` / `appending(component:)` → `appendingPathComponent(_:)`（101 处，脚本批量替换 + 人工核对）

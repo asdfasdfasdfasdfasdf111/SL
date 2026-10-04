@@ -16,7 +16,7 @@
 > | `CHANGELOG.md` | 每一轮改了什么、为什么（2026-10 起冻结，不再手写新条目） |
 > | `qwq/SLCore/STUBS_AUDIT.md` | 哪些是桩实现、哪些看着像桩其实是真代码 |
 >
-> 基线（2026-10-02）：`qwq/` 下 **237 个 Swift 文件 / 约 31,000 行**，测试 **57 个文件**。
+> 基线（2026-10-02）：`qwq/` 下 **237 个 Swift 文件 / 约 31,000 行**，测试 **57 个文件**（数字随开发漂移，以 `find qwq -name '*.swift' | wc -l`、`find qwqTests -name '*.swift' | wc -l` 实测为准）。
 > 文件数与行数会随每次改动漂移，复核用 `find qwq -name '*.swift' | wc -l`；用例数以 CI 为准
 > （`.github/workflows/test.yml`）。**2026-10-04 实测**：测试文件已 **61 个**（随后补
 > `DataManagerTests` / `MultiFileDownloaderTests` 后由 59 → 61），全量 **740 passed / 2 skipped / 0 failed**。
