@@ -75,6 +75,9 @@ echo "--- 运行测试（会启动 qwq.app 作为宿主）---"
 echo "注意：用例必须一律写成 async（见 qwqTests/TESTING.md §五）。同步用例里创建并释放"
 echo "      @MainActor 类实例会让宿主 abort（malloc: pointer being freed was not allocated），"
 echo "      表现为「前几个测试类通过、之后无限重启」。工具链缺陷，与本工程逻辑无关。"
+echo "⚠️ 测试宿主即 qwq.app，UserDefaults.standard 是**用户真实偏好域**：本工程 scheme"
+echo "   已注入 \`-ApplePersistenceIgnoreState YES\`，测试期间不回写真实偏好；"
+echo "   但测试代码里凡写 UserDefaults 仍走「哨兵值 + defer 还原」纪律（见 HANDOVER §三）。"
 rm -rf "$RESULT"
 # 显式指定 destination：本机 arm64 / x86_64 两个 destination 同名同 id，
 # 不指定时 xcodebuild 会打印「Using the first of multiple matching destinations」后取第一个，
