@@ -72,10 +72,19 @@ init(versionCatalog: VersionCatalogService = DefaultVersionCatalogService(),
 
 ## 四、设置层收口
 
-- `qwq/Features/Settings/AppSettingsStore.swift`：设置数据的**唯一存储点**
-  - 只负责设置数据的持有与持久化
-  - 不持有 Java、下载、启动等业务状态
-  - 复用项目既有的 `UDK` 键名，保证与旧数据兼容
+四个"设置"相关类型，职责边界必须分清（2026-10-04 补全 AppSettings，此前文档只记了三重）：
+
+| 类型 | 位置 | 角色 | 现状 |
+| --- | --- | --- | --- |
+| `AppSettingsStore` | `qwq/Features/Settings/AppSettingsStore.swift` | 设置数据的**唯一存储点** | 持有/持久化个性化设置 |
+| `AppSettings` | `qwq/SLCore/Storage/AppSettings.swift` | **下载链/启动链的兼容层**（下载源选择 + Minecraft 目录兜底），**不是**设置界面数据源 | `DownloadSourceOption` 三字段，`currentMinecraftDirectory` 只读不改（恒 `.default`） |
+| `ThemeManager` / `LauncherSettings` | `qwq/Features/Settings/` | **兼容层**，转发向 `AppSettingsStore` | 不再自持持久化字段，各留一条 `AnyCancellable` 桥接订阅（功能必需，断开即静默不重绘） |
+
+- `AppSettingsStore`：只负责设置数据的持有与持久化，不持有 Java、下载、启动等业务状态；
+  复用项目既有的 `UDK` 键名，保证与旧数据兼容。
+- `AppSettings`：三个字段都有读取方（见该文件头注释的逐字段引用清单），**不是"看起来像桩"**
+  的残留；其中 `currentMinecraftDirectory` 全库（含测试）无写入点，实际恒为 `.default`
+  （见 `qwq/SLCore/STUBS_AUDIT.md` §5.4）。它服务下载链与启动链，**不归设置界面管**。
 - `ThemeManager` / `LauncherSettings`：**兼容层**，不再新增字段，逐步收窄后移除
   - 两者均已完成向 `AppSettingsStore` 的转发收敛（不再自持持久化字段、不再各自写 `UserDefaults`）
   - ⚠️ 两者各有一条 `AnyCancellable` 桥接订阅 `AppSettingsStore.objectWillChange` 并转发到自身
@@ -145,7 +154,8 @@ init(versionCatalog: VersionCatalogService = DefaultVersionCatalogService(),
 
 ## 八、测试与 CI
 
-- 目录：`qwqTests/`，当前 **57 个测试文件**（用例数以 CI 结果为准）
+- 目录：`qwqTests/`，当前 **61 个测试文件**（用例数以 CI 结果为准；2026-10-04 并行会话
+  补 `DataManagerTests` / `MultiFileDownloaderTests` 两个零触达枢纽的测试后由 59 → 61）
 - 跑法：`./scripts/verify-test.sh run`（真实 xcodebuild，编译 + 运行）
 - 快速反馈：`./scripts/typecheck.sh`（`swiftc -typecheck` 两口径，比 xcodebuild 快一个数量级）
   - ⚠️ 它依赖 `/tmp/deps` 里由**上一次真实构建**产出的第三方 `.swiftmodule`；
@@ -186,9 +196,11 @@ abort，表现为"前几个测试类通过、之后无限重启"）。详见 `qw
    （判据见 `MultiFileDownloader.start` 注释与 MIGRATION.md）。
 3. `MultiFileDownloader` / 直连 `URLSession` 接入 `DownloadEngine`：**已否决**
    （同第 2 条；直连路径属探测/请求工具，非引擎职责）。
-4. 账号伪实现：**已决（保留原样）**——`AnyAccount` 枚举形状保留为历史持久化数据
-   解码兼容，运行期经 `unimplementedError` 显式告警 + 明确文案（SLOP-AUDIT REV3 C）；
-   实现 OAuth 属新功能，超出收尾范畴。
+4. 账号实现：**已处置（2026-10-04）**——微软账号已由桩变为**真实实现**（设备码流程 +
+   MSA→XBL→XSTS→MC 令牌链 + 旧数据迁移，见 `SLCore/Account/MicrosoftAccount.swift`、
+   `MicrosoftAuthService.swift` 与 `HANDOVER.md` §九，推翻本条第 4 项旧「伪实现保留」决策；
+   采纳质量评估与验收记录见 `HANDOVER.md` §九）。`.yggdrasil` 维持桩：枚举形状保留为
+   历史持久化数据解码兼容，运行期经 `unimplementedError` 显式告警（SLOP-AUDIT REV3 C）。
 5. 工程配置清理：**已完成**——`project.pbxproj` 已仅含 macOS 配置
    （`SDKROOT = macosx` + `SUPPORTED_PLATFORMS = macosx` 四处，无 iOS/visionOS 残留）。
 6. UI 收口：**已完成**——`ContentView` 只保留窗口壳、导航、全局任务入口
