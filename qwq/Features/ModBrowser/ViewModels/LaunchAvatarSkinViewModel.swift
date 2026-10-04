@@ -65,11 +65,11 @@ final class LaunchAvatarSkinViewModel: ObservableObject {
         // "Modifying state during view update"（UAF 崩溃前兆）
         DispatchQueue.main.async {
             let isLaunching = LaunchSessionManager.shared.isLaunching
-            let mcVersion = LauncherSettings.shared.selectedMinecraftVersion
-            let gameDirPath = LauncherSettings.shared.selectedGameRoot.isEmpty
+            let mcVersion = self.settings.selectedMinecraftVersion
+            let gameDirPath = self.settings.selectedGameRoot.isEmpty
                 ? (AppSettings.shared.currentMinecraftDirectory?.rootURL.path ?? "")
-                : LauncherSettings.shared.selectedGameRoot
-            let offlineUUID = LauncherSettings.shared.fixedOfflineUUID.components(separatedBy: "-").joined().lowercased()
+                : self.settings.selectedGameRoot
+            let offlineUUID = self.settings.fixedOfflineUUID.components(separatedBy: "-").joined().lowercased()
             Task.detached(priority: .userInitiated) {
                 let result = await Self.loadSkinImageIfNeededAsync(
                     isLaunching: isLaunching,
@@ -78,7 +78,7 @@ final class LaunchAvatarSkinViewModel: ObservableObject {
                     offlineUUID: offlineUUID
                 )
                 if let url = result {
-                    await MainActor.run { LauncherSettings.shared.skinImageURL = url }
+                    await MainActor.run { self.settings.skinImageURL = url }
                 }
             }
         }
