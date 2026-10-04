@@ -156,27 +156,23 @@ class ModVersionDetector {
 
     /// 一次性列出 jar 内全部条目名。
     ///
-    /// 使用 `unzip -Z1`（zipinfo 单列模式）：仅输出条目名，每行一个，不带表头与摘要，
-    /// 可直接按行切分，无需解析表格化输出。
-    /// - Returns: 条目名集合；返回 `nil` 表示清单不可得（jar 非 zip / 已损坏 / 进程失败 /
-    ///   条目名不是合法 UTF-8）。调用方据此退回逐条提取，保证失败路径与旧实现一致。
+    /// 用 ZIPFoundation 读中央目录（原 `unzip -Z1` 子进程）：不依赖外部 unzip，且
+    /// 同一 jar 的「列条目 + 后续读条目」可共用一个打开句柄时更省。
+    /// - Returns: 条目名集合；返回 `nil` 表示清单不可得（jar 非 zip / 已损坏），
+    ///   调用方据此退回逐条提取，保证失败路径与旧实现一致。
     private func listJarEntries(jarURL: URL) -> Set<String>? {
-        guard let output = AppContext.shared.processPool.execute(
-            "/usr/bin/unzip", args: ["-Z1", jarURL.path], timeout: 10
-        ) else { return nil }
-        let names = output.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard let names = ArchiveUtil.listEntries(url: jarURL) else { return nil }
         return Set(names.filter { !$0.isEmpty })
     }
 
     /// 读取 jar 内指定条目内容。
     ///
-    /// `entries` 非空时，条目不在清单里即直接返回 `nil`，省去一次必然失败的 `unzip -p`；
+    /// `entries` 非空时，条目不在清单里即直接返回 `nil`，省去一次必然失败的读取；
     /// `entries` 为 `nil`（清单不可得）时不做预判，行为与旧实现完全一致。
+    /// 内存读取替代 `unzip -p` 子进程（ArchiveUtil.getEntry，失败同样返回 nil）。
     private func readFileFromJar(jarURL: URL, entryName: String, entries: Set<String>?) -> Data? {
         if let entries, !entries.contains(entryName) { return nil }
-        return AppContext.shared.processPool.executeForData(
-            "/usr/bin/unzip", args: ["-p", jarURL.path, entryName], timeout: 10
-        )
+        return ArchiveUtil.getEntry(url: jarURL, name: entryName)
     }
 
     private func readFabricModJSON(from jarURL: URL, entries: Set<String>?) -> ModVersionInfo? {

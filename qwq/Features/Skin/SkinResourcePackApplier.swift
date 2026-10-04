@@ -150,14 +150,10 @@ enum SkinResourcePackApplier {
     /// 老版本 client jar 无 version.json 或该字段，返回 nil → 调用方回落 pack_format 1
     private static func packPackVersion(for versionJar: URL) -> (major: Int, minor: Int)? {
         guard FileManager.default.fileExists(atPath: versionJar.path) else { return nil }
-        guard let out = AppContext.shared.processPool.execute(
-            "/usr/bin/unzip", args: ["-p", versionJar.path, "version.json"],
-            timeout: 10, captureStderr: true
-        ),
-        let data = out.data(using: .utf8),
-        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-        let pv = obj["pack_version"] as? [String: Any],
-        let major = pv["resource_major"] as? Int else { return nil }
+        guard let data = ArchiveUtil.getEntry(url: versionJar, name: "version.json"),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let pv = obj["pack_version"] as? [String: Any],
+              let major = pv["resource_major"] as? Int else { return nil }
         let minor = pv["resource_minor"] as? Int ?? 0
         return (major, minor)
     }

@@ -72,33 +72,13 @@ struct ModLoaderDetector {
         return .unknown
     }
 
-    /// 用 `/usr/bin/unzip -l` 列出 jar 内条目名；子进程失败时返回 nil。
+    /// 列出 jar 内条目名；ZIPFoundation 读中央目录失败（非 zip / 损坏）时返回 nil。
     ///
-    /// 解析方式：`unzip -l` 输出是表头 + 一行行 `长度 日期 时间 名称`，末尾还有分隔线与汇总行。
-    /// 这里**不按列位置解析**，而是每行取「以空白切分后的最后一段」当作条目名 ——
-    /// 这样对表头（最后一列是 "Name"）、汇总行（最后一段是文件名或数量）都不会崩，
-    /// 靠后续「必须与已知标志文件名精确相等」的比较把噪声排除掉。
-    ///
-    /// `private`：本函数的解析假设只服务于上面的 `detect`，不是通用的 zip 列表工具。
+    /// 历史：原实现用 `/usr/bin/unzip -l` 起子进程，且本函数在 `GameDirectoryScanner` 的
+    /// 主线程路径上最多被调 30 次/页（10 版本 × 3 jar）—— 注释里自证「该页面首帧卡顿的
+    /// 主要来源」。改用 ZIPFoundation 内存读中央目录：不再起子进程、不再阻塞主线程等
+    /// 进程退出，失败语义不变（nil → `.unknown`）。
     private static func listJarEntries(at url: URL) -> [String]? {
-        guard let output = AppContext.shared.processPool.execute(
-            "/usr/bin/unzip", args: ["-l", url.path], timeout: 10
-        ) else { return nil }
-
-        var entries: [String] = []
-        let lines = output.split(separator: "\n")
-        for line in lines {
-            let trimmed = String(line)
-            // omittingEmptySubsequences 保证连续空格不会产生空字段，`parts.last` 即该行最后一个 token
-            let parts = trimmed.split(separator: " ", omittingEmptySubsequences: true)
-            if let last = parts.last {
-                let entry = String(last)
-                // 过滤掉空串与表头/汇总行里可能出现的孤立 "/"
-                if !entry.isEmpty && entry != "/" {
-                    entries.append(entry)
-                }
-            }
-        }
-        return entries
+        ArchiveUtil.listEntries(url: url)
     }
 }

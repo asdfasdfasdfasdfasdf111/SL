@@ -62,6 +62,21 @@ public class ArchiveUtil {
     public static func getEntry(url: URL, name: String) -> Data? {
         try? getEntryOrThrow(url: url, name: name)
     }
+
+    /// 列出归档内全部条目名（按中央目录顺序）。
+    ///
+    /// 归档打不开（不存在 / 不是 zip / 已损坏）时返回 `nil`，与 `getEntry` 的失败语义对齐。
+    /// 替代「`/usr/bin/unzip -l` 起子进程列条目」：不依赖外部 unzip、不占主线程等子进程。
+    /// ⚠️ 只读中央目录，不读取任何条目的内容 —— 大 jar 仅列表时内存占用与条目数成正比。
+    public static func listEntries(url: URL) -> [String]? {
+        do {
+            let archive = try Archive(url: url, accessMode: .read)
+            return archive.map { $0.path }
+        } catch {
+            err("无法读取归档: \(error.localizedDescription)")
+            return nil
+        }
+    }
     
     private init() {}
 }
