@@ -136,7 +136,7 @@ init(versionCatalog: VersionCatalogService = DefaultVersionCatalogService(),
 已知坏味道：**无**（2026-10-02 已全部闭环：`NetDownloaderDownloadEngine.map(_:)` 的中文
 文案反猜 → `NetDownloadError` 结构化 case；`syntheticTotalBytes = 1000` 假分母 →
 `DownloadProgress.fractionOverride` 诚实轨道。闭环记录见
-`docs/SLOP-AUDIT-2026-10-02-REV3-SOURCE.md` §5.1 与提交 `2af498f`）。
+`docs/archive/SLOP-AUDIT-2026-10-02-REV3-SOURCE.md` §5.1 与提交 `2af498f`）。
 
 ## 七、启动
 

@@ -81,7 +81,7 @@ SL/
 | 这是什么应用、功能状态 | `README.md`（本文） |
 | 当前真实存在的架构与分层 | `ARCHITECTURE.md` |
 | 重构的历史计划（多为已成历史） | `REFACTOR_PLAN.md` |
-| 模块完成度盘点（部分作废，见文首警示） | `docs/MODULE-INVENTORY.md` |
+| 模块完成度盘点（部分作废，见文首警示） | `docs/archive/MODULE-INVENTORY.md` |
 | 测试怎么跑、覆盖了什么 | `qwqTests/TESTING.md` |
 | 每一轮改了什么、为什么 | `CHANGELOG.md`（2026-10 起冻结，变更看 git log） |
 | 哪些是桩实现 | `qwq/SLCore/STUBS_AUDIT.md` |

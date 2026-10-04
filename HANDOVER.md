@@ -11,7 +11,7 @@
 > | `README.md` | 这是什么应用、功能状态、怎么构建、给用户看 |
 > | `ARCHITECTURE.md` | **当前真实存在**的结构与分层（不写目标结构） |
 > | `REFACTOR_PLAN.md` | 重构的**计划与历史**（做到哪了、还剩什么；部分内容已成历史） |
-> | `docs/MODULE-INVENTORY.md` | ⚠️ **2026-10 起部分过期**：其中的 `Module/` 模块内核盘点已作废（该体系已删除，见 `ARCHITECTURE.md` §三） |
+> | `docs/archive/MODULE-INVENTORY.md` | ⚠️ **2026-10 起部分过期**：其中的 `Module/` 模块内核盘点已作废（该体系已删除，见 `ARCHITECTURE.md` §三） |
 > | `qwqTests/TESTING.md` | 测试**怎么跑、覆盖了什么、哪些没覆盖** |
 > | `CHANGELOG.md` | 每一轮改了什么、为什么（2026-10 起冻结，不再手写新条目） |
 > | `qwq/SLCore/STUBS_AUDIT.md` | 哪些是桩实现、哪些看着像桩其实是真代码 |
