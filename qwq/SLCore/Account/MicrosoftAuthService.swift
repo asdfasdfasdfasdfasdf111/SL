@@ -35,12 +35,17 @@ import Foundation
 /// 微软登录相关常量。client id 为微软官方 Minecraft Launcher 的公开 client id
 ///（public client），第三方启动器合法复用，无需注册 Azure 应用、无 client secret。
 public enum MicrosoftAuthConstants {
-    /// 内置的**回退** client id：微软官方 Minecraft Launcher 的历史公开 id。
-    /// ⚠️ 该 id 已被微软下线（设备码端点实测返回 `AADSTS700016 应用不存在`），
-    /// 因此它只是个占位默认值 —— 真正可用的是用户在「设置 → 账号」里填的自定义 id
-    /// （见 `MicrosoftAuthService.clientID`）。保留它只为「未配置时给出明确报错」，
-    /// 而不是静默失败。
-    public static let fallbackClientID = "00000000402b5328"
+    /// 内置的**默认** client id，借用自 PrismLauncher（GPL-3.0，开源）在其
+    /// `CMakeLists.txt` 里公开注册的那个 Azure 应用（`Launcher_MSA_CLIENT_ID`）。
+    ///
+    /// ⚠️ 两点必须记住：
+    /// 1. **它是别人的应用注册**。设备码流程不涉及重定向 URI，所以技术上任何注册过的
+    ///    公开客户端都能用；但配额、可用性、是否被微软回收都由对方与微软决定 —— 随时可能失效。
+    /// 2. 正因如此，本项目此前借用的微软官方 Minecraft Launcher id `00000000402b5328`
+    ///    已经被微软下线（设备码端点实测 `AADSTS700016 应用不存在`，2026-10-05），
+    ///    这条路径就是这么断的。**要长期稳定，请在「设置 → 账号」填自己注册的 Azure 应用 id**
+    ///    （免费、2 分钟、无需 client secret）；那份配置会覆盖本值。
+    public static let fallbackClientID = "c36a9fb6-4f2a-41ff-90bd-ae7cc92031eb"
     /// 「设置 → 账号」写入的自定义 client id 的 UserDefaults 键。
     /// ⚠️ 与 `UDK.microsoftClientID` 是**同一个磁盘键**（改名等于丢配置），改一处必须同步另一处。
     public static let clientIDDefaultsKey = "microsoftClientID"

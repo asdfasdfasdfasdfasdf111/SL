@@ -35,4 +35,14 @@ extension Animation {
     /// 现有使用点：`VersionButton` 与 `ColorPickerView` 的按下回弹、
     /// `NoticeOverlay` 的提示卡自身弹入与「查看详情/收起详情」展开。
     static let punchySpring = Animation.spring(response: 0.6, dampingFraction: 0.5, blendDuration: 0.2)
+
+    /// **最「Q 弹」的一档**（response 0.38 / 阻尼 0.5 / blend 0.15）。
+    /// 与上面三档的区别要说清，否则很快会变成「又一个看不出差别的 spring」：
+    /// - 阻尼与 `punchySpring` 相同（0.5，过冲幅度一致），但 **response 从 0.6 砍到 0.38** ——
+    ///   同一个过冲在更短时间内完成，观感是「弹一下、回得快」，而不是 `exaggeratedSpring`
+    ///   那种「慢慢晃回来」。所以它服务的是**小而常点的元件**（头像、账号面板、版本行），
+    ///   不是整页切换（那用 `explosiveSpring` / `exaggeratedSpring`）。
+    /// - 用户对「不够 Q 弹」的反馈（2026-10-05）就是冲着这类小元件反馈来的：把小元件的
+    ///   按压/弹入统一换到这一档，不要再往 0.6 秒那条上靠。
+    static let bouncySpring = Animation.spring(response: 0.38, dampingFraction: 0.5, blendDuration: 0.15)
 }

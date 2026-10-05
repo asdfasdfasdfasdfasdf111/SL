@@ -60,6 +60,13 @@ struct VersionPickerCard: View {
                                     }
                                 }
                             }
+                            // ⚠️ 这段横向内边距是**给放大动画留的余量**，不是为了好看：
+                            // `VersionButton` 按下时会 `scaleEffect(1.08)`，而 `ScrollView`
+                            // **会裁剪超出自身边界的子视图**（macOS 13 没有 `scrollClipDisabled`）。
+                            // 行本身是 `maxWidth: .infinity`（占满滚动区宽度），放大 8% 后左右各
+                            // 溢出约 4%，左边缘连圆角带内边距一起被切掉 —— 表现为「选中放大时左侧被裁」。
+                            // 预留 14pt（≈ 4% × 350pt 行宽）后，常见卡片宽度下放大不再越界。
+                            .padding(.horizontal, 14)
                         }
                         // 版本多时列表内部滚动，高度封顶 420，避免面板长到超出屏高。
                         .frame(maxHeight: 420)

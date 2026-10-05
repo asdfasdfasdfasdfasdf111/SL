@@ -51,7 +51,7 @@ struct CategoryContentView: View {
     /// 持久化并设为已选账号。`@StateObject` 的理由同上：生命周期绑在本视图上。
     @StateObject private var microsoftLogin = MicrosoftLoginViewModel()
 
-    /// 用户名输入框聚焦时的放大反馈（1.0 ↔ 1.1），配合 `.punchySpring`。
+    /// 用户名输入框聚焦时的放大反馈（1.0 ↔ 1.1），配合 `.bouncySpring`。
     @State private var usernameFieldScale: CGFloat = 1.0
     @FocusState private var isUsernameFocused: Bool
     @State private var skinButtonScale: CGFloat = 1.0
@@ -169,7 +169,7 @@ struct CategoryContentView: View {
                     .transition(.opacity)
                 }
             }
-            .animation(.punchySpring, value: showAccountPanel)
+            .animation(.bouncySpring, value: showAccountPanel)
             Spacer(minLength: 0)
             LaunchButton(
                 buttonWidth: buttonWidth,
@@ -211,7 +211,7 @@ struct CategoryContentView: View {
         // 点击时先让用户名输入框失焦（面板在头像正下方覆盖展开，不挡输入框）。
         .onTapGesture {
             isUsernameFocused = false
-            withAnimation(.punchySpring) { showAccountPanel.toggle() }
+            withAnimation(.bouncySpring) { showAccountPanel.toggle() }
         }
         .onAppear {
             // 首帧裁剪兜底与皮肤 URL 准备（含渲染事务外延迟）均在 ViewModel 内完成
@@ -243,17 +243,17 @@ struct CategoryContentView: View {
                 .font(.system(size: 14, weight: .medium))
                 .frame(maxWidth: 150)
                 .scaleEffect(usernameFieldScale)
-                .animation(.punchySpring, value: usernameFieldScale)
+                .animation(.bouncySpring, value: usernameFieldScale)
                 .focused($isUsernameFocused)
                 .onChange(of: isUsernameFocused) { focused in
                     if focused {
                         // ⚠️ onChange 处于视图更新事务中，withAnimation 内同步写 @State 同样会触发
                         // "Modifying state during view update"（UAF 前兆），延迟到渲染事务外
                         DispatchQueue.main.async {
-                            withAnimation(.punchySpring) { usernameFieldScale = 1.1 }
+                            withAnimation(.bouncySpring) { usernameFieldScale = 1.1 }
                         }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            withAnimation(.punchySpring) { usernameFieldScale = 1.0 }
+                            withAnimation(.bouncySpring) { usernameFieldScale = 1.0 }
                         }
                     }
                 }
@@ -279,9 +279,9 @@ struct CategoryContentView: View {
     private var skinButton: some View {
         Button(action: {
             isUsernameFocused = false
-            withAnimation(.punchySpring) { skinButtonScale = 1.2 }
+            withAnimation(.bouncySpring) { skinButtonScale = 1.2 }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                withAnimation(.punchySpring) { skinButtonScale = 1.0 }
+                withAnimation(.bouncySpring) { skinButtonScale = 1.0 }
             }
             OfflineSkinService.selectSkinImage(settings: settings)
         }) {
@@ -325,7 +325,7 @@ struct CategoryContentView: View {
                 enabled: true,
                 action: {
                     settings.accountMode = "offline"
-                    withAnimation(.punchySpring) { showAccountPanel = false }
+                    withAnimation(.bouncySpring) { showAccountPanel = false }
                 }
             )
         }
@@ -389,12 +389,6 @@ struct CategoryContentView: View {
         return false
     }
 
-    /// 用户是否已填过自定义 client id。没填时内置回退值已被微软下线，
-    /// 面板上先给出「去设置页填」的提示，省得点一次登录才看到报错。
-    private var isClientIDConfigured: Bool {
-        MicrosoftAuthService.clientID != MicrosoftAuthConstants.fallbackClientID
-    }
-
     private var microsoftRowTitle: String {
         switch microsoftLogin.phase {
         case .signedIn(let account): return account.name
@@ -409,7 +403,7 @@ struct CategoryContentView: View {
         case .signedIn: return "正版账号"
         case .waitingForCode: return "已在浏览器打开验证页"
         case .failed(let message): return message
-        case .idle: return isClientIDConfigured ? "正版 · 在线皮肤" : "需先在「设置 → 账号」填应用 id"
+        case .idle: return "正版 · 在线皮肤"
         }
     }
 
@@ -419,11 +413,11 @@ struct CategoryContentView: View {
         switch microsoftLogin.phase {
         case .signedIn:
             settings.accountMode = "microsoft"
-            withAnimation(.punchySpring) { showAccountPanel = false }
+            withAnimation(.bouncySpring) { showAccountPanel = false }
         case .waitingForCode:
             break
         case .failed, .idle:
-            withAnimation(.punchySpring) { showAccountPanel = false }
+            withAnimation(.bouncySpring) { showAccountPanel = false }
             microsoftLogin.startLogin()
         }
     }

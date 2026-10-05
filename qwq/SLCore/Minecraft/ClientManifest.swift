@@ -113,10 +113,25 @@ public class ClientManifest {
         
         if let inheritsFrom = json["inheritsFrom"].string,
            let minecraftDirectory = minecraftDirectory {
-            let parentURL = minecraftDirectory.versionsURL.appendingPathComponent(inheritsFrom).appendingPathComponent("\(inheritsFrom).json")
-            
-            guard FileManager.default.fileExists(atPath: parentURL.path) else {
-                err("\(url.path) 中有 inheritsFrom 字段，但其对应的 JSON 不存在")
+            // 父清单的两处候选位置，按优先级取第一个存在的：
+            //  ① 标准位置：`versions/<父版本 id>/<父版本 id>.json`（本项目安装流程的产出）；
+            //  ② 实例自带的 `.parent/<父版本 id>.json` —— 「自包含实例」布局：父清单跟着实例
+            //     放在一起，这样实例目录被单独拷走 / 由别的启动器安装时也能启动。
+            // ② 是 2026-10-05 在真实游戏目录里实测到的布局（`1.20.1-Forge/.parent/1.20.1.json`，
+            // 同目录还有别的启动器的 `.clconfig.json` / `.clmetadata.json`）。此前只认 ①，
+            // 这种实例一律解析失败 → `MinecraftInstance.setup()` 返回 false → 界面报
+            // 「无法创建实例」，而磁盘上父清单其实一直都在。
+            let standardParentURL = minecraftDirectory.versionsURL
+                .appendingPathComponent(inheritsFrom)
+                .appendingPathComponent("\(inheritsFrom).json")
+            let bundleParentURL = url.deletingLastPathComponent()
+                .appendingPathComponent(".parent")
+                .appendingPathComponent("\(inheritsFrom).json")
+
+            guard let parentURL = [standardParentURL, bundleParentURL]
+                .first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
+                err("\(url.path) 中有 inheritsFrom 字段，但其对应的 JSON 不存在"
+                    + "（已查 \(standardParentURL.path) 与 \(bundleParentURL.path)）")
                 return nil
             }
             

@@ -19,9 +19,9 @@ SL（应用内名 **qwq**）是一个使用 **Swift + SwiftUI** 原生编写的 
 - **Mod 下载**：内置 Modrinth 全量离线目录（约 12MB gzip，随包分发），支持分类浏览、搜索、中文项目名翻译
 - **模组包**：Modrinth 模组包下载与安装
 - **皮肤**：离线皮肤加载、头像裁剪、皮肤资源包应用
-- **MSA 微软账号登录**：**已实现**。复用微软官方 Minecraft Launcher 的公开
-  client id（`00000000402b5328`，public client，无 secret、无需注册 Azure 应用），
-  走 OAuth 2.0 设备码流程：浏览器打开 microsoft.com/link 输入设备码 → 轮询拿
+- **MSA 微软账号登录**：**已实现**。默认借用 PrismLauncher（开源）公开注册的
+  client id（public client，无 secret），走 OAuth 2.0 设备码流程；
+  可在「设置 → 账号」里换成自己注册的 Azure 应用 id（详见下方「身份与合规」）：浏览器打开 microsoft.com/link 输入设备码 → 轮询拿
   MSA 令牌 → 补齐 XBL→XSTS→MC 全链路（见 `qwq/SLCore/Account/MicrosoftAuthService.swift`）。
   登录成功持久化账号（`AccountManager`），启动前自动刷新令牌链
 - **其他**：崩溃自捕获（写入 `~/Library/Logs/SL_crash.log`）、游戏日志实时管道（跨块 UTF-8 安全解码）、下载缓存治理（内存 LRU + 磁盘两级）
@@ -97,7 +97,7 @@ SL/
 
 > 以下为**分发前必须知悉**的合规事项。作为非商业个人项目可能足够，但正式对外分发请逐条核验。
 
-- **微软登录借助公开 client id `00000000402b5328`**（设备码流程，public client 无 secret，见 `MicrosoftAuthService.swift`）。这是启动器圈的通行做法，但属于**借用第三方应用身份**：微软一旦收紧该 client 的第三方用途（历史上有过先例），所有已发布版本的登录链路会**同时失效、且无平滑降级路径**。**计划**：注册自有 Azure AD 应用（device code 免费、无需 secret）后把 client id 提为可配置常量并保留 fallback；在此之前，登录功能按「可能随时失效」看待。
+- **微软登录借用第三方公开 client id**（设备码流程，public client 无 secret，见 `MicrosoftAuthService.swift`）。**这不是假设的风险，已经发生过一次**：原先借用的微软官方 Minecraft Launcher id `00000000402b5328` 被微软下线，设备码端点直接返回 `AADSTS700016 应用不存在`（2026-10-05 实测），登录链路整条失效。现改为借用 PrismLauncher 公开注册的 id 作为默认值 —— 同样随时可能失效。**已做的兜底**：client id 提为可配置（存储键 `UDK.microsoftClientID`，`MicrosoftAuthService.clientID` 读取），「设置 → 账号」页可填自己注册的 Azure 应用 id 并一键「验证配置」，错误文案会直接指向该页。**建议**：正式分发前注册自有 Azure AD 应用（device code 免费、无需 secret）替换默认值。
 - **GPL-3.0 与本项目的移植**：项目整体为 [GPL-3.0](./LICENSE)。对 PCL2 的移植均为**思路级/少量引用级**（未整段复制），已在源码注释与 `docs/THIRD-PARTY-NOTICES.md` 中逐条给出依据；如被质疑，以该清单为准自查。
 - **Modrinth 数据再分发**：内置 12MB 离线目录由 Modrinth API 生成，随包分发。请核阅 Modrinth 当前 API 条款对「项目元数据离线再分发」的要求（本项目保留源站信息，未二次改动内容）。
 - **macOS 分发**：签名与公证（notarization）未在 README 提供现成命令——因为本项目**尚未配置分发签名身份**。正式对外分发前需：① 注册 Apple Developer 并为构建产物签名；② 用 `xcrun notarytool submit` 提交公证；③ 把公证书 stapled 到 App。未公证的 App 若未右键打开会被 Gatekeeper 拦截——是否配置签名身份由项目所有者决定，本文仅如实记录现状。

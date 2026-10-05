@@ -3,9 +3,12 @@
 //  「设置 → 账号」页：配置微软登录用的 Azure 应用 id（client id）。
 //
 //  为什么需要这一页：微软登录走 OAuth 2.0 设备码流程，**必须**有一个在微软侧
-//  注册过的应用 id。本项目早期借用微软官方 Minecraft Launcher 的公开 id
-//  `00000000402b5328`（PCL2 / HMCL 早年也这么做）；该 id 已被微软下线，
-//  设备码端点现在直接返回 `AADSTS700016 应用不存在`，表现为点登录立刻失败。
+//  注册过的应用 id。本项目此前借用微软官方 Minecraft Launcher 的公开 id
+//  `00000000402b5328`（PCL2 / HMCL 早年也这么做）；该 id 已被微软下线
+//  （设备码端点返回 `AADSTS700016 应用不存在`，2026-10-05 实测），于是换成了
+//  PrismLauncher 公开注册的那个 id —— 能用，但仍然是「借别人的应用注册」，
+//  随时可能再次失效。所以把 id 做成用户可配置：注册一个免费的个人 Azure 应用
+//  即可，无需 client secret、无需重定向 URI（设备码流程不使用重定向）。
 //
 //  现在各家启动器都改为**各自注册** Azure 应用（HMCL、PrismLauncher 的源码里
 //  client id 都来自各自的构建配置/自有注册），因此本项目也把 id 交给用户配置：
@@ -37,8 +40,11 @@ struct AccountSettingsView: View {
                 .font(.largeTitle.bold())
                 .padding(.top, 32)
 
-            Text("微软登录需要你在微软注册一个应用（免费），并把它的「应用程序(客户端) ID」填在下面。"
-                 + "设备码流程不需要 client secret，也不需要配置重定向 URI。")
+            Text("登录默认借用 PrismLauncher（开源）公开注册的应用 id，开箱即可用。"
+                 + "但那是**别人的应用注册**，微软或对方随时可能让它失效 —— 本项目上一版借用的"
+                 + "微软官方 Minecraft Launcher id 就是这样被下线的。"
+                 + "想要长期稳定，请自己注册一个（免费、2 分钟、无需 client secret、无需重定向 URI），"
+                 + "把「应用程序(客户端) ID」填在下面。")
                 .font(.callout)
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -50,7 +56,7 @@ struct AccountSettingsView: View {
                 TextField("例如 12345678-1234-1234-1234-123456789abc", text: $settings.microsoftClientID)
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 13, design: .monospaced))
-                Text("留空则用内置回退值 \(MicrosoftAuthConstants.fallbackClientID)（该 id 已被微软下线，登录会失败）。")
+                Text("留空＝用内置的 PrismLauncher 公开 id（\(MicrosoftAuthConstants.fallbackClientID)）。")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

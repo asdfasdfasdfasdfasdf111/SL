@@ -37,7 +37,8 @@
 
 | 依赖 | 当前状态 | 风险 |
 |---|---|---|
-| 微软公开 client id `00000000402b5328`（`MicrosoftAuthService.swift` `MicrosoftAuthConstants.clientID`） | 借用第三方应用身份（设备码流程，public client 无 secret） | 微软收紧该 client 第三方用途时，登录链路**同时失效、无降级路径**。计划：注册自有 Azure AD 应用后提为可配置常量并保留 fallback |
+| 微软官方 Minecraft Launcher 公开 client id `00000000402b5328` | **已失效**（2026-10-05 实测设备码端点返回 `AADSTS700016 应用不存在`） | 曾作为默认值使用，被微软下线后登录链路整条失效 —— 这条风险的**实例证据**。已弃用 |
+| PrismLauncher 公开注册的 client id `c36a9fb6-4f2a-41ff-90bd-ae7cc92031eb`（来源：PrismLauncher 仓库 `CMakeLists.txt` 的 `Launcher_MSA_CLIENT_ID`；PrismLauncher 为 GPL-3.0） | **当前默认值**，借用第三方应用身份（设备码流程，public client 无 secret，2026-10-05 实测可取设备码） | 同为「借别人的应用注册」，配额与可用性不受本项目控制，随时可能像上一条那样被回收。已把 client id 提为可配置（`UDK.microsoftClientID` / `MicrosoftAuthService.clientID`），并在「设置 → 账号」提供自查入口 |
 
 ## 五、更名/归档记录
 

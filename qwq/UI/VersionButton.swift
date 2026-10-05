@@ -5,7 +5,7 @@
 //  外观：`Text(title)` 撑满可用宽度并左对齐，圆角 12 的毛玻璃底 + 1pt 阴影；
 //  选中时叠一圈 2pt 强调色描边（未选中用 `Color.clear` 保住同一套层级，避免出现/消失描边导致的抖动）。
 //
-//  按压反馈：按下瞬间缩到 1.08，0.12s 后回到 1.0（`punchySpring`）；
+//  按压反馈：按下瞬间放大到 1.08，0.12s 后回到 1.0（`bouncySpring`：Q 弹档）；
 //  回弹由下方可取消的 `.task(id:)` 驱动（不再用 `DispatchQueue.main.asyncAfter`）。
 //
 //  说明：原先的 `DispatchQueue.main.asyncAfter` 闭包不可取消，会在视图释放后仍回写 `@State`，
@@ -36,7 +36,7 @@ struct VersionButton: View {
     var body: some View {
         Button(action: {
             // 先放大给出即时反馈，立即执行真正的动作；回弹由下方 `.task(id:)` 负责（可取消）。
-            withAnimation(.punchySpring) { animationScale = 1.08 }
+            withAnimation(.bouncySpring) { animationScale = 1.08 }
             action()
             clickCount += 1
         }) {
@@ -69,7 +69,7 @@ struct VersionButton: View {
             } catch {
                 return // 被取消（视图销毁 / 再次点击重启计时）：放弃本次回写
             }
-            withAnimation(.punchySpring) { animationScale = 1.0 }
+            withAnimation(.bouncySpring) { animationScale = 1.0 }
         }
     }
 }
