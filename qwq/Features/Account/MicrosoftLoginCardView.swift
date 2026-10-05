@@ -8,15 +8,16 @@
 //  职责边界：本视图是**纯展示组件** —— 只订阅 `viewModel.phase` 渲染，
 //  不查网络、不读持久化、不拼文案。状态迁移与副作用全在
 //  `MicrosoftLoginViewModel`（Features/Account/MicrosoftLoginViewModel.swift）；
-//  本视图唯一的自身动作是「打开浏览器验证页」与「复制设备码」两个
-//  AppKit 交互（NSWorkspace / NSPasteboard，视图层职责）。
+//  本视图唯一的自身动作是「打开浏览器验证页」（NSWorkspace）。
+//  ⚠️「复制设备码」按钮走的是 `viewModel.copyUserCodeToPasteboard(_:)`：
+//  自动复制（拿到码时就写剪贴板）与手动复制共用同一处实现，写法不再有第二个副本。
 //
 //  视觉语言刻意**向皮肤补丁卡对齐**（见 Features/Skin/SkinPatchCardView.swift）：
 //  圆角 16 + `secondary 6%` 底 + 居中覆盖层；设备码用等宽字体大号展示，
 //  强调「这串码要输入到 microsoft.com/link」。
 //
 //  布局（自上而下）：标题行（图标 + 标题 + 关闭）→ 步骤说明 → 设备码大字 →
-//  验证页地址 → 操作按钮行（打开页面 / 复制代码）。
+//  「已自动复制」提示 → 验证页地址 → 操作按钮行（打开页面 / 复制代码）。
 //
 
 import SwiftUI
@@ -58,7 +59,8 @@ struct MicrosoftLoginCardView: View {
             }
 
             // ── 步骤说明
-            Text("请在浏览器打开下面地址，输入卡片上的代码完成授权。授权后本启动器会自动登录并保存账号。")
+            Text("设备码已自动复制到剪贴板，浏览器也已打开验证页 —— 在网页里直接粘贴即可完成授权。"
+                 + "授权后本启动器会自动登录并保存账号。")
                 .font(.system(size: 13))
                 .foregroundColor(.primary)
                 .multilineTextAlignment(.leading)
@@ -72,6 +74,13 @@ struct MicrosoftLoginCardView: View {
                     .foregroundColor(.accentColor)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 6)
+
+                // 明确告诉用户「已经复制好了」：不说的话他会自己去选中那串大字再按一遍 ⌘C，
+                // 而这段代码是 8 位带连字符的短码，手抄最容易出错。
+                Label("已自动复制，可直接粘贴", systemImage: "doc.on.clipboard")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
 
                 // ── 验证页地址（展示用普通地址；打开按钮优先用带预填码的完整页）
                 Text(code.verificationURI)
@@ -94,7 +103,7 @@ struct MicrosoftLoginCardView: View {
                     Button(action: { openVerificationPage(code.preferredVerificationURL) }) {
                         Label("打开页面", systemImage: "safari")
                     }
-                    Button(action: { copyUserCode(code.userCode) }) {
+                    Button(action: { viewModel.copyUserCodeToPasteboard(code.userCode) }) {
                         Label("复制代码", systemImage: "doc.on.doc")
                     }
                 }
@@ -126,11 +135,5 @@ struct MicrosoftLoginCardView: View {
     private func openVerificationPage(_ uri: String) {
         guard let url = URL(string: uri) else { return }
         NSWorkspace.shared.open(url)
-    }
-
-    private func copyUserCode(_ userCode: String) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(userCode, forType: .string)
     }
 }

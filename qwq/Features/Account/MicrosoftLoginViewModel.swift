@@ -94,6 +94,10 @@ final class MicrosoftLoginViewModel: ObservableObject {
                 let code = try await MicrosoftAuthService.startDeviceCode()
                 guard let self, !Task.isCancelled else { return }
                 self.phase = .waitingForCode(code)
+                // 自动把设备码写进剪贴板：用户下一步就是去网页粘贴，让他先手动选中再复制
+                // 纯属多余（PCL 同款行为，用户明确要求「默认直接把代码复制下来」）。
+                // 放在打开浏览器**之前**：浏览器抢焦点也不影响写剪贴板。
+                self.copyUserCodeToPasteboard(code.userCode)
                 // 自动在默认浏览器打开验证页（PCL 同款行为）：用户不必自己找地址、
                 // 也少一步手动输入 —— 服务端给了带预填码的 `verification_uri_complete`
                 // 就用它，用户只需在网页上点「继续」。打不开也不阻断流程：
@@ -179,5 +183,14 @@ final class MicrosoftLoginViewModel: ObservableObject {
     private func openVerificationPage(_ code: MicrosoftDeviceCode) {
         guard let url = URL(string: code.preferredVerificationURL) else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    /// 把设备码写进系统剪贴板。
+    /// 非 private：卡片的「复制代码」按钮也走这一处 —— 剪贴板写法只留一个实现，
+    /// 免得自动复制与手动复制将来在「清空内容再写」这类细节上分叉。
+    func copyUserCodeToPasteboard(_ userCode: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(userCode, forType: .string)
     }
 }
