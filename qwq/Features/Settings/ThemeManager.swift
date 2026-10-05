@@ -17,6 +17,7 @@ enum UDK {
     static let fixedOfflineUUID = "fixedOfflineUUID"
     static let selectedJavaPath = "selectedJavaPath"
     static let cachedJavaPaths = "cachedJavaPaths"
+    static let accountMode = "accountMode"
 }
 
 /// 主题读取兼容层。
@@ -100,6 +101,13 @@ class LauncherSettings: ObservableObject {
     var offlineUsername: String {
         get { settings.offlineUsername }
         set { settings.offlineUsername = newValue }
+    }
+
+    /// 当前账号模式（"offline" / "microsoft"）：转发到存储点，登录绑定经此读取。
+    /// 启动页点头像弹出的账号面板切换时写入。
+    var accountMode: String {
+        get { settings.accountMode }
+        set { settings.accountMode = newValue }
     }
 
     var cachedJavaPath: String? {

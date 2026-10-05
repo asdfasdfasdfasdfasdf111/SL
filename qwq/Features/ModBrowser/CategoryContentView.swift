@@ -56,6 +56,15 @@ struct CategoryContentView: View {
     @FocusState private var isUsernameFocused: Bool
     @State private var skinButtonScale: CGFloat = 1.0
 
+    /// 点头像弹出的账号切换面板开关（PCL.Mac 交互：点头像 → 弹账号列表 → 点项切换）。
+    /// 面板本身随头像的 ZStack 覆盖显示，不额外占卡片布局空间。
+    @State private var showAccountPanel = false
+
+    /// 用户名输入框的估算高度：账号面板用它在头像下定位（面板盖在输入框与皮肤按钮上方）。
+    /// 输入框大字（14pt）+ 上下 padding（8×2）+ 提示行（caption2）≈ 44 + 16；取固定估算值，
+    /// 不追求像素级精确 —— 面板位置只是覆盖显示，偏一点不影响交互。
+    private var usernameFieldHeight: CGFloat { 60 }
+
     /// 启动页外层：用 GeometryReader 按窗口尺寸算出卡片 / 按钮 / 头像的尺寸，再交给内容层。
     /// 所有尺寸都从 `cardWidth` 一个基准按比例推出来，改一处即可整体缩放。
     private var launchView: some View {
@@ -125,7 +134,7 @@ struct CategoryContentView: View {
             }
             // 微软登录设备码卡片：**居中覆盖层**（与皮肤补丁卡同一层约定）。
             // 只有「等用户在浏览器输入设备码」期间显示；登录成功/取消/失败时
-            // 条件不再成立自动移除（失败文案显示在账号行，见 MicrosoftAccountRow）。
+            // 条件不再成立自动移除（登录失败文案显示在账号面板的微软项下）。
             if microsoftLogin.isWaitingForCode {
                 MicrosoftLoginCardView(viewModel: microsoftLogin)
                     .zIndex(10)
@@ -145,11 +154,24 @@ struct CategoryContentView: View {
                 Text("未选择版本").font(.caption).foregroundColor(.secondary).padding(.top, 4)
             }
             avatarView(avatarSize: avatarSize)
-            usernameField
-            skinButton
-            // 微软账号行：未登录 → 「微软账号登录」按钮；已登录 → 档案名 + 退出。
-            // 高度约 28 + 卡片 spacing 16 ≈ 44，已计入上方 cardHeight 的手工累加。
-            MicrosoftAccountRow(viewModel: microsoftLogin)
+            // 账号面板（PCL.Mac 交互）：点头像弹出，列出「微软账号 / 离线账号」两个选项，
+            // 点击即切换 `settings.accountMode`；面板随头像的 ZStack 覆盖位置显示，
+            // 不额外占卡片布局（故上方 cardHeight 手工累加**不含**此项）。
+            // 自我保持：有可用微软账号时显示档案名，否则提示「登录微软账号」。
+            ZStack(alignment: .top) {
+                VStack(spacing: 16) {
+                    usernameField
+                    skinButton
+                }
+                if showAccountPanel {
+                    accountPanel
+                        .padding(.top, usernameFieldHeight + 16)
+                        .transition(.asymmetric(
+                            insertion: .scale(scale: 0.95).combined(with: .opacity),
+                            removal: .opacity
+                        ))
+                }
+            }
             Spacer(minLength: 0)
             LaunchButton(
                 buttonWidth: buttonWidth,
@@ -187,6 +209,12 @@ struct CategoryContentView: View {
         .frame(width: avatarSize, height: avatarSize)
         .clipped()
         .padding(6)
+        // PCL.Mac 交互：点头像弹出账号切换面板（微软/离线），看 `accountPanel`。
+        // 点击时先让用户名输入框失焦（面板在头像正下方覆盖展开，不挡输入框）。
+        .onTapGesture {
+            isUsernameFocused = false
+            withAnimation(.punchySpring) { showAccountPanel.toggle() }
+        }
         .onAppear {
             // 首帧裁剪兜底与皮肤 URL 准备（含渲染事务外延迟）均在 ViewModel 内完成
             skinViewModel.handleAvatarAppear()
@@ -272,6 +300,115 @@ struct CategoryContentView: View {
         }
         .buttonStyle(.plain)
         .scaleEffect(skinButtonScale)
+    }
+
+    /// 账号切换面板（PCL.Mac 交互：点头像 → 弹账号列表 → 点项切换）。
+    /// 列出两个账号选项并高亮当前选中项；点击即切换 `settings.accountMode`。
+    /// 微软项：未登录 → 显示「登录微软账号」入口（点击关面板 + 发起设备码登录）；
+    ///        已登录 → 显示档案名 + 模态下的小字「正版账号」。
+    /// 离线项：显示当前离线用户名；点击切回离线模式。
+    /// 面板背景用 .regularMaterial + 描边，视觉与左卡片一致；宽约 200pt。
+    private var accountPanel: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            // ── 微软账号
+            Button(action: {
+                withAnimation(.punchySpring) { showAccountPanel = false }
+                if case .signedIn = microsoftLogin.phase {
+                    settings.accountMode = "microsoft"
+                } else {
+                    // 未登录：关面板，弹设备码登录卡片（覆盖层在 ZStack 最上层）
+                    microsoftLogin.startLogin()
+                }
+            }) {
+                HStack(spacing: 10) {
+                    Image(systemName: "person.fill")
+                        .font(.system(size: 15))
+                        .foregroundColor(settings.accountMode == "microsoft" ? theme.accentColor : .secondary)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 2) {
+                        if case .signedIn(let account) = microsoftLogin.phase {
+                            Text(account.name)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(.primary)
+                                .lineLimit(1)
+                            Text("正版账号")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        } else if case .failed(let message) = microsoftLogin.phase {
+                            Text("重试登录")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(.primary)
+                            Text(message)
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        } else {
+                            Text("微软账号登录")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundColor(.primary)
+                            Text("正版 · 在线皮肤")
+                                .font(.system(size: 10))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    Spacer(minLength: 4)
+                    if settings.accountMode == "microsoft" {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(theme.accentColor)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Divider().padding(.horizontal, 4)
+
+            // ── 离线账号
+            Button(action: {
+                settings.accountMode = "offline"
+                withAnimation(.punchySpring) { showAccountPanel = false }
+            }) {
+                HStack(spacing: 10) {
+                    Image(systemName: "person.crop.circle")
+                        .font(.system(size: 15))
+                        .foregroundColor(settings.accountMode == "offline" ? theme.accentColor : .secondary)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(settings.offlineUsername.isEmpty ? "离线账号" : settings.offlineUsername)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.primary)
+                            .lineLimit(1)
+                        Text("离线 · 本地皮肤")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer(minLength: 4)
+                    if settings.accountMode == "offline" {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(theme.accentColor)
+                    }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(6)
+        .frame(width: 210)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.regularMaterial)
+                .shadow(color: Color.black.opacity(0.15), radius: 8)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(theme.accentColor.opacity(0.2), lineWidth: 1)
+        )
     }
 
     /// 日志面板：仅在 `showLogView` 且确有会话时渲染内容，否则整块从下方 300pt 处淡出。

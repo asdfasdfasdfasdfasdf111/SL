@@ -35,6 +35,13 @@ final class AppSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(offlineUsername, forKey: UDK.offlineUsername) }
     }
 
+    /// 当前账号模式：`"offline"`（离线账号，默认）或 `"microsoft"`（微软正版账号）。
+    /// 启动页点头像弹出的账号面板切换时写入；SLLaunchBridge 的账号选择分支据此决定
+    /// 用离线身份还是微软身份（与 PCL.Mac 的「点头像切换账号」交互对齐）。
+    @Published var accountMode: String {
+        didSet { UserDefaults.standard.set(accountMode, forKey: UDK.accountMode) }
+    }
+
     @Published var cachedJavaPath: String? {
         didSet { UserDefaults.standard.set(cachedJavaPath, forKey: UDK.cachedJavaPath) }
     }
@@ -76,6 +83,7 @@ final class AppSettingsStore: ObservableObject {
         self.selectedMinecraftVersion = UserDefaults.standard.string(forKey: UDK.selectedMinecraftVersion) ?? ""
         self.selectedGameRoot = UserDefaults.standard.string(forKey: UDK.selectedGameRoot) ?? ""
         self.offlineUsername = UserDefaults.standard.string(forKey: UDK.offlineUsername) ?? "Player"
+        self.accountMode = UserDefaults.standard.string(forKey: UDK.accountMode) ?? "offline"
         self.cachedJavaPath = UserDefaults.standard.string(forKey: UDK.cachedJavaPath)
         self.appliedSkinHash = UserDefaults.standard.string(forKey: UDK.appliedSkinHash)
         self.selectedJavaPath = UserDefaults.standard.string(forKey: UDK.selectedJavaPath)

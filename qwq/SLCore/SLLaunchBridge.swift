@@ -100,13 +100,16 @@ private func slLaunchInternal(
     }
 
     // 账号选择（微软登录已实现，2026-10-…）：
-    // 若 AccountManager 选中了**可用的微软账号**，用它的档案身份与令牌启动；
-    // 否则回退原离线逻辑（username 参数来自 UI 的离线用户名输入）。
+    // 仅当用户**当前账号模式 = 微软**（启动页点头像面板切换，持久化于
+    // LauncherSettings.accountMode）且 AccountManager 里有可用微软账号时，
+    // 用它的档案身份与令牌启动；否则回退原离线逻辑（username 参数来自 UI 的离线用户名输入）。
     // 无论走哪条分支，`options.account` 都承载真实的账号种类，
     // 后续「启动前的最小化设置」处按种类注入对应令牌。
     let options = LaunchOptions()
     options.skipResourceCheck = true
-    if let selected = AccountManager.shared.getAccount(),
+    let accountMode = LauncherSettings.shared.accountMode
+    if accountMode == "microsoft",
+       let selected = AccountManager.shared.getAccount(),
        case .microsoft(let ms) = selected, ms.isUsable {
         options.playerName = ms.name
         options.uuid = ms.uuid
