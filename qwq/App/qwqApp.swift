@@ -5,7 +5,7 @@
 //  职责：① 首帧之前触发一次性运行时装配 —— 三条初始化（崩溃自捕获安装、本地 Modrinth 目录预热、
 //           内存压力订阅注册）都已收进 `AppCompositionRoot`，本文件只留**一行调用**，
 //           以便测试断言「装配根接线成立」（见 AppCompositionRoot 文件头）；
-//        ② 声明 WindowGroup 与**窗口最小尺寸 800×590 的唯一来源**（内容约束）；
+//        ② 声明 WindowGroup 与**窗口最小尺寸 680×500 的唯一来源**（内容约束）；
 //        ③ 声明「分类」菜单与 ⌘1…⌘6（经 NavigationIntent 单槽送到 ContentView）；
 //        ④ 声明「设置…」（⌘,）的 Settings 场景（内容镜像「个性化」页）。
 //  边界：不含任何界面布局与业务逻辑（内容全在 ContentView 及其子树），
@@ -34,7 +34,7 @@ struct SLApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(launchPanel: LaunchPanelState.shared)
-                // 窗口最小尺寸的唯一声明处（800×590）：WindowGroup 默认 .automatic 策略在
+                // 窗口最小尺寸的唯一声明处（680×500）：WindowGroup 默认 .automatic 策略在
                 // 非 Settings 场景等价 .contentMinSize，窗口最小尺寸由本内容约束推导。
                 // 依据：NSWindow.contentMinSize「takes precedence over the minSize property」
                 // https://developer.apple.com/documentation/appkit/nswindow/contentminsize
@@ -42,7 +42,12 @@ struct SLApp: App {
                 // https://developer.apple.com/documentation/swiftui/scene/windowresizability(_:)
                 // AppKit 侧（AppDelegate / LauncherWindowModifier）原有的 minSize 声明
                 // 均被本约束压过，已删除；数值以本行为准，勿在他处再声明。
-                .frame(minWidth: 800, minHeight: 590)
+                //
+                // 2026-10-05 由 800×590 下调到 680×500（用户要求「还要再缩小一点」）：
+                // 启动卡片现在会随窗口高度等比缩放（见 CategoryContentView.launchView），
+                // 所以更矮的窗口不再会把卡片挤爆；这里给出的是「分类栏 180 + 缩放后卡片
+                // + 日志面板」还能并排站得住的下限。
+                .frame(minWidth: 680, minHeight: 500)
         }
         .windowStyle(.hiddenTitleBar)
         // 默认窗口尺寸 900×660（居中由系统处理）。

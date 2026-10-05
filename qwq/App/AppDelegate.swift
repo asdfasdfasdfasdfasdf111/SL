@@ -21,12 +21,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
         // 此处不再声明 window.minSize：窗口最小尺寸的唯一来源是根视图 qwqApp.swift 的
-        // .frame(minWidth: 800, minHeight: 590)（内容约束）。
+        // .frame(minWidth: 680, minHeight: 500)（内容约束）。
         // 官方明文：NSWindow.contentMinSize「This method takes precedence over the minSize
         // property.」——https://developer.apple.com/documentation/appkit/nswindow/contentminsize
         // 故在 AppKit 侧写 minSize（度量对象是含标题栏的 frame，与内容区不同）不会改变
         // 内容区最小尺寸的实际效果，属冗余声明。此前本处写 800×590、LauncherWindowModifier
-        // 写 800×550，两处数值不一致且均被内容约束压过，已一并删除并统一为 800×590。
+        // 写 800×550，两处数值不一致且均被内容约束压过，已一并删除；数值只在内容约束那一处声明
+        // （该约束 2026-10-05 由 800×590 下调为 680×500）。
         // 应用图标缩放到 0.7 倍
         if let icon = NSImage(named: "AppIcon") {
             let scale: CGFloat = 0.7

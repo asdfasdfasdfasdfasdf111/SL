@@ -6,7 +6,7 @@
 //  行为约束：
 //  1. 取值方式沿用 `NSApp.windows.first`，不做多窗口筛选或重试；
 //  2. 只设置窗口外观，**不再写 `window.minSize`**：窗口最小尺寸的唯一来源是根视图
-//     qwqApp.swift 的 .frame(minWidth: 800, minHeight: 590)。官方明文
+//     qwqApp.swift 的 .frame(minWidth: 680, minHeight: 500)。官方明文
 //     NSWindow.contentMinSize「This method takes precedence over the minSize property.」
 //     （https://developer.apple.com/documentation/appkit/nswindow/contentminsize ），
 //     故此处原写的 800×550 既不生效、又与内容约束的 590 不一致，已删除；

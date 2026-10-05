@@ -60,10 +60,28 @@ struct CategoryContentView: View {
     /// 面板本身随头像的 ZStack 覆盖显示，不额外占卡片布局空间。
     @State private var showAccountPanel = false
 
+    // MARK: - 启动卡片的自适应缩放基准
+
+    /// 缩放基准窗口高度：与 Scene 的 `.defaultSize(height: 660)` 对齐 —— 默认窗口下卡片按 1:1 渲染。
+    private static let designWindowHeight: CGFloat = 660
+    /// 缩放下限：窗口很矮（最小高度 500）时卡片缩到 0.68，再小字就看不清了。
+    private static let minCardScale: CGFloat = 0.68
+    /// 缩放上限：窗口拉很高时最多放到 1.15 倍，避免卡片跟着无限长大。
+    private static let maxCardScale: CGFloat = 1.15
+
     /// 启动页外层：用 GeometryReader 按窗口尺寸算出卡片 / 按钮 / 头像的尺寸，再交给内容层。
     /// 所有尺寸都从 `cardWidth` 一个基准按比例推出来，改一处即可整体缩放。
+    ///
+    /// **整卡缩放（2026-10-05）**：此前 `cardWidth` 写死 280，窗口拉大拉小卡片都纹丝不动
+    /// （用户报告：「左侧卡片不会自我缩放」）。现在按窗口高度相对设计基准等比缩放整张卡片。
+    /// 为什么是给 `.scaleEffect` 一个比例、而不是直接把 `cardWidth` 改小：卡片内部的字号、
+    /// 内边距、按钮高度都是固定值，只缩外框会让内容溢出并错位 —— 必须整块缩放才不变形。
+    /// 比例同时夹在 `minCardScale…maxCardScale`：窗口很矮时不至于缩到看不清，
+    /// 窗口很高时也不让卡片一直长下去（再大只是留白，撑满反而难看）。
     private var launchView: some View {
         GeometryReader { geometry in
+            let cardScale = min(Self.maxCardScale,
+                                max(Self.minCardScale, geometry.size.height / Self.designWindowHeight))
             let cardWidth: CGFloat = 280
             let buttonWidth = cardWidth * 0.7
             let avatarSize = buttonWidth * 0.7
@@ -72,8 +90,9 @@ struct CategoryContentView: View {
             // ⚠️ 这个数字是各子元素高度的**手工累加**（上下留白 + 头像 + 间距 + 用户名框 +
             // 启动按钮 + 预留日志位 + 皮肤按钮 + 间距 + 版本文案）——
             // 增删卡片内元素时必须同步改它，否则卡片会被内容撑开或压扁。
+            // 这里算的是**设计尺寸**（缩放前）；整卡缩放由 `cardScale` 在内容层统一施加。
             let cardHeight: CGFloat = 20 + avatarSize + 12 + 44 + 50 + 80 + 64 + 4 + 28 + 44
-            launchContent(cardWidth: cardWidth, buttonWidth: buttonWidth, avatarSize: avatarSize, logCardHeight: logCardHeight, cardHeight: cardHeight)
+            launchContent(cardWidth: cardWidth, buttonWidth: buttonWidth, avatarSize: avatarSize, logCardHeight: logCardHeight, cardHeight: cardHeight, cardScale: cardScale)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .clipped()
@@ -95,7 +114,7 @@ struct CategoryContentView: View {
     }
 
     /// 内容层：最底是透明点击层（点空白处让输入框失焦）+ 左卡片 + 右侧日志面板 + 右下电源按钮。
-    private func launchContent(cardWidth: CGFloat, buttonWidth: CGFloat, avatarSize: CGFloat, logCardHeight: CGFloat, cardHeight: CGFloat) -> some View {
+    private func launchContent(cardWidth: CGFloat, buttonWidth: CGFloat, avatarSize: CGFloat, logCardHeight: CGFloat, cardHeight: CGFloat, cardScale: CGFloat) -> some View {
         ZStack {
             // 透明点击层（最底层）：点击任意空白处让用户名输入框失焦（macOS 点击非焦点区不自动失焦）
             Color.clear
@@ -103,6 +122,12 @@ struct CategoryContentView: View {
                 .onTapGesture { isUsernameFocused = false }
             HStack(alignment: .top, spacing: 20) {
                 leftCard(cardWidth: cardWidth, avatarSize: avatarSize, buttonWidth: buttonWidth, cardHeight: cardHeight)
+                    // 整卡等比缩放。`scaleEffect` **不改变布局尺寸**（只改渲染），
+                    // 所以必须再套一层按缩放后尺寸的 frame —— 否则卡片会「看起来变小、
+                    // 但仍占着原来的位置」，右侧留下一段假空隙、日志面板也不跟着靠拢。
+                    // 锚点取 .topLeading：卡片左上角不动，向右下方向缩放，与卡片在页面里的定位一致。
+                    .scaleEffect(cardScale, anchor: .topLeading)
+                    .frame(width: cardWidth * cardScale, height: cardHeight * cardScale, alignment: .topLeading)
                     .zIndex(1)
                 logPanel(logCardHeight: logCardHeight)
                 Spacer(minLength: 0)
