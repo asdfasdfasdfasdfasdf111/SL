@@ -247,21 +247,34 @@ final class NetDownloadStateTests: XCTestCase {
         XCTAssertFalse(record.isAllSourcesFailed(3))
     }
 
-    /// 被记进 `sourcesOnce`（不支持断点续传）的源**不再算可用**，即使失败次数为 0
-    func testSourcesOnceAreExcludedFromAvailability() async {
+    /// 被记进 `sourcesOnce`（不支持断点续传）的源**仍然可用**，只要它自己没失败到上限。
+    ///
+    /// 2026-10-05 语义修正：`sourcesOnce` 表示「该源忽略 Range，只能整份下」，**不是**「源已死」——
+    /// 从 0 整份下载不需要 Range，把它当死源会让整个文件被判失败，用户侧现象就是
+    /// 「下载源不支持断点续传就不能下了」（真实故障，源其实是好的）。
+    func testSourcesOnceAreStillAvailableIfNotFailedOut() async {
         let record = makeRecord(urlCount: 2)
         record.sourcesOnce = [0]
         record.sourceFails = [1: 3]
 
-        XCTAssertTrue(record.isAllSourcesFailed(3),
-                      "源 0 在不支持续传名单里、源 1 已达上限 ⇒ 全判死")
+        XCTAssertFalse(record.isAllSourcesFailed(3),
+                       "源 0 只是不能续传（失败次数 0）⇒ 还能整份下，不算全判死")
     }
 
-    /// 所有源都在 `sourcesOnce` 里 ⇒ 全判死（无需任何失败计数）
-    func testAllSourcesOnceMeansAllFailed() async {
+    /// 所有源都在 `sourcesOnce` 里、且都没失败过 ⇒ **不判死**（它们都能整份下完这个文件）
+    func testAllSourcesOnceIsNotAFailure() async {
         let record = makeRecord(urlCount: 2)
         record.sourcesOnce = [0, 1]
-        XCTAssertTrue(record.isAllSourcesFailed(3))
+        XCTAssertFalse(record.isAllSourcesFailed(3),
+                       "不能续传 ≠ 不能用：整份下载不依赖 Range")
+    }
+
+    /// 但真失败到上限时照样判死 —— `sourcesOnce` 不参与判死不等于给这类源免死金牌
+    func testSourcesOnceStillDiesWhenActuallyFailing() async {
+        let record = makeRecord(urlCount: 1)
+        record.sourcesOnce = [0]
+        record.sourceFails = [0: 3]
+        XCTAssertTrue(record.isAllSourcesFailed(3), "真连不上/反复失败时仍要判死，避免无限重试")
     }
 
     /// 没有任何候选源 ⇒ 循环体为空 ⇒ 返回 true（空真）

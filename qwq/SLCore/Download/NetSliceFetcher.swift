@@ -274,6 +274,16 @@ extension NetManager {
         guard let record = find(fileID), let slice = record.slice(sliceID) else { return }
         record.sliceTasks[sliceID] = nil
         slice.state = .failed
+
+        // 源忽略 Range（返回 200 全量）：这是**能力不匹配**，不是源故障 ——
+        // 该源已被 `sourceRejectsRange` 记进 sourcesOnce（只能整份下），首线程会继续把整份下完。
+        // 本片一个字节都没写过（判定发生在写盘之前），直接移除即可；也**不计入源失败**
+        // （计进去会让一个其实健康、只是不支持 Range 的源很快被 isAllSourcesFailed 判死）。
+        if let netError = error as? NetDownloadError, case .sourceNoResumeSupport = netError {
+            record.slices.removeAll { $0.id == sliceID }
+            return
+        }
+
         record.failCount += 1
         record.sourceFails[slice.sourceIndex, default: 0] += 1
         // 连接层错误（SSL 握手失败 / 无法连接 / DNS / 连接中断）说明该源当前不可达，

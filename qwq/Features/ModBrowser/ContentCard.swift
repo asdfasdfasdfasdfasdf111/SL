@@ -74,36 +74,20 @@ struct ContentCard: View {
                 if !translatedTags.isEmpty {
                     // 自动换行（FlowLayout）而非横向滚动：标签多时横向滚动在 macOS 上
                     // 要触控板/Shift+滚轮才能看全，鼠标用户看不到后面的标签（用户报告）。
-                    // 约定：以 "✓" 开头的标签是「此 Java 版本你已安装」——渲染成绿色勾，
-                    // 与普通分类标签（accent 色胶囊）区分（见 DownloadCategoryViewModel.makeMinecraftVersionItems）。
+                    // 全部标签统一渲染成 accent 色胶囊：此前「✓」前缀的标签走一套绿色勾分支，
+                    // 该分支的唯一生产者（下载页的「此 Java 版本你已安装」）已按用户要求删除，
+                    // 分支随之移除，避免留下永远不会被渲染到的死样式。
                     FlowLayout(horizontalSpacing: 4, verticalSpacing: 4) {
                         ForEach(translatedTags, id: \.self) { tag in
-                            if tag.hasPrefix("✓") {
-                                HStack(spacing: 3) {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .font(.system(size: 8, weight: .bold))
-                                        .foregroundColor(.green)
-                                    Text(String(tag.dropFirst()))
-                                        .font(.system(size: 9, weight: .medium))
-                                        .foregroundColor(.green)
-                                }
+                            Text(tag)
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundColor(theme.accentColor.opacity(0.8))
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
                                 .background(
                                     RoundedRectangle(cornerRadius: 4)
-                                        .fill(Color.green.opacity(0.14))
+                                        .fill(theme.accentColor.opacity(0.12))
                                 )
-                            } else {
-                                Text(tag)
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundColor(theme.accentColor.opacity(0.8))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 4)
-                                            .fill(theme.accentColor.opacity(0.12))
-                                    )
-                            }
                         }
                     }
                 }

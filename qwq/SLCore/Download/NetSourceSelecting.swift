@@ -18,21 +18,37 @@
 import Foundation
 
 extension NetManager {
-    /// 选择可用源：按顺序跳过黑名单（不支持断点续传）与失败超阈值的源
-    func pickSource(_ record: FileRecord) -> Int? {
+    /// 查询可用源（**纯查询：不改任何状态**）。
+    ///
+    /// - Parameter needsRange: `true` 时跳过「只能整份下」的源（`sourcesOnce`）。
+    ///   从 0 开始的整份下载**不需要** Range，所以那时它们仍然可用 —— 这一点是
+    ///   2026-10-05 修「源不支持断点续传就整个文件失败」的关键：
+    ///   源忽略 Range（返回 200 全量）只代表**不能分片/续传**，不代表它不能下这个文件。
+    func availableSource(_ record: FileRecord, needsRange: Bool) -> Int? {
         for i in 0..<record.file.urls.count {
-            if record.sourcesOnce.contains(i) { continue }
+            if needsRange && record.sourcesOnce.contains(i) { continue }
             if record.sourceFails[i, default: 0] >= config.maxFailPerSource { continue }
             return i
         }
+        return nil
+    }
+
+    /// 选定源；确实一个可用源都没有时才把文件判死（终态判定点，含分片临时文件清理）。
+    func pickSource(_ record: FileRecord) -> Int? {
+        if let index = availableSource(record, needsRange: false) { return index }
+        markNoAvailableSource(record)
+        return nil
+    }
+
+    /// 把文件置为「无可用源」终态。
+    /// 失败路径自行清理已产生的分片临时文件：本函数是终态判定点，此处的清理不依赖
+    /// 外层 cancelRecords（它仅在 download / downloadAll 退栈时调用，批次中途的单文件失败
+    /// 不会经过该路径），避免残留 .tmp 占用缓存目录。
+    func markNoAvailableSource(_ record: FileRecord) {
         record.state = .failed
         record.failReason = "所有下载源均不可用"
         record.failureKind = .noAvailableSource   // 结构化类别：让 NetDownloader 抛精确错误而非泛化 fileFailed
-        // 失败路径自行清理已产生的分片临时文件：本函数是终态判定点，此处的清理不依赖
-        // 外层 cancelRecords（它仅在 download / downloadAll 退栈时调用，批次中途的单文件失败
-        // 不会经过该路径），避免残留 .tmp 占用缓存目录。
         cleanupTemps(record)
-        return nil
     }
 
     /// 连接层错误判定：此类错误下同源重试无意义（参照上游 PCL2：其源失败计数用于瞬时错误，这里单独提速）

@@ -15,10 +15,14 @@ extension NetManager {
 
     func tryBeginSlice(_ record: FileRecord) -> Bool {
         guard activeSlices < config.maxSlices else { return false }
-        guard let sourceIndex = pickSource(record) else { return false }
 
-        // ① 首线程（起点 0）
+        // ① 首线程（起点 0）。整份下载**不需要 Range**，所以「只能整份下」的源
+        //    （sourcesOnce）在这里同样可用 —— 这正是「源忽略 Range 时仍能下完」的基础。
         if record.slices.isEmpty {
+            guard let sourceIndex = availableSource(record, needsRange: false) else {
+                markNoAvailableSource(record)
+                return false
+            }
             record.state = .loading
             let slice = Slice(start: 0, sourceIndex: sourceIndex)
             record.slices.append(slice)
@@ -33,7 +37,8 @@ extension NetManager {
         if record.fileSize <= 0 {
             // `!superseded` 不可省：未知大小时 `undone` 恒为 -1，无法像已知大小那样靠 undone 归零
             // 来表达「这片已被接管」，只能靠标记。否则每个 tick 都会为同一失败片再建一条续传片。
-            if let failed = record.slices.first(where: { $0.state == .failed && !$0.superseded && $0.done > 0 }) {
+            if let failed = record.slices.first(where: { $0.state == .failed && !$0.superseded && $0.done > 0 }),
+               let sourceIndex = availableSource(record, needsRange: true) {
                 let slice = Slice(start: failed.start + failed.done, sourceIndex: sourceIndex)
                 slice.state = .resumed
                 // 先标记接管、再建片：本片保留已下数据供合并时拼接，但不再参与后续「待续传」判定
@@ -45,6 +50,10 @@ extension NetManager {
             }
             record.slices.removeAll { $0.state == .failed && $0.done == 0 }
             if record.slices.isEmpty {
+                guard let sourceIndex = availableSource(record, needsRange: false) else {
+                    markNoAvailableSource(record)
+                    return false
+                }
                 let slice = Slice(start: 0, sourceIndex: sourceIndex)
                 record.slices.append(slice)
                 startSliceTask(record, slice)
@@ -52,8 +61,10 @@ extension NetManager {
             }
         }
 
-        // ② 失败分片断点续传（参照上游 PCL2：从 DownloadStart + DownloadDone 继续）
-        if let failed = record.slices.first(where: { $0.state == .failed && !$0.superseded && $0.undone(of: record) > 0 }) {
+        // ② 失败分片断点续传（参照上游 PCL2：从 DownloadStart + DownloadDone 继续）。
+        //    起点 > 0 ⇒ 必须支持 Range，故只在支持 Range 的源里挑。
+        if let failed = record.slices.first(where: { $0.state == .failed && !$0.superseded && $0.undone(of: record) > 0 }),
+           let sourceIndex = availableSource(record, needsRange: true) {
             let slice = Slice(start: failed.start + failed.done, sourceIndex: sourceIndex)
             slice.state = .resumed
             // 旧失败分片保留其已下数据（merge 时拼接）；此处同样显式标记接管，
@@ -63,6 +74,28 @@ extension NetManager {
             record.slices.sort { $0.start < $1.start }
             startSliceTask(record, slice)
             return true
+        }
+
+        // ③④ 分割最大碎片 —— 同样属于「起点 > 0」，只对支持 Range 的源做。
+        guard let sourceIndex = availableSource(record, needsRange: true) else {
+            // 没有支持 Range 的源了。此时**不要**判死：要么还有分片在跑（让它跑完），
+            // 要么此刻一个分片都没在跑 —— 那就用「只能整份下」的源从 0 重下整份
+            //（对这类源这是唯一能完成的路径，参照上游 PCL2 的「禁多线程源退化为单线程整份下」）。
+            if record.activeSliceCount == 0,
+               let freshIndex = availableSource(record, needsRange: false) {
+                cleanupTemps(record)
+                record.slices.removeAll()
+                record.fileSize = -2          // 重新探测大小（首线程会重新取）
+                record.state = .loading
+                let slice = Slice(start: 0, sourceIndex: freshIndex)
+                record.slices.append(slice)
+                startSliceTask(record, slice)
+                return true
+            }
+            // 分片还在跑：本次不新开片即可，不算失败（此前这里会直接把整个文件判死）
+            if record.activeSliceCount > 0 { return false }
+            markNoAvailableSource(record)
+            return false
         }
 
         // ③ 禁多线程源（参照上游 PCL2：pcl2-server / gitcode / github 仅单线程）

@@ -128,7 +128,14 @@ public class BMCLAPIDownloadSource: DownloadSource {
     }
     
     public func getLibraryURL(_ library: ClientManifest.Library) -> URL? {
-        return URL(string: "https://bmclapi2.bangbang93.com/maven")!.appendingPathComponent(Util.toPath(mavenCoordinate: library.name))
+        // 路径优先取清单给的**权威路径** `downloads.artifact.path`，而不是从 Maven 坐标反推：
+        // 坐标推路径在「Maven 重定位」的库上会拼出 404 —— 实测 Forge 安装清单里的
+        // `net.md-5:jarsplitter:1.1.2` 实际发布在 `net/minecraftforge/jarsplitter/1.1.2/`
+        // （坐标还是老的 net.md-5），按坐标拼 = 404，按 artifact.path 拼 = 200。
+        // 这类 404 的后果很重：处理器 jar 下不下来，安装到「执行安装器处理器」才以退出码 1 失败，
+        // 现场离病因很远。只有确实没有 artifact（如纯 natives 条目）时才退回坐标推路径。
+        let path = library.artifact?.path ?? Util.toPath(mavenCoordinate: library.name)
+        return URL(string: "https://bmclapi2.bangbang93.com/maven")!.appendingPathComponent(path)
     }
     
     public func getAssetURL(hash: String) -> URL? {

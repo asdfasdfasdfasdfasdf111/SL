@@ -93,7 +93,8 @@ extension NetManager {
         /// 键为 `Slice.id`：各分片对应的下载任务，供取消与等待使用。
         var sliceTasks: [UUID: Task<Void, Never>] = [:]
         /// 记为「只能整份下、不能 Range 续传」的源下标（once = 一次到底）。
-        /// 一旦某源被记进来，它就不再算作可用重试对象（见 isAllSourcesFailed）。
+        /// ⚠️ 它**不是**「死源」名单：这类源仍可用于从 0 开始的整份下载（不需要 Range），
+        /// 只是不能被分片/续传 —— 见 `availableSource(_:needsRange:)` 与 `isAllSourcesFailed`。
         var sourcesOnce: Set<Int> = []  // 不支持断点续传的源
         /// 每个源（下标）累计的失败次数，用于判定**单个源**是否已判死。
         var sourceFails: [Int: Int] = [:]
@@ -141,12 +142,15 @@ extension NetManager {
             return min(1, Double(done) / Double(fileSize))
         }
 
-        /// 是否所有源都已判死：每一个源要么被记进 `sourcesOnce`（不支持续传），
-        /// 要么失败次数已达 `maxFail`。只要还剩一个「可用且没超限」的源就返回 false。
+        /// 是否所有源都已判死：每个源都失败到了 `maxFail`。
         /// ⚠️ 分界是 `<`：失败次数**恰好等于** `maxFail` 时已算判死。
+        /// ⚠️ **`sourcesOnce`（不支持 Range 的源）不再算判死**（2026-10-05 修）：
+        /// 「不能续传」不等于「不能用」—— 从 0 整份下载根本不需要 Range，把它当死源会让
+        /// 一个其实健康的源被排除，用户侧表现为「下载源不支持断点续传就不能下了」。
+        /// 这类源的可重试性由 `sourceFails` 单独兜底（真连不上时照样会被判死）。
         func isAllSourcesFailed(_ maxFail: Int) -> Bool {
             for i in 0..<file.urls.count {
-                if !sourcesOnce.contains(i) && sourceFails[i, default: 0] < maxFail { return false }
+                if sourceFails[i, default: 0] < maxFail { return false }
             }
             return true
         }

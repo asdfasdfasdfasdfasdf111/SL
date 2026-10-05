@@ -113,7 +113,7 @@ struct RootOverlays: View {
                 ZStack {
                     Circle()
                         .fill(.ultraThinMaterial)
-                        .frame(width: 48, height: 48)
+                        .frame(width: Self.downloadCircleDiameter, height: Self.downloadCircleDiameter)
                         .overlay(
                             Circle()
                                 .stroke(.white.opacity(0.2), lineWidth: 1)
@@ -127,12 +127,12 @@ struct RootOverlays: View {
                 .scaleEffect(navigation.downloadCircleScale)
                 .opacity(navigation.downloadCircleOpacity)
                 .padding(.trailing, 12)
-                // 几何中心与详情页「下载」按钮水平对齐（用户报告：两按钮中心连线不水平）。
-                // 基准：ModDetailView body 有 .padding(.bottom, 20)，其 overlay(alignment:
-                // .bottomTrailing) 锚点在 padding 之后；下载按钮（24pt 字体 + vertical 16×2，
-                // 高约 61）再 padding bottom 20 → 底边距窗口底 20+20=40，中心 40+30.5=70.5。
-                // 圆按钮 48 高，为让中心同处 70.5 → bottom = 70.5 − 24 = 46.5。
-                .padding(.bottom, 46.5)
+                // 几何中心与详情页「下载」按钮水平对齐（用户两次报告：两按钮中心连线不水平）。
+                // ⚠️ 上一版把这 20pt 数了两遍：`ModDetailView` 的 `.overlay(alignment: .bottomTrailing)`
+                // 挂在 body 的 `.padding(.bottom, 20)` **之后**，锚点就是窗口底边，那 20pt 已经在
+                // overlay 之内；再叠加下载按钮自己的 `.padding(.bottom, 20)` 只有一层有效。
+                // 于是圆按钮被抬高 20pt（= 一眼可见的错位）。现在由下载按钮几何推导，见下方常量。
+                .padding(.bottom, Self.downloadCircleBottomInset)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 .zIndex(40)
                 .onTapGesture {
@@ -165,6 +165,22 @@ struct RootOverlays: View {
     /// 药丸锚点（以本视图左上角为坐标原点）。
     /// 两个入口共用：同一件事发生时，它出现在屏幕上的同一个地方，用户不需要重新找。
     private static let pillAnchor: CGPoint = .init(x: 450, y: 200)
+
+    // MARK: - 下载按钮 / 圆按钮的对齐几何
+
+    /// 详情页「下载」按钮的高度：字号 24 的粗体单行 ≈ 29pt，加 `.padding(.vertical, 16)` ≈ 61pt。
+    /// ⚠️ 改动 `ModDetailView` 里下载按钮的字号或内边距时要同步这里，否则两颗按钮又会错位。
+    private static let downloadButtonHeight: CGFloat = 61
+    /// 下载按钮自身距窗口底边的距离（`ModDetailView` 里那个 `.padding(.bottom, 20)`）。
+    private static let downloadButtonBottomInset: CGFloat = 20
+    /// 圆按钮直径（与下面 `frame(width: 48, height: 48)` 同步）。
+    private static let downloadCircleDiameter: CGFloat = 48
+
+    /// 圆按钮为与下载按钮**中心同高**所需的底边距。
+    /// 下载按钮中心（距窗口底）= 底边距 + 按钮高/2；圆按钮中心 = 底边距 + 直径/2。令两者相等即得。
+    private static var downloadCircleBottomInset: CGFloat {
+        downloadButtonBottomInset + downloadButtonHeight / 2 - downloadCircleDiameter / 2
+    }
 
     /// 失败提示的停留时长。与 `TaskPill` 的默认值（1.5s，任务状态气泡的历史行为）不同：
     /// 失败提示通常是用户能看到的**唯一**失败原因，1.5s 一闪而过等于没提示。

@@ -85,6 +85,12 @@ extension ForgeInstaller {
     // MARK: - 执行处理器任务
     private func executeProcessor(_ processor: ForgeInstallProfile.Processor) throws {
         let processorPath = minecraftDirectory.librariesURL.appendingPathComponent(processor.jarPath)
+        // 文件不存在与「文件存在但没主类」是两件事，提示必须分开：
+        // 此前两者共用一句「没有主类」，于是「处理器 jar 压根没下下来」在日志里
+        // 长得像「jar 格式不对」，用户只能看到后面那句无从下手的「处理器执行失败（退出码 1）」。
+        guard FileManager.default.fileExists(atPath: processorPath.path) else {
+            throw MyLocalizedError(reason: "安装器处理器缺少 jar：\(processor.jarPath)（该文件未下载成功，安装无法继续）")
+        }
         guard let mainClass = Util.getMainClass(processorPath) else {
             warn("\(processorPath.lastPathComponent) 没有主类")
             return
@@ -125,7 +131,21 @@ extension ForgeInstaller {
         
         let processors = installProfile.processors.filter { $0.isAvailableOnClient }
         let step = 0.4 / Double(processors.count)
-        
+
+        // 执行前先把「处理器用到的 jar 是否都在本地」一次性核对完：
+        // Java 侧缺 classpath 条目的表现只是退出码 1，日志里看不出少了哪个文件，
+        // 用户拿到的是一句无从下手的「处理器执行失败」。这里提前把缺的文件全部列出来，
+        // 把失败现场从「Java 退出码」前移到「安装器自己说清楚少了什么」。
+        let requiredPaths = processors.flatMap { [$0.jarPath] + $0.classpath }
+        let missingPaths = Array(Set(requiredPaths)).filter {
+            !FileManager.default.fileExists(atPath: minecraftDirectory.librariesURL.appendingPathComponent($0).path)
+        }.sorted()
+        guard missingPaths.isEmpty else {
+            throw MyLocalizedError(
+                reason: "安装器处理器缺少依赖文件（共 \(missingPaths.count) 个）：\(missingPaths.joined(separator: "、"))"
+            )
+        }
+
         for processor in processors {
             if processor.args.contains("DOWNLOAD_MOJMAPS") {
                 if try await patchMojangMappingsDownloadTask(processor) {
