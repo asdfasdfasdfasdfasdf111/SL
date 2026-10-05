@@ -42,6 +42,14 @@ final class AppSettingsStore: ObservableObject {
         didSet { UserDefaults.standard.set(accountMode, forKey: UDK.accountMode) }
     }
 
+    /// 自定义微软登录 client id（空串 = 用 `MicrosoftAuthConstants.fallbackClientID`）。
+    /// 「设置 → 账号」写入。⚠️ `MicrosoftAuthService.clientID` 是 nonisolated 的，
+    /// 它直接读 `UserDefaults[UDK.microsoftClientID]` 而不是本对象 —— 两者键相同，
+    /// 因此这里写入后登录立刻生效，无需重启。
+    @Published var microsoftClientID: String {
+        didSet { UserDefaults.standard.set(microsoftClientID, forKey: UDK.microsoftClientID) }
+    }
+
     @Published var cachedJavaPath: String? {
         didSet { UserDefaults.standard.set(cachedJavaPath, forKey: UDK.cachedJavaPath) }
     }
@@ -84,6 +92,7 @@ final class AppSettingsStore: ObservableObject {
         self.selectedGameRoot = UserDefaults.standard.string(forKey: UDK.selectedGameRoot) ?? ""
         self.offlineUsername = UserDefaults.standard.string(forKey: UDK.offlineUsername) ?? "Player"
         self.accountMode = UserDefaults.standard.string(forKey: UDK.accountMode) ?? "offline"
+        self.microsoftClientID = UserDefaults.standard.string(forKey: UDK.microsoftClientID) ?? ""
         self.cachedJavaPath = UserDefaults.standard.string(forKey: UDK.cachedJavaPath)
         self.appliedSkinHash = UserDefaults.standard.string(forKey: UDK.appliedSkinHash)
         self.selectedJavaPath = UserDefaults.standard.string(forKey: UDK.selectedJavaPath)

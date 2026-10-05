@@ -27,6 +27,7 @@
 
 import Foundation
 import Combine
+import AppKit
 import os
 
 @MainActor
@@ -93,6 +94,11 @@ final class MicrosoftLoginViewModel: ObservableObject {
                 let code = try await MicrosoftAuthService.startDeviceCode()
                 guard let self, !Task.isCancelled else { return }
                 self.phase = .waitingForCode(code)
+                // 自动在默认浏览器打开验证页（PCL 同款行为）：用户不必自己找地址、
+                // 也少一步手动输入 —— 服务端给了带预填码的 `verification_uri_complete`
+                // 就用它，用户只需在网页上点「继续」。打不开也不阻断流程：
+                // 卡片上仍有验证页地址与复制设备码按钮可手动完成。
+                self.openVerificationPage(code)
 
                 let tokens = try await MicrosoftAuthService.waitForAuthorization(
                     deviceCode: code,
@@ -165,5 +171,13 @@ final class MicrosoftLoginViewModel: ObservableObject {
     var currentDeviceCode: MicrosoftDeviceCode? {
         if case .waitingForCode(let code) = phase { return code }
         return nil
+    }
+
+    /// 在默认浏览器打开验证页（`preferredVerificationURL`：有预填码的完整页优先）。
+    /// 抽成方法而不是内联在 `startLogin` 里：`Task` 闭包已经很长，且浏览器打开是
+    /// 与状态迁移无关的副作用，单独一处便于将来换成「用户可选不自动打开」。
+    private func openVerificationPage(_ code: MicrosoftDeviceCode) {
+        guard let url = URL(string: code.preferredVerificationURL) else { return }
+        NSWorkspace.shared.open(url)
     }
 }

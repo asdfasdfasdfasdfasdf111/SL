@@ -24,6 +24,9 @@ private final class MockAuthURLProtocol: URLProtocol {
     nonisolated(unsafe) static var routes: [String: (status: Int, body: String)] = [:]
     /// 只拦截已登记 URL 的请求（scheme://host/path 作为 key）
     nonisolated(unsafe) static var allowedPaths: [String] = []
+    /// 已到达 mock 的请求快照（URL / method / body）。用于断言**请求形状**本身
+    /// （例如「client_id 必须在 POST body 里」这类契约），而不只是响应解析。
+    nonisolated(unsafe) static var captured: [(url: String, method: String, body: String)] = []
 
     override class func canInit(with request: URLRequest) -> Bool {
         guard let url = request.url else { return false }
@@ -33,11 +36,33 @@ private final class MockAuthURLProtocol: URLProtocol {
 
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
+    /// 取请求体文本。⚠️ `URLSession` 发出的请求在 `URLProtocol` 里通常**只有
+    /// `httpBodyStream`、没有 `httpBody`**（body 被转成流），只读 `httpBody` 会永远得到空串、
+    /// 让「body 里有没有 client_id」这类断言假通过 —— 因此这里两条路都走。
+    private static func bodyText(of request: URLRequest) -> String {
+        if let body = request.httpBody {
+            return String(data: body, encoding: .utf8) ?? ""
+        }
+        guard let stream = request.httpBodyStream else { return "" }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        let bufferSize = 4096
+        var buffer = [UInt8](repeating: 0, count: bufferSize)
+        while stream.hasBytesAvailable {
+            let read = stream.read(&buffer, maxLength: bufferSize)
+            if read <= 0 { break }
+            data.append(buffer, count: read)
+        }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
     override func startLoading() {
         guard let url = request.url else {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
             return
         }
+        Self.captured.append((url.absoluteString, request.httpMethod ?? "GET", Self.bodyText(of: request)))
         let key = url.absoluteString
         let route = Self.routes.first { key.hasPrefix($0.key) }
         let (status, body) = route?.value ?? (500, "{\"error\":\"unmocked\"}")
@@ -63,17 +88,20 @@ final class MicrosoftAuthSeamTests: XCTestCase {
     private let xstsURL = "https://xsts.auth.xboxlive.com/xsts/authorize"
     private let mcLoginURL = "https://api.minecraftservices.com/authentication/login_with_xbox"
     private let profileURL = "https://api.minecraftservices.com/minecraft/profile"
+    private let deviceCodeURL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode"
 
     override func setUp() {
         super.setUp()
         URLProtocol.registerClass(MockAuthURLProtocol.self)
         MockAuthURLProtocol.routes = [:]
         MockAuthURLProtocol.allowedPaths = []
+        MockAuthURLProtocol.captured = []
     }
 
     override func tearDown() {
         MockAuthURLProtocol.routes = [:]
         MockAuthURLProtocol.allowedPaths = []
+        MockAuthURLProtocol.captured = []
         URLProtocol.unregisterClass(MockAuthURLProtocol.self)
         super.tearDown()
     }
@@ -102,6 +130,10 @@ final class MicrosoftAuthSeamTests: XCTestCase {
 
     private func profileOK() -> (Int, String) {
         (200, #"{"id":"0123456789abcdef0123456789abcdef","name":"Tester"}"#)
+    }
+
+    private func deviceCodeOK() -> (Int, String) {
+        (200, #"{"device_code":"DEV_CODE","user_code":"ABCD-EFGH","verification_uri":"https://microsoft.com/link","verification_uri_complete":"https://microsoft.com/link?otp=ABCDEFGH","expires_in":900,"interval":5,"message":"请打开网页输入代码"}"#)
     }
 
     // MARK: - XSTS 拒绝：错误映射（审计点名场景）
@@ -248,6 +280,94 @@ final class MicrosoftAuthSeamTests: XCTestCase {
             }
             XCTAssertEqual(endpoint, "xsts")
             XCTAssertEqual(code, 500)
+        } catch {
+            XCTFail("期望 MicrosoftAuthError，实际 \(error)")
+        }
+    }
+
+    // MARK: - 设备码请求形状（2026-10-05 线上回归：点登录立刻失败）
+
+    /// 设备码请求的参数**必须在 POST body 里**。
+    /// 回归背景：此前写成「URL query + 空 body」，MSA 直接回
+    /// `AADSTS900144: The request body must contain the following parameter: 'client_id'`，
+    /// 表现为点「微软账号登录」立刻失败、连设备码卡片都出不来。
+    func testDeviceCodeSendsParamsInBodyNotQuery() async {
+        stub([deviceCodeURL: deviceCodeOK()])
+
+        do {
+            _ = try await MicrosoftAuthService.startDeviceCode()
+        } catch {
+            XCTFail("设备码请求不应失败：\(error)")
+            return
+        }
+
+        guard let request = MockAuthURLProtocol.captured.first(where: { $0.url.hasPrefix(deviceCodeURL) }) else {
+            XCTFail("mock 没有收到设备码请求")
+            return
+        }
+        XCTAssertFalse(request.url.contains("?"), "参数不该再放在 query 里：\(request.url)")
+        XCTAssertEqual(request.method, "POST")
+        XCTAssertTrue(request.body.contains("client_id="), "body 缺 client_id：\(request.body)")
+        XCTAssertTrue(request.body.contains("scope="), "body 缺 scope：\(request.body)")
+    }
+
+    /// 服务端给了 `verification_uri_complete` 时必须能解析出来（用于免手输码地打开浏览器）。
+    func testDeviceCodeDecodesPrefilledVerificationURL() async {
+        stub([deviceCodeURL: deviceCodeOK()])
+
+        do {
+            let code = try await MicrosoftAuthService.startDeviceCode()
+            XCTAssertEqual(code.userCode, "ABCD-EFGH")
+            XCTAssertEqual(code.verificationURIComplete, "https://microsoft.com/link?otp=ABCDEFGH")
+            XCTAssertEqual(code.preferredVerificationURL, "https://microsoft.com/link?otp=ABCDEFGH")
+        } catch {
+            XCTFail("设备码解析失败：\(error)")
+        }
+    }
+
+    /// 「设置 → 账号」里填的自定义 client id 要覆盖内置回退值，并出现在请求 body 里。
+    func testCustomClientIDOverridesBuiltinFallback() async {
+        let key = MicrosoftAuthConstants.clientIDDefaultsKey
+        let original = UserDefaults.standard.string(forKey: key)
+        UserDefaults.standard.set("my-own-azure-app-id", forKey: key)
+        defer {
+            // ⚠️ 必须还原：这个键是**真实的持久化配置**，漏还原会污染同机后续用例与手动运行
+            if let original {
+                UserDefaults.standard.set(original, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+
+        stub([deviceCodeURL: deviceCodeOK()])
+        XCTAssertEqual(MicrosoftAuthService.clientID, "my-own-azure-app-id")
+
+        do {
+            _ = try await MicrosoftAuthService.startDeviceCode()
+        } catch {
+            XCTFail("设备码请求不应失败：\(error)")
+            return
+        }
+        let body = MockAuthURLProtocol.captured.first(where: { $0.url.hasPrefix(deviceCodeURL) })?.body ?? ""
+        XCTAssertTrue(body.contains("client_id=my-own-azure-app-id"), "body 未用自定义 id：\(body)")
+    }
+
+    /// 应用 id 未注册（AADSTS700016）是**配置问题**，要给可操作提示而不是干巴巴的 HTTP 400。
+    func testUnregisteredAppIDMapsToClientIDNotRegistered() async {
+        stub([
+            deviceCodeURL: (400, #"{"error":"unauthorized_client","error_description":"AADSTS700016: Application with identifier 'x' was not found in the directory"}"#),
+        ])
+
+        do {
+            _ = try await MicrosoftAuthService.startDeviceCode()
+            XCTFail("预期抛 clientIDNotRegistered，实际成功")
+        } catch let error as MicrosoftAuthError {
+            guard case .clientIDNotRegistered = error else {
+                XCTFail("期望 clientIDNotRegistered，实际 \(error)")
+                return
+            }
+            let text = error.errorDescription ?? ""
+            XCTAssertTrue(text.contains("设置"), "错误文案应指向「设置 → 账号」：\(text)")
         } catch {
             XCTFail("期望 MicrosoftAuthError，实际 \(error)")
         }

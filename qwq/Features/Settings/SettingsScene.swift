@@ -19,11 +19,15 @@ import SwiftUI
 /// 偏好设置场景内容。
 struct SettingsScene: View {
     var body: some View {
-        // TabView 双页：个性化（原有镜像入口）+ 版本目录（规范化迁移期入口）。
-        // 固定宽度取两页内容的最大自然宽（560），高度给版本目录页留够计划列表展示空间。
+        // TabView 三页：个性化（原有镜像入口）+ 账号（微软登录 client id）+ 版本目录
+        //（规范化迁移期入口）。
+        // 固定宽度取三页内容的最大自然宽（560），高度给版本目录页留够计划列表展示空间。
         TabView {
             ColorPickerView()
                 .tabItem { Label("个性化", systemImage: "paintpalette") }
+
+            AccountSettingsView()
+                .tabItem { Label("账号", systemImage: "person.crop.circle") }
 
             VersionFolderMigrationView()
                 .tabItem { Label("版本目录", systemImage: "folder.badge.gearshape") }

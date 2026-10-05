@@ -35,8 +35,15 @@ import Foundation
 /// 微软登录相关常量。client id 为微软官方 Minecraft Launcher 的公开 client id
 ///（public client），第三方启动器合法复用，无需注册 Azure 应用、无 client secret。
 public enum MicrosoftAuthConstants {
-    /// 微软官方 Minecraft Launcher 的公开 client id
-    public static let clientID = "00000000402b5328"
+    /// 内置的**回退** client id：微软官方 Minecraft Launcher 的历史公开 id。
+    /// ⚠️ 该 id 已被微软下线（设备码端点实测返回 `AADSTS700016 应用不存在`），
+    /// 因此它只是个占位默认值 —— 真正可用的是用户在「设置 → 账号」里填的自定义 id
+    /// （见 `MicrosoftAuthService.clientID`）。保留它只为「未配置时给出明确报错」，
+    /// 而不是静默失败。
+    public static let fallbackClientID = "00000000402b5328"
+    /// 「设置 → 账号」写入的自定义 client id 的 UserDefaults 键。
+    /// ⚠️ 与 `UDK.microsoftClientID` 是**同一个磁盘键**（改名等于丢配置），改一处必须同步另一处。
+    public static let clientIDDefaultsKey = "microsoftClientID"
     /// 设备码流程需要的 scope：`XboxLive.signin` 换取 XBL 资格，`offline_access` 拿 refresh_token
     public static let scope = "XboxLive.signin offline_access"
     /// 消费级账号（消费者租户）的 OAuth2 端点
@@ -77,6 +84,10 @@ public enum MicrosoftAuthError: LocalizedError, Equatable {
     case cancelled
     /// 令牌链中途某一步返回了非预期状态码（带端点与状态码）
     case unexpectedStatus(endpoint: String, code: Int, body: String)
+    /// 请求里的 client id 在微软侧不存在（AADSTS700016 / AADSTS900144）——
+    /// 内置的微软官方 Minecraft Launcher 公开 id 已被微软下线，用户需在
+    /// 「设置 → 账号」里填自己注册的 Azure 应用 id（详见该页说明）。
+    case clientIDNotRegistered(String)
 
     public var errorDescription: String? {
         switch self {
@@ -102,6 +113,9 @@ public enum MicrosoftAuthError: LocalizedError, Equatable {
             return "登录已取消。"
         case .unexpectedStatus(let endpoint, let code, let body):
             return "认证请求失败（HTTP \(code)）：\(endpoint) \(body.prefix(200))"
+        case .clientIDNotRegistered(let detail):
+            return "登录用的应用 id 未被微软认可（\(detail)）。内置的公开 id 已被微软下线，"
+                + "请到「设置 → 账号」填写你自己注册的 Azure 应用 id 后重试。"
         }
     }
 }
@@ -120,6 +134,9 @@ nonisolated public struct MicrosoftDeviceCode: Codable, Equatable {
     public let userCode: String
     /// 用户在浏览器打开的验证页
     public let verificationURI: String
+    /// 带设备码预填的验证页（MSA 可选返回）。存在时优先用它打开浏览器，
+    /// 用户就不必手动输入 8 位码 —— 缺失时回退到 `verificationURI` + 手输。
+    public let verificationURIComplete: String?
     /// 设备码有效秒数
     public let expiresIn: Int
     /// 轮询间隔秒数
@@ -131,9 +148,15 @@ nonisolated public struct MicrosoftDeviceCode: Codable, Equatable {
         case deviceCode = "device_code"
         case userCode = "user_code"
         case verificationURI = "verification_uri"
+        case verificationURIComplete = "verification_uri_complete"
         case expiresIn = "expires_in"
         case interval
         case message
+    }
+
+    /// 打开浏览器时优先用的地址：带预填码的完整页（服务端有给就用），否则普通验证页。
+    public var preferredVerificationURL: String {
+        verificationURIComplete ?? verificationURI
     }
 }
 
@@ -208,28 +231,41 @@ nonisolated public struct MinecraftProfile: Codable, Equatable {
 /// 微软登录全链路认证服务。无状态、`nonisolated`，可被任意并发上下文调用。
 public enum MicrosoftAuthService {
 
+    /// 当前生效的 client id：优先「设置 → 账号」里用户填的自定义值，为空则回退内置值。
+    /// 直接读 `UserDefaults`（而不是 `AppSettingsStore`）：本服务是 `nonisolated` 纯函数集，
+    /// 不该依赖 MainActor 上的设置对象；「设置 → 账号」页负责写同一个键。
+    public static var clientID: String {
+        let custom = UserDefaults.standard.string(forKey: MicrosoftAuthConstants.clientIDDefaultsKey) ?? ""
+        return custom.isEmpty ? MicrosoftAuthConstants.fallbackClientID : custom
+    }
+
     // MARK: 1. 设备码流程
 
     /// 发起设备码流程：向 MSA 申请一组设备码 + 用户码。
     /// 调用方应把 `userCode` 与 `verificationURI` 展示给用户（UI 层负责），
     /// 然后以 `interval` 为间隔调用 `pollForToken(deviceCode:)`。
+    ///
+    /// ⚠️ 参数必须放在 **POST body** 里（`application/x-www-form-urlencoded`）。
+    /// 此前写成「URL query + 空 body」被 MSA 直接拒绝：
+    /// `AADSTS900144: The request body must contain the following parameter: 'client_id'`，
+    /// 表现为点「登录」后立刻失败、连设备码都拿不到（2026-10-05 实测）。
     public static func startDeviceCode() async throws -> MicrosoftDeviceCode {
-        var components = URLComponents(url: MicrosoftAuthConstants.deviceCodeURL, resolvingAgainstBaseURL: false)!
-        components.queryItems = [
-            URLQueryItem(name: "client_id", value: MicrosoftAuthConstants.clientID),
-            URLQueryItem(name: "scope", value: MicrosoftAuthConstants.scope)
-        ]
-        var request = URLRequest(url: components.url!)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = Data()
-
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await postForm(
+            MicrosoftAuthConstants.deviceCodeURL,
+            form: [
+                "client_id": clientID,
+                "scope": MicrosoftAuthConstants.scope
+            ]
+        )
         guard let http = response as? HTTPURLResponse else {
             throw MicrosoftAuthError.badResponse("非 HTTP 响应")
         }
         guard (200..<300).contains(http.statusCode) else {
             let body = String(data: data, encoding: .utf8) ?? ""
+            // 应用 id 无效是**配置问题**而非网络问题，单独给出可操作的提示
+            if body.contains("AADSTS700016") || body.contains("AADSTS900144") {
+                throw MicrosoftAuthError.clientIDNotRegistered("HTTP \(http.statusCode)")
+            }
             throw MicrosoftAuthError.unexpectedStatus(endpoint: "devicecode", code: http.statusCode, body: body)
         }
         do {
@@ -244,7 +280,7 @@ public enum MicrosoftAuthService {
     public static func pollForToken(deviceCode: MicrosoftDeviceCode) async throws -> MicrosoftPollResult {
         let form = [
             "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-            "client_id": MicrosoftAuthConstants.clientID,
+            "client_id": clientID,
             "device_code": deviceCode.deviceCode
         ]
         let (data, response) = try await postForm(MicrosoftAuthConstants.tokenURL, form: form)
@@ -361,7 +397,7 @@ public enum MicrosoftAuthService {
     public static func refreshMSAToken(refreshToken: String) async throws -> (accessToken: String, refreshToken: String)? {
         let form = [
             "grant_type": "refresh_token",
-            "client_id": MicrosoftAuthConstants.clientID,
+            "client_id": clientID,
             "scope": MicrosoftAuthConstants.scope,
             "refresh_token": refreshToken
         ]

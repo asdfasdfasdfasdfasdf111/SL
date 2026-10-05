@@ -73,7 +73,7 @@ struct MicrosoftLoginCardView: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 6)
 
-                // ── 验证页地址
+                // ── 验证页地址（展示用普通地址；打开按钮优先用带预填码的完整页）
                 Text(code.verificationURI)
                     .font(.system(size: 13, design: .monospaced))
                     .foregroundColor(.secondary)
@@ -91,7 +91,7 @@ struct MicrosoftLoginCardView: View {
             // ── 操作按钮行
             HStack(spacing: 10) {
                 if let code = viewModel.currentDeviceCode {
-                    Button(action: { openVerificationPage(code.verificationURI) }) {
+                    Button(action: { openVerificationPage(code.preferredVerificationURL) }) {
                         Label("打开页面", systemImage: "safari")
                     }
                     Button(action: { copyUserCode(code.userCode) }) {

@@ -18,6 +18,9 @@ enum UDK {
     static let selectedJavaPath = "selectedJavaPath"
     static let cachedJavaPaths = "cachedJavaPaths"
     static let accountMode = "accountMode"
+    /// 自定义微软登录 client id（「设置 → 账号」写入）。
+    /// ⚠️ 与 `MicrosoftAuthConstants.clientIDDefaultsKey` 是**同一个磁盘键**，改名等于丢配置。
+    static let microsoftClientID = "microsoftClientID"
 }
 
 /// 主题读取兼容层。
@@ -108,6 +111,14 @@ class LauncherSettings: ObservableObject {
     var accountMode: String {
         get { settings.accountMode }
         set { settings.accountMode = newValue }
+    }
+
+    /// 自定义微软登录 client id（空串 = 用内置回退值）。
+    /// 「设置 → 账号」页写入；`MicrosoftAuthService.clientID` 直接从 UserDefaults 读同一个键
+    /// （那个上下文是 nonisolated，拿不到本对象），因此这里只服务 UI 读写。
+    var microsoftClientID: String {
+        get { settings.microsoftClientID }
+        set { settings.microsoftClientID = newValue }
     }
 
     var cachedJavaPath: String? {

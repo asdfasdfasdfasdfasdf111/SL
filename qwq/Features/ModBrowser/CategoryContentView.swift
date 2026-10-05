@@ -60,11 +60,6 @@ struct CategoryContentView: View {
     /// 面板本身随头像的 ZStack 覆盖显示，不额外占卡片布局空间。
     @State private var showAccountPanel = false
 
-    /// 用户名输入框的估算高度：账号面板用它在头像下定位（面板盖在输入框与皮肤按钮上方）。
-    /// 输入框大字（14pt）+ 上下 padding（8×2）+ 提示行（caption2）≈ 44 + 16；取固定估算值，
-    /// 不追求像素级精确 —— 面板位置只是覆盖显示，偏一点不影响交互。
-    private var usernameFieldHeight: CGFloat { 60 }
-
     /// 启动页外层：用 GeometryReader 按窗口尺寸算出卡片 / 按钮 / 头像的尺寸，再交给内容层。
     /// 所有尺寸都从 `cardWidth` 一个基准按比例推出来，改一处即可整体缩放。
     private var launchView: some View {
@@ -154,24 +149,27 @@ struct CategoryContentView: View {
                 Text("未选择版本").font(.caption).foregroundColor(.secondary).padding(.top, 4)
             }
             avatarView(avatarSize: avatarSize)
-            // 账号面板（PCL.Mac 交互）：点头像弹出，列出「微软账号 / 离线账号」两个选项，
-            // 点击即切换 `settings.accountMode`；面板随头像的 ZStack 覆盖位置显示，
-            // 不额外占卡片布局（故上方 cardHeight 手工累加**不含**此项）。
-            // 自我保持：有可用微软账号时显示档案名，否则提示「登录微软账号」。
-            ZStack(alignment: .top) {
-                VStack(spacing: 16) {
-                    usernameField
-                    skinButton
-                }
+            // 头像下方区域：**同一位置两种内容二选一**（PCL.Mac 的 normalPanel ↔ accountListPanel）。
+            // 展开账号面板时用面板**替换**「用户名 + 皮肤按钮」，而不是叠在它们上面 ——
+            // 之前的写法按估算高度把面板 padding 到下面，估算偏小就压在皮肤按钮上（用户实测
+            // 「堆叠重合、没有间隙」）。换成同位替换后，面板与外层 VStack 的 16pt 间距就是
+            // 真实间隙，且两块内容高度接近，卡片不会被撑高。
+            Group {
                 if showAccountPanel {
                     accountPanel
-                        .padding(.top, usernameFieldHeight + 16)
                         .transition(.asymmetric(
-                            insertion: .scale(scale: 0.95).combined(with: .opacity),
-                            removal: .opacity
+                            insertion: .scale(scale: 0.85, anchor: .top).combined(with: .opacity),
+                            removal: .scale(scale: 0.95, anchor: .top).combined(with: .opacity)
                         ))
+                } else {
+                    VStack(spacing: 16) {
+                        usernameField
+                        skinButton
+                    }
+                    .transition(.opacity)
                 }
             }
+            .animation(.punchySpring, value: showAccountPanel)
             Spacer(minLength: 0)
             LaunchButton(
                 buttonWidth: buttonWidth,
@@ -303,103 +301,36 @@ struct CategoryContentView: View {
     }
 
     /// 账号切换面板（PCL.Mac 交互：点头像 → 弹账号列表 → 点项切换）。
-    /// 列出两个账号选项并高亮当前选中项；点击即切换 `settings.accountMode`。
-    /// 微软项：未登录 → 显示「登录微软账号」入口（点击关面板 + 发起设备码登录）；
-    ///        已登录 → 显示档案名 + 模态下的小字「正版账号」。
-    /// 离线项：显示当前离线用户名；点击切回离线模式。
-    /// 面板背景用 .regularMaterial + 描边，视觉与左卡片一致；宽约 200pt。
+    /// 两行账号项（微软 / 离线），当前选中的打勾；点击即切换 `settings.accountMode`。
+    /// 微软项按登录状态机变脸：未登录=登录入口、等待授权=禁用并提示、失败=重试、已登录=档案名。
+    /// 版式与左卡片同料（`.regularMaterial` + 细描边），宽度对齐卡片内元素。
     private var accountPanel: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            // ── 微软账号
-            Button(action: {
-                withAnimation(.punchySpring) { showAccountPanel = false }
-                if case .signedIn = microsoftLogin.phase {
-                    settings.accountMode = "microsoft"
-                } else {
-                    // 未登录：关面板，弹设备码登录卡片（覆盖层在 ZStack 最上层）
-                    microsoftLogin.startLogin()
-                }
-            }) {
-                HStack(spacing: 10) {
-                    Image(systemName: "person.fill")
-                        .font(.system(size: 15))
-                        .foregroundColor(settings.accountMode == "microsoft" ? theme.accentColor : .secondary)
-                        .frame(width: 22)
-                    VStack(alignment: .leading, spacing: 2) {
-                        if case .signedIn(let account) = microsoftLogin.phase {
-                            Text(account.name)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(.primary)
-                                .lineLimit(1)
-                            Text("正版账号")
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                        } else if case .failed(let message) = microsoftLogin.phase {
-                            Text("重试登录")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(.primary)
-                            Text(message)
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                        } else {
-                            Text("微软账号登录")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(.primary)
-                            Text("正版 · 在线皮肤")
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    Spacer(minLength: 4)
-                    if settings.accountMode == "microsoft" {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(theme.accentColor)
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+        VStack(spacing: 2) {
+            accountRow(
+                icon: "person.badge.key.fill",
+                title: microsoftRowTitle,
+                subtitle: microsoftRowSubtitle,
+                selected: settings.accountMode == "microsoft",
+                enabled: !isWaitingForMicrosoftCode,
+                action: selectMicrosoftAccount
+            )
 
-            Divider().padding(.horizontal, 4)
+            Divider().padding(.horizontal, 6)
 
-            // ── 离线账号
-            Button(action: {
-                settings.accountMode = "offline"
-                withAnimation(.punchySpring) { showAccountPanel = false }
-            }) {
-                HStack(spacing: 10) {
-                    Image(systemName: "person.crop.circle")
-                        .font(.system(size: 15))
-                        .foregroundColor(settings.accountMode == "offline" ? theme.accentColor : .secondary)
-                        .frame(width: 22)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(settings.offlineUsername.isEmpty ? "离线账号" : settings.offlineUsername)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.primary)
-                            .lineLimit(1)
-                        Text("离线 · 本地皮肤")
-                            .font(.system(size: 10))
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer(minLength: 4)
-                    if settings.accountMode == "offline" {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(theme.accentColor)
-                    }
+            accountRow(
+                icon: "person.crop.circle.fill",
+                title: settings.offlineUsername.isEmpty ? "离线账号" : settings.offlineUsername,
+                subtitle: "离线 · 本地皮肤",
+                selected: settings.accountMode == "offline",
+                enabled: true,
+                action: {
+                    settings.accountMode = "offline"
+                    withAnimation(.punchySpring) { showAccountPanel = false }
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            )
         }
         .padding(6)
-        .frame(width: 210)
+        .frame(width: 216)
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(.regularMaterial)
@@ -409,6 +340,92 @@ struct CategoryContentView: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(theme.accentColor.opacity(0.2), lineWidth: 1)
         )
+    }
+
+    /// 面板里的单行账号项：图标 + 标题/副标题 + 选中勾。
+    /// `enabled: false` 时整行灰掉且不响应点击（用于「等浏览器授权」期间）。
+    private func accountRow(
+        icon: String,
+        title: String,
+        subtitle: String,
+        selected: Bool,
+        enabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: { if enabled { action() } }) {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 15))
+                    .foregroundColor(selected ? theme.accentColor : .secondary)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(enabled ? .primary : .secondary)
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(theme.accentColor)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+
+    /// 是否正在等用户在浏览器完成授权（面板的微软项此时禁用）。
+    private var isWaitingForMicrosoftCode: Bool {
+        if case .waitingForCode = microsoftLogin.phase { return true }
+        return false
+    }
+
+    /// 用户是否已填过自定义 client id。没填时内置回退值已被微软下线，
+    /// 面板上先给出「去设置页填」的提示，省得点一次登录才看到报错。
+    private var isClientIDConfigured: Bool {
+        MicrosoftAuthService.clientID != MicrosoftAuthConstants.fallbackClientID
+    }
+
+    private var microsoftRowTitle: String {
+        switch microsoftLogin.phase {
+        case .signedIn(let account): return account.name
+        case .waitingForCode: return "等待浏览器授权…"
+        case .failed: return "重试登录"
+        case .idle: return "登录微软账号"
+        }
+    }
+
+    private var microsoftRowSubtitle: String {
+        switch microsoftLogin.phase {
+        case .signedIn: return "正版账号"
+        case .waitingForCode: return "已在浏览器打开验证页"
+        case .failed(let message): return message
+        case .idle: return isClientIDConfigured ? "正版 · 在线皮肤" : "需先在「设置 → 账号」填应用 id"
+        }
+    }
+
+    /// 点微软项：已登录 → 切到微软模式；正等授权 → 无操作（行已禁用）；
+    /// 其余（未登录 / 上次失败）→ 收面板并重新发起设备码登录。
+    private func selectMicrosoftAccount() {
+        switch microsoftLogin.phase {
+        case .signedIn:
+            settings.accountMode = "microsoft"
+            withAnimation(.punchySpring) { showAccountPanel = false }
+        case .waitingForCode:
+            break
+        case .failed, .idle:
+            withAnimation(.punchySpring) { showAccountPanel = false }
+            microsoftLogin.startLogin()
+        }
     }
 
     /// 日志面板：仅在 `showLogView` 且确有会话时渲染内容，否则整块从下方 300pt 处淡出。
