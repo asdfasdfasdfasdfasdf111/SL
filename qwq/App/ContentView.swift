@@ -91,6 +91,10 @@ struct ContentView: View {
     @ViewBuilder
     private var mainContent: some View {
         ZStack {
+            // 底层：流动渐变氛围光（橙/粉/紫暖色，15s 周期漂移，见 UI/LaunchBackground.swift）
+            LaunchBackground()
+            // 中层：毛玻璃（behindWindow）—— 模糊下面的渐变，并透过窗口看桌面。
+            // 渐变被毛玻璃压到很低亮度，文字可读性不受影响（观感验收的落地方式）。
             BlurView(material: .fullScreenUI, blendingMode: .behindWindow).ignoresSafeArea()
                 .onDrop(of: [.fileURL], isTargeted: $interaction.isDropTargeted) { providers in
                     return dropInstall.handle(providers: providers)
