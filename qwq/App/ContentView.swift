@@ -93,13 +93,11 @@ struct ContentView: View {
         ZStack {
             // 底层：流动渐变氛围光（橙/粉/紫暖色，15s 周期漂移，见 UI/LaunchBackground.swift）
             LaunchBackground()
-            // 中层：毛玻璃（behindWindow）—— 模糊下面的渐变，并透过窗口看桌面。
-            // 渐变被毛玻璃压到很低亮度，文字可读性不受影响（观感验收的落地方式）。
-            // ⚠️ 材质语义（HIG《Materials》：`Choose materials and effects based on semantic
-            // meaning and recommended usage.`）：这里是**窗口内容底**，语义对应
-            // `underWindowBackground`；此前用 `.fullScreenUI`（那是给全屏 UI 覆盖层的深色重材质），
-            // 结果整窗压黑、上面的玻璃面板和背景之间没有层次（用户：「上面这个毛玻璃实在是太黑了」）。
-            BlurView(material: .fullScreenUI, blendingMode: .withinWindow).ignoresSafeArea()
+            // ⚠️ 2026-10-06 用户要求「毛玻璃全都要透明」：这里原本又叠了一层 `.fullScreenUI`
+            // 深色材质，把渐变整体压暗（观感发黑）。现直接去掉该层，只留渐变本身 ——
+            // 各面板/方块各自用 BlurView 做局部玻璃，整体才真正透亮。
+            // 拖放落点随之挂到渐变层上（作用范围同为整窗）。
+            LaunchBackground()
                 .onDrop(of: [.fileURL], isTargeted: $interaction.isDropTargeted) { providers in
                     return dropInstall.handle(providers: providers)
                 }

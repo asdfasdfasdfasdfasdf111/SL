@@ -70,7 +70,7 @@ private struct TaskPillContent: View {
             .padding(.vertical, 12)
             .background(
                 RoundedRectangle(cornerRadius: 20)
-                    .fill(.ultraThinMaterial)
+                    .fill(Color.white.opacity(0.08))
                     .shadow(color: .black.opacity(0.2), radius: 10)
                     .overlay(
                         RoundedRectangle(cornerRadius: 20)

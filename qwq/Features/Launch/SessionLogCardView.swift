@@ -61,7 +61,7 @@ struct SessionLogCardView: View {
                 }
                 // 高度由外部传入而非自适应：日志区不能把卡片越撑越高。
                 .frame(height: logCardHeight)
-                .background(RoundedRectangle(cornerRadius: 8).fill(.ultraThinMaterial))
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.08)))
                 .onChange(of: session.logs.count) { _ in
                     // ⚠️ onChange 处于视图更新事务中，同步 scrollTo 会强制 layout，
                     // 触发 AppKit "It's not legal to call -layoutSubtreeIfNeeded..." 布局递归警告；
@@ -75,6 +75,6 @@ struct SessionLogCardView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .top)
-        .background(RoundedRectangle(cornerRadius: 16).fill(.regularMaterial).shadow(radius: 4))
+        .background(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(0.05)).shadow(radius: 4))
     }
 }

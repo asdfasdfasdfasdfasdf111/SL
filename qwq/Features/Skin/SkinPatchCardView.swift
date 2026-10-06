@@ -91,7 +91,7 @@ struct SkinPatchCardView: View {
         .background(
             RoundedRectangle(cornerRadius: 16)
                 // 用材质而非纯色：这张卡片浮在启动页任意内容之上，材质能保证任何底色下都可读
-                .fill(.regularMaterial)
+                .fill(Color.white.opacity(0.05))
                 .shadow(color: .black.opacity(0.2), radius: 20, x: 0, y: 8)
         )
         // **高光**：与 `LoaderSelectorCard` 的选中态同一套写法（accent 描边 2pt）。
@@ -252,7 +252,7 @@ struct SkinPatchCardView: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.secondary)
                     .frame(width: 96, height: 32)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(.ultraThinMaterial))
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.08)))
             }
             .buttonStyle(.plain)
         }

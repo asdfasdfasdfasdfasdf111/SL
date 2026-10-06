@@ -214,7 +214,12 @@ struct CategoryContentView: View {
             )
         }
         .frame(width: cardWidth, height: cardHeight)
-        .background(RoundedRectangle(cornerRadius: 24).fill(.regularMaterial).shadow(color: Color.black.opacity(0.28), radius: 10, y: 3))
+        // 透明玻璃（同上：深色模式下 regularMaterial 会发黑）
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(Color.white.opacity(0.05))
+                .shadow(color: Color.black.opacity(0.28), radius: 10, y: 3)
+        )
     }
 
     /// 头像：头 + 帽**两层**图片叠加渲染（帽子单独一层是为了正确处理半透明像素）。
@@ -262,7 +267,7 @@ struct CategoryContentView: View {
                 .padding(.vertical, 8)
                 .background(
                     RoundedRectangle(cornerRadius: 20)
-                        .fill(.ultraThinMaterial)
+                        .fill(Color.white.opacity(0.08))
                         .opacity(isUsernameFocused ? 1 : 0)
                 )
                 .foregroundColor(.primary)
@@ -318,7 +323,7 @@ struct CategoryContentView: View {
                 .padding(.vertical, 6)
                 .background(
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(.ultraThinMaterial)
+                        .fill(Color.white.opacity(0.08))
                 )
         }
         .buttonStyle(.plain)
@@ -358,7 +363,7 @@ struct CategoryContentView: View {
         .frame(width: 216)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(.regularMaterial)
+                .fill(Color.white.opacity(0.05))
                 .shadow(color: Color.black.opacity(0.28), radius: 10, y: 3)
         )
         .overlay(

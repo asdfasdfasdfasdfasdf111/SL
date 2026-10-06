@@ -1,7 +1,7 @@
 //
 //  DownloadDetailView.swift
 //  下载详情页：照抄 PCL.Mac InstallingView 布局（左侧信息面板 + 右侧任务卡片），
-//  全部换成启动器毛玻璃风格（RoundedRectangle(cornerRadius: 20).fill(.regularMaterial)）。
+//  全部换成启动器毛玻璃风格（RoundedRectangle(cornerRadius: 20).fill(Color.white.opacity(0.05))）。
 //
 
 import SwiftUI
@@ -57,7 +57,7 @@ struct DownloadDetailView: View {
             .frame(width: 176)
             .background(
                 RoundedRectangle(cornerRadius: 20)
-                    .fill(.regularMaterial)
+                    .fill(Color.white.opacity(0.05))
                     .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
             )
             // 卡片高度由三组数据决定并贴顶。
@@ -241,7 +241,7 @@ private struct DownloadTaskCard<Content: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(.regularMaterial)
+                .fill(Color.white.opacity(0.05))
                 .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
         )
         .scaleEffect(appearScale)

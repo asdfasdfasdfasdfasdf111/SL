@@ -97,7 +97,7 @@ struct RootOverlays: View {
                     .padding(.vertical, 16)
                     .background(
                         RoundedRectangle(cornerRadius: 14)
-                            .fill(.ultraThinMaterial)
+                            .fill(Color.white.opacity(0.08))
                             .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
                     )
                 }
@@ -112,7 +112,7 @@ struct RootOverlays: View {
             if navigation.isDownloadCircleVisible {
                 ZStack {
                     Circle()
-                        .fill(.ultraThinMaterial)
+                        .fill(Color.white.opacity(0.08))
                         .frame(width: Self.downloadCircleDiameter, height: Self.downloadCircleDiameter)
                         .overlay(
                             Circle()

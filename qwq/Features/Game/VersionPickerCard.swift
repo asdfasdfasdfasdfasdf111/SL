@@ -106,7 +106,7 @@ struct VersionPickerCard: View {
                                     .font(.system(size: 16, weight: .medium))
                                     .foregroundColor(.primary)
                                     .frame(width: 160, height: 40)
-                                    .background(RoundedRectangle(cornerRadius: 20).fill(.ultraThinMaterial).shadow(radius: 2))
+                                    .background(RoundedRectangle(cornerRadius: 20).fill(Color.white.opacity(0.08)).shadow(radius: 2))
                             }
                             .buttonStyle(.plain)
                         }
@@ -115,7 +115,12 @@ struct VersionPickerCard: View {
                 }
                 .padding(24)
                 .frame(minWidth: 280)
-                .background(RoundedRectangle(cornerRadius: 24).fill(.regularMaterial).shadow(color: .black.opacity(0.15), radius: 12, x: 0, y: 5))
+                // 透明玻璃（此前 `.regularMaterial` 在深色模式下是暗灰，压在渐变上发黑）
+                .background(
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .fill(Color.white.opacity(0.05))
+                        .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 5)
+                )
                 // 右上角 Java 选择入口。没有版本时不出现 —— 没版本可跑，选 Java 没意义。
                 .overlay(alignment: .topTrailing) {
                     if hasVersions {
@@ -131,7 +136,7 @@ struct VersionPickerCard: View {
                             }
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(RoundedRectangle(cornerRadius: 6).fill(.ultraThinMaterial))
+                            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.08)))
                         }
                         .buttonStyle(.plain)
                         // arrowEdge: .trailing 让气泡箭头指向右侧按钮，视觉上说明「从哪弹出来的」。
@@ -156,7 +161,7 @@ struct VersionPickerCard: View {
                             .background(
                                 RoundedRectangle(cornerRadius: 12)
                                     .stroke(theme.accentColor, lineWidth: 1)
-                                    .background(.ultraThinMaterial)
+                                    .background(Color.white.opacity(0.08))
                             )
                     }
                     .buttonStyle(.plain)
@@ -228,19 +233,20 @@ private struct VersionTile: View {
                         .renderingMode(.template)
                         .resizable()
                         .scaledToFit()
-                        .frame(height: 30)
-                        .foregroundStyle(.white.opacity(isSelected ? 1.0 : 0.75))
+                        // 宽字标（FORGE 长宽比 5.9:1）需要**按宽度**给空间，只给高度会让它极小。
+                        .frame(maxWidth: 84, maxHeight: 34)
+                        .foregroundStyle(.white.opacity(isSelected ? 1.0 : 0.8))
                 } else {
                     Image(systemName: "cube.fill")
-                        .font(.system(size: 22))
+                        .font(.system(size: 26))
                         .foregroundStyle(.white.opacity(0.5))
-                        .frame(height: 30)
+                        .frame(maxWidth: 84, maxHeight: 34)
                 }
             }
-            .frame(width: 104, height: 96)
+            .frame(width: 116, height: 106)
             .background(
-                BlurView(material: .underWindowBackground, blendingMode: .withinWindow)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.white.opacity(0.06))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)

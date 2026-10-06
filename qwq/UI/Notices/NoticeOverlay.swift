@@ -188,7 +188,7 @@ private struct NoticeCard: View {
         .padding(.vertical, 12)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(.ultraThinMaterial)
+                .fill(Color.white.opacity(0.08))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(accent.opacity(0.35), lineWidth: 1)
