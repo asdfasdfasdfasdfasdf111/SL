@@ -43,7 +43,7 @@
 | 9 | **Game** | 版本浏览与选择模块内核（`Module/`）+ 视图收口到 `ViewModels/DownloadCategoryViewModel` | ✅ | ❌ | 新增 `Module/` 模块内核 4 文件 + `README-Game.md`，`GameModule` 注册能力 `game.versionCatalog` / `game.versionFilter`，`GameVersionFilter` 改为 `VersionFilterUseCase` 适配器；`AppModuleBootstrap` 沿用未登记状态，故接线仍为未接 |
 | 10 | **Translation** | 翻译服务（`TranslationService`）与卡片翻译模型 | ❌ | ❌ | `TranslationService` 与 `CardTranslationModel` 尚未建模块 |
 | 11 | **Account / 兼容层** | `SLCore` 全域兼容层；含 **11 个单例** | ❌ | ❌ | `SLCore` 全域；含 **11 个单例** |
-| 12 | **UI** | 新建 `Notices` / `Shell` / `Modifiers`；`ViewComponents` 仍未归口 | 🔶 部分 | — | `Notices`、`Shell`、`Modifiers` 为新建；`ViewComponents` 仍未归口 |
+| 12 | **UI** | 收口完成：`Shell` / `Components` / `Effects` / `Notices` / `Modifiers` 五个子目录各司其职 | ✅ | — | 2026-10-06 补齐：散落文件归入 `Components/`（ViewComponents、VersionButton、TaskPill、SidebarHighlight、FlowLayout）与 `Effects/`（AnimationExtensions、ScrollBounceModifier、LaunchBackground、HorizontalScrollCatcher）；新增 `UI/README-UI.md` 写明目录职责与**玻璃约定**（一律极淡白、禁用深色材质，理由见该文件） |
 | 13 | **App** | 窗口壳与布局；已抽 4 个 ViewModel | 🔶 部分 | — | `ContentView` 已从大文件收口，已抽 4 个 ViewModel |
 | 14 | **Infra** | `Services` / `Models` / `SLCore/Utils` 未归口 | ❌ | ❌ | `Services`、`Models`、`SLCore/Utils` 未归口 |
 
