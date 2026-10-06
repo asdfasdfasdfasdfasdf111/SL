@@ -64,20 +64,23 @@ struct ModpackFolderPickerView: View {
                                 .font(.system(size: 12))
                                 .lineLimit(1)
                         }
-                        .foregroundColor(theme.accentColor)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
+                        // 统一按钮样式（用户要求）：**白框 + 毛玻璃 + 居中文字**。
+                        // 此前用 theme.accentColor（已中性化为 primary）+ 8% 填充 + 左对齐，
+                        // 既看不出"框"，文字也不居中，与其它按钮不是一套。
+                        .foregroundColor(.primary)
+                        .frame(maxWidth: .infinity)                     // 文字居中
+                        .padding(.vertical, 7)
                         .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(theme.accentColor.opacity(0.4), lineWidth: 1)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(theme.accentColor.opacity(0.08))
-                                )
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color.white.opacity(0.10))        // 毛玻璃（统一淡白）
                         )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(Color.white.opacity(0.35), lineWidth: 1)   // 白框
+                        )
+                        .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.plain)
-                    .padding(.leading, 6)
                 }
                 .fixedSize(horizontal: false, vertical: true)
             },
