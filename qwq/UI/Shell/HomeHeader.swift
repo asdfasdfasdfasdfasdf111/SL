@@ -48,11 +48,9 @@ struct HomeHeader: View {
             RoundedRectangle(cornerRadius: 18)
                 .fill(.ultraThinMaterial)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(0.15), radius: 15, x: 0, y: 10)
+        // 用户：只要阴影、不要颜色 —— 描边去掉，阴影照抄天气 App 左栏卡片
+        // （ModuleRow 同款：black 28% / r10 / y3）。
+        .shadow(color: .black.opacity(0.28), radius: 10, y: 3)
         .padding(.horizontal, 12)
         .padding(.top, 6)
         .padding(.bottom, 6)

@@ -218,7 +218,7 @@ struct CategoryContentView: View {
             )
         }
         .frame(width: cardWidth, height: cardHeight)
-        .background(RoundedRectangle(cornerRadius: 24).fill(.regularMaterial).shadow(radius: 12))
+        .background(RoundedRectangle(cornerRadius: 24).fill(.regularMaterial).shadow(color: Color.black.opacity(0.28), radius: 10, y: 3))
     }
 
     /// 头像：头 + 帽**两层**图片叠加渲染（帽子单独一层是为了正确处理半透明像素）。
@@ -268,7 +268,6 @@ struct CategoryContentView: View {
                     RoundedRectangle(cornerRadius: 20)
                         .fill(.ultraThinMaterial)
                         .opacity(isUsernameFocused ? 1 : 0)
-                        .overlay(RoundedRectangle(cornerRadius: 20).stroke(isUsernameFocused ? theme.accentColor : Color.clear, lineWidth: 1.5))
                 )
                 .foregroundColor(.primary)
                 .font(.system(size: 14, weight: .medium))
@@ -323,8 +322,7 @@ struct CategoryContentView: View {
                 .padding(.vertical, 6)
                 .background(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.accentColor, lineWidth: 1)
-                        .background(.ultraThinMaterial)
+                        .fill(.ultraThinMaterial)
                 )
         }
         .buttonStyle(.plain)
@@ -365,11 +363,11 @@ struct CategoryContentView: View {
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(.regularMaterial)
-                .shadow(color: Color.black.opacity(0.15), radius: 8)
+                .shadow(color: Color.black.opacity(0.28), radius: 10, y: 3)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(theme.accentColor.opacity(0.2), lineWidth: 1)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
         )
     }
 
@@ -387,7 +385,7 @@ struct CategoryContentView: View {
             HStack(spacing: 10) {
                 Image(systemName: icon)
                     .font(.system(size: 15))
-                    .foregroundColor(selected ? theme.accentColor : .secondary)
+                    .foregroundColor(selected ? Color.primary : .secondary)
                     .frame(width: 22)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
@@ -403,7 +401,7 @@ struct CategoryContentView: View {
                 if selected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.accentColor)
+                        .foregroundColor(.primary)
                 }
             }
             .padding(.horizontal, 10)
