@@ -133,14 +133,21 @@ struct ModDetailView: View {
             // 下载按钮：初始在右下角，圆按钮出现后动画左移
             if !viewModel.selectedVersion.isEmpty {
                 Button(action: { startDownload() }) {
+                    // 用户定稿：**白框 + 中间透明毛玻璃 + 两个字的文字**。
+                    // 此前是 `.fill(theme.accentColor)`：强调色中性化成白色后，这里是
+                    // 「白底 + 白字」—— 两个字直接看不见了。
                     Text("下载")
                         .font(.system(size: 24, weight: .bold))
-                        .foregroundColor(.white)
+                        .foregroundColor(.primary)
                         .frame(width: 120)
                         .padding(.vertical, 16)
                         .background(
-                            RoundedRectangle(cornerRadius: 24)
-                                .fill(theme.accentColor)
+                            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                                .fill(Color.white.opacity(0.10))                 // 透明毛玻璃
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                                .stroke(Color.white.opacity(0.55), lineWidth: 1.5)  // 白框
                         )
                 }
                 .buttonStyle(.plain)

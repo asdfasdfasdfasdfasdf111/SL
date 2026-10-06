@@ -213,9 +213,17 @@ struct SkinPatchCardView: View {
                     Text("下载")
                         .font(.system(size: 13, weight: .medium))
                 }
-                .foregroundColor(.white)
+                .foregroundColor(.primary)
                 .frame(width: 96, height: 32)
-                .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
+                // 同上：白框 + 透明毛玻璃（避免"白底白字"看不见）
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.white.opacity(0.10))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.white.opacity(0.55), lineWidth: 1.2)
+                )
             }
             .buttonStyle(.plain)
             .scaleEffect(actionScale)
@@ -238,9 +246,17 @@ struct SkinPatchCardView: View {
                     Text("完成")
                         .font(.system(size: 13, weight: .medium))
                 }
-                .foregroundColor(.white)
+                .foregroundColor(.primary)
                 .frame(width: 96, height: 32)
-                .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
+                // 同上：白框 + 透明毛玻璃（避免"白底白字"看不见）
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.white.opacity(0.10))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.white.opacity(0.55), lineWidth: 1.2)
+                )
             }
             .buttonStyle(.plain)
 
