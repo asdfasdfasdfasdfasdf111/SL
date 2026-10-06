@@ -103,8 +103,9 @@ struct DownloadDetailView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // 整页毛玻璃背景，且与窗口背景融合（behindWindow）—— 所以这里不需要再铺底色。
-        .background(BlurView(material: .fullScreenUI, blendingMode: .behindWindow))
+        // ⚠️ 2026-10-07 用户要求：**下载页背景不要毛玻璃**。原实现在整页铺了一层
+        // `BlurView(.fullScreenUI, .behindWindow)`，在深色模式下表现为一整片黑色毛玻璃，
+        // 与页面内各卡片叠在一起显脏。改为不加任何底色，直接透出整窗渐变。
         // 顶部导航由 ContentView 保持；再次点击右下角按钮可返回分类内容。
     }
 
