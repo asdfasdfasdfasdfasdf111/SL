@@ -61,43 +61,39 @@ struct CategoryContentView: View {
     @State private var showAccountPanel = false
 
     // MARK: - 启动卡片的自适应缩放基准
+    //
+    //  ⚠️ 2026-10-06 重写缩放口径（旧口径作废）：
+    //  旧口径把「整窗设计尺寸 900×660」当基准（scale = min(窗高/660, 窗宽/900)），
+    //  但内容区只有「窗口高度 − 顶部 Tab 栏」，而卡片自身设计高又只有 483 ——
+    //  两个偏差叠在一起，卡片永远只填满约 73% 的可用高度，剩下的一截空白被用户
+    //  称为「底座」；而且高度比恒小于宽度比，**只拉宽窗口时缩放完全不变**（实测
+    //  680→1200 宽度、高度固定 500，缩放始终 0.50）。
+    //
+    //  新口径：缩放相对**卡片自己的设计尺寸**对该页**可用区域**取小值 ——
+    //  卡片由此始终填满可用高度，窗口变大卡片就变大，不再有底座。
+    //  上限 1.25：窗口很大时不让卡片无限长大（超出后只是留白）。
+    private static let maxCardScale: CGFloat = 1.25
 
-    /// 缩放基准窗口高度：与 Scene 的 `.defaultSize(height: 660)` 对齐 —— 默认窗口下卡片按 1:1 渲染。
-    private static let designWindowHeight: CGFloat = 660
-    /// 缩放基准窗口宽度：默认宽度下卡片按 1:1 渲染（对应启动页左卡 + 日志区的横向排布）。
-    private static let designWidth: CGFloat = 900
-    // ⚠️ 不再设缩放上下限（2026-10-06）：此前钳在 0.68…1.15，窗口小于设计尺寸时
-    // 卡片被钳在固定值「纹丝不动」，拉过阈值才突然开始缩放 —— 用户反馈「把那个地方
-    // 当成了底座」「不是完全的自适应」。改为全程连续：任何窗口尺寸下都按比例缩放。
-
-    /// 启动页外层：用 GeometryReader 按窗口尺寸算出卡片 / 按钮 / 头像的尺寸，再交给内容层。
-    /// 所有尺寸都从 `cardWidth` 一个基准按比例推出来，改一处即可整体缩放。
-    ///
-    /// **整卡缩放（2026-10-05）**：此前 `cardWidth` 写死 280，窗口拉大拉小卡片都纹丝不动
-    /// （用户报告：「左侧卡片不会自我缩放」）。现在按窗口高度相对设计基准等比缩放整张卡片。
-    /// 为什么是给 `.scaleEffect` 一个比例、而不是直接把 `cardWidth` 改小：卡片内部的字号、
-    /// 内边距、按钮高度都是固定值，只缩外框会让内容溢出并错位 —— 必须整块缩放才不变形。
-    /// 比例同时夹在 `minCardScale…maxCardScale`：窗口很矮时不至于缩到看不清，
-    /// 窗口很高时也不让卡片一直长下去（再大只是留白，撑满反而难看）。
+    /// 启动页外层：按**可用区域 ÷ 卡片设计尺寸**算出缩放，再交给内容层。
+    /// 卡片内部字号/间距都是定值，必须整块等比缩放才不变形（这也是仍用 scaleEffect
+    /// 的原因：它只缩放渲染、不改布局语义，配合下方按缩放后尺寸的 frame 即可）。
     private var launchView: some View {
         GeometryReader { geometry in
-            // ⚠️ 自适应必须同时看宽和高：此前只按高度缩放，窗口变宽时左栏纹丝不动
-            // （用户反馈「根本没有自适应」）。改为按「高度比例 / 宽度比例」取较小值，
-            // 保证整卡在任何宽高下都完整落在窗口内、且等比放大/缩小。
-            let scaleByHeight = geometry.size.height / Self.designWindowHeight
-            let scaleByWidth = geometry.size.width / Self.designWidth
-            // 完全自适应：不夹上下限，任何窗口尺寸都连续缩放（用户：不要「底座」）。
-            let cardScale = min(scaleByHeight, scaleByWidth)
             let cardWidth: CGFloat = 280
             let buttonWidth = cardWidth * 0.7
             let avatarSize = buttonWidth * 0.7
             let logCardHeight = geometry.size.height * 0.32
-            // 固定卡片高度：防止 Spacer 吸收 HStack 额外高度导致拉伸。
-            // ⚠️ 这个数字是各子元素高度的**手工累加**（上下留白 + 头像 + 间距 + 用户名框 +
-            // 启动按钮 + 预留日志位 + 皮肤按钮 + 间距 + 版本文案）——
-            // 增删卡片内元素时必须同步改它，否则卡片会被内容撑开或压扁。
-            // 这里算的是**设计尺寸**（缩放前）；整卡缩放由 `cardScale` 在内容层统一施加。
+            // 卡片设计高度 = 各子元素高度累加（与卡片内部布局一一对应）：
+            // 上下留白 + 头像 + 间距 + 用户名框 + 启动按钮 + 日志位 + 皮肤按钮 + 间距 + 版本文案
             let cardHeight: CGFloat = 20 + avatarSize + 12 + 44 + 50 + 80 + 64 + 4 + 28 + 44
+
+            // 可用区域 = 内容区扣掉 launchContent 的左右/上下 padding(20+20)。
+            let availableWidth = max(geometry.size.width - 40, 1)
+            let availableHeight = max(geometry.size.height - 40, 1)
+            let scaleByHeight = availableHeight / cardHeight
+            let scaleByWidth = availableWidth / cardWidth
+            let cardScale = min(Self.maxCardScale, min(scaleByHeight, scaleByWidth))
+
             launchContent(cardWidth: cardWidth, buttonWidth: buttonWidth, avatarSize: avatarSize, logCardHeight: logCardHeight, cardHeight: cardHeight, cardScale: cardScale)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

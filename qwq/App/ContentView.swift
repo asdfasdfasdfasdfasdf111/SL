@@ -95,7 +95,11 @@ struct ContentView: View {
             LaunchBackground()
             // 中层：毛玻璃（behindWindow）—— 模糊下面的渐变，并透过窗口看桌面。
             // 渐变被毛玻璃压到很低亮度，文字可读性不受影响（观感验收的落地方式）。
-            BlurView(material: .fullScreenUI, blendingMode: .withinWindow).ignoresSafeArea()
+            // ⚠️ 材质语义（HIG《Materials》：`Choose materials and effects based on semantic
+            // meaning and recommended usage.`）：这里是**窗口内容底**，语义对应
+            // `underWindowBackground`；此前用 `.fullScreenUI`（那是给全屏 UI 覆盖层的深色重材质），
+            // 结果整窗压黑、上面的玻璃面板和背景之间没有层次（用户：「上面这个毛玻璃实在是太黑了」）。
+            BlurView(material: .underWindowBackground, blendingMode: .withinWindow).ignoresSafeArea()
                 .onDrop(of: [.fileURL], isTargeted: $interaction.isDropTargeted) { providers in
                     return dropInstall.handle(providers: providers)
                 }

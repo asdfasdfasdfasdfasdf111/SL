@@ -41,5 +41,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             resized.unlockFocus()
             NSApp.applicationIconImage = resized
         }
+        // 开发期 UI 自拍（仅 SL_SNAPSHOT_DIR 环境变量存在时生效，产品运行不参与）。
+        SnapshotHarness.runIfRequested()
     }
 }
