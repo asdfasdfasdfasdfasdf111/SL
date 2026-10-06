@@ -95,7 +95,7 @@ struct ContentView: View {
             LaunchBackground()
             // 中层：毛玻璃（behindWindow）—— 模糊下面的渐变，并透过窗口看桌面。
             // 渐变被毛玻璃压到很低亮度，文字可读性不受影响（观感验收的落地方式）。
-            BlurView(material: .fullScreenUI, blendingMode: .behindWindow).ignoresSafeArea()
+            BlurView(material: .fullScreenUI, blendingMode: .withinWindow).ignoresSafeArea()
                 .onDrop(of: [.fileURL], isTargeted: $interaction.isDropTargeted) { providers in
                     return dropInstall.handle(providers: providers)
                 }
@@ -114,7 +114,7 @@ struct ContentView: View {
                     }
                     .clipped()
                 }
-                .background(BlurView(material: .fullScreenUI, blendingMode: .behindWindow))
+                .background(BlurView(material: .fullScreenUI, blendingMode: .withinWindow))
             }
         }
     }
