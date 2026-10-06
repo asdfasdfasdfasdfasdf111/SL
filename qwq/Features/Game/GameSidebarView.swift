@@ -46,11 +46,12 @@ struct GameSidebarView: View {
         // 高亮条：圆角矩形 + 细描边，靠 offset 位移到当前行；动画挂在 offset 上，
         // 因此只有「位置变化」会被动画，颜色变化不会。
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.accentColor.opacity(0.1))
+            // 用户要求：文字按钮 = **白框 + 毛玻璃**。选中高亮块同理（不再用强调色）。
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.white.opacity(0.10))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.accentColor.opacity(0.25), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.white.opacity(0.35), lineWidth: 1)
                 )
                 .padding(.horizontal, 6)
                 .frame(height: 30)
@@ -70,20 +71,27 @@ struct GameSidebarView: View {
             if section == .game { onSelect(section, .release) }
             else { onSelect(section, nil) }
         }) {
-            HStack(spacing: 8) {
-                Image(systemName: section.systemImage)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(selectedSection == section ? theme.accentColor : .secondary)
-                    .frame(width: 18)
-                Text(section.rawValue)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(selectedSection == section ? .primary : .secondary)
-                Spacer()
-                // 只有「游戏」这节显示展开箭头。该节目前恒展开，所以箭头是静态装饰。
-                if section == .game {
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(.secondary)
+            // 用户要求「中间是文字」：图标+文字整体**居中**；
+            // 展开箭头单独钉在右侧，不参与居中（否则箭头会把文字挤偏）。
+            ZStack {
+                HStack(spacing: 8) {
+                    Image(systemName: section.systemImage)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(selectedSection == section ? .primary : .secondary)
+                        .frame(width: 18)
+                    Text(section.rawValue)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(selectedSection == section ? .primary : .secondary)
+                }
+                .frame(maxWidth: .infinity)
+                HStack {
+                    Spacer(minLength: 0)
+                    // 只有「游戏」这节显示展开箭头。该节目前恒展开，所以箭头是静态装饰。
+                    if section == .game {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
             .padding(.horizontal, 16)
