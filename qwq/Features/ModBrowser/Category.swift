@@ -54,8 +54,6 @@ enum CategoryKind: Hashable {
     case online
     /// 「赞助」：静态赞助卡页。
     case sponsor
-    /// 「个性化」→ `ColorPickerView`
-    case appearance
 }
 
 extension Category {
@@ -70,7 +68,6 @@ extension Category {
         Category(name: "游戏", kind: .game, systemImage: "gamecontroller", filter: "游戏"),
         Category(name: "下载", kind: .download, systemImage: "arrow.down.circle", filter: nil),
         Category(name: "联机", kind: .online, systemImage: "wifi", filter: nil),
-        Category(name: "赞助", kind: .sponsor, systemImage: "heart", filter: nil),
-        Category(name: "个性化", kind: .appearance, systemImage: "paintpalette", filter: nil)
+        Category(name: "赞助", kind: .sponsor, systemImage: "heart", filter: nil)
     ]
 }

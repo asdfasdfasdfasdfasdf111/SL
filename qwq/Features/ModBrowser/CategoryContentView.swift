@@ -64,6 +64,8 @@ struct CategoryContentView: View {
 
     /// 缩放基准窗口高度：与 Scene 的 `.defaultSize(height: 660)` 对齐 —— 默认窗口下卡片按 1:1 渲染。
     private static let designWindowHeight: CGFloat = 660
+    /// 缩放基准窗口宽度：默认宽度下卡片按 1:1 渲染（对应启动页左卡 + 日志区的横向排布）。
+    private static let designWidth: CGFloat = 900
     /// 缩放下限：窗口很矮（最小高度 500）时卡片缩到 0.68，再小字就看不清了。
     private static let minCardScale: CGFloat = 0.68
     /// 缩放上限：窗口拉很高时最多放到 1.15 倍，避免卡片跟着无限长大。
@@ -80,8 +82,12 @@ struct CategoryContentView: View {
     /// 窗口很高时也不让卡片一直长下去（再大只是留白，撑满反而难看）。
     private var launchView: some View {
         GeometryReader { geometry in
-            let cardScale = min(Self.maxCardScale,
-                                max(Self.minCardScale, geometry.size.height / Self.designWindowHeight))
+            // ⚠️ 自适应必须同时看宽和高：此前只按高度缩放，窗口变宽时左栏纹丝不动
+            // （用户反馈「根本没有自适应」）。改为按「高度比例 / 宽度比例」取较小值，
+            // 保证整卡在任何宽高下都完整落在窗口内、且等比放大/缩小。
+            let scaleByHeight = geometry.size.height / Self.designWindowHeight
+            let scaleByWidth = geometry.size.width / Self.designWidth
+            let cardScale = min(Self.maxCardScale, max(Self.minCardScale, min(scaleByHeight, scaleByWidth)))
             let cardWidth: CGFloat = 280
             let buttonWidth = cardWidth * 0.7
             let avatarSize = buttonWidth * 0.7
@@ -485,8 +491,6 @@ struct CategoryContentView: View {
     var body: some View {
         Group {
             switch category.kind {
-            case .appearance:
-                ColorPickerView().frame(maxWidth: .infinity, maxHeight: .infinity)
             case .launcher:
                 launchView
             case .game:

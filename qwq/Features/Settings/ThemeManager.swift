@@ -43,10 +43,13 @@ class ThemeManager: ObservableObject {
     ///（很多视图把它当 `@ObservedObject` 的默认值）。不要再新增第二个实例。
     static let shared = ThemeManager()
 
-    /// 强调色：读写均转发到唯一存储点，本类型不参与持久化。
+    /// 强调色：**已按用户要求删掉可配置强调色**（个性化页移除）。
+    /// 所有读取方统一落到系统强调色（`.accentColor`，跟随系统外观设置），
+    /// 不再是存储里那个固定 `.blue`。写入口保留兼容（无 UI 会触发），
+    /// 但写入不再影响任何读取方。
     var accentColor: Color {
-        get { AppSettingsStore.shared.accentColor }
-        set { AppSettingsStore.shared.accentColor = newValue }
+        get { Color.accentColor }
+        set { }
     }
 
     /// 存储点变更通知的桥接订阅，使 `@ObservedObject var theme = ThemeManager.shared`

@@ -23,9 +23,6 @@ struct SettingsScene: View {
         //（规范化迁移期入口）。
         // 固定宽度取三页内容的最大自然宽（560），高度给版本目录页留够计划列表展示空间。
         TabView {
-            ColorPickerView()
-                .tabItem { Label("个性化", systemImage: "paintpalette") }
-
             AccountSettingsView()
                 .tabItem { Label("账号", systemImage: "person.crop.circle") }
 

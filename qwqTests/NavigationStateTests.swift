@@ -63,9 +63,9 @@ final class NavigationStateTests: XCTestCase {
         let state = NavigationState()
         state.selectedCategory = state.categories[2]
 
-        // 构造一个不在 `Category.all` 中的任意项（kind 取 .appearance 即可——
+        // 构造一个不在 `Category.all` 中的任意项（kind 取 .sponsor 即可——
         // 选中态回落只看 firstIndex(of:) 的实例相等，kind 与本断言无关）。
-        state.selectedCategory = Category(name: "不存在的分类", kind: .appearance, systemImage: "questionmark", filter: nil)
+        state.selectedCategory = Category(name: "不存在的分类", kind: .sponsor, systemImage: "questionmark", filter: nil)
 
         XCTAssertEqual(state.selectedIndex, 0)
     }
