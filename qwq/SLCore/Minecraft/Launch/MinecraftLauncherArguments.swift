@@ -179,7 +179,13 @@ extension MinecraftLauncher {
                 urls.append(instance.minecraftDirectory.librariesURL.appendingPathComponent(artifact.path))
             }
         }
-        urls.append(instance.runningDirectory.appendingPathComponent("\(instance.name).jar"))
+        // 用解析后的有效 JAR：加载器实例的客户端本体常在父版本目录里；
+        // 若仍按实例目录硬拼，classpath 会含一个不存在的条目，JVM 静默忽略后进游戏才崩。
+        let clientJAR = ClientJARResolver.resolve(runningDirectory: instance.runningDirectory,
+                                                 name: instance.name,
+                                                 versionsRoot: instance.minecraftDirectory.versionsURL)
+            ?? instance.runningDirectory.appendingPathComponent("\(instance.name).jar")
+        urls.append(clientJAR)
 
         return urls.map { $0.path }.joined(separator: ":")
     }

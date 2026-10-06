@@ -160,11 +160,26 @@ private func slLaunchInternal(
     // 带 inheritsFrom 的加载器实例其清单合并后沿用父级 clientDownload.sha1
     // （ClientManifest.merge 保留父级字段），而版本目录内的 JAR 会被加载器安装器就地改写，
     // 哈希必然不同；按 sha1 判定会把本可正常启动的加载器实例判为损坏（LAUNCH_FLOW 风险点 R6）。
-    let clientJAR = instance.runningDirectory.appendingPathComponent("\(instance.name).jar")
-    if let reason = FileChecker(minSize: 1).check(clientJAR) {
-        log("客户端 JAR 校验失败：\(clientJAR.path)（\(reason)）")
+    // ⚠️ 不能用 `<实例目录>/<实例名>.jar` 硬拼：加载器实例常常自身无 jar、
+    // 客户端本体在 `inheritsFrom` 的父版本目录里（见 ClientJARResolver 说明）。
+    let expectedJAR = instance.runningDirectory.appendingPathComponent("\(instance.name).jar")
+    let resolvedJAR = ClientJARResolver.resolve(runningDirectory: instance.runningDirectory,
+                                               name: instance.name,
+                                               versionsRoot: instance.minecraftDirectory.versionsURL)
+    if let jar = resolvedJAR, let reason = FileChecker(minSize: 1).check(jar) {
+        log("客户端 JAR 校验失败：\(jar.path)（\(reason)）")
         completion(nil, .failure(LaunchError.fileVerificationFailed(
-            reason: "客户端 JAR 缺失或损坏：\(clientJAR.path)（\(reason)）。请在「下载」页重新安装该版本。"
+            reason: "客户端 JAR 缺失或损坏：\(jar.path)（\(reason)）。请在「下载」页重新安装该版本。"
+        )))
+        return
+    }
+    if resolvedJAR == nil {
+        // 自身与父链都没有：明确说清「缺的是客户端本体、不是 Java」，并给出两个解法。
+        log("客户端 JAR 缺失（含 inheritsFrom 父链）：\(expectedJAR.path)")
+        completion(nil, .failure(LaunchError.fileVerificationFailed(
+            reason: "这个版本缺少客户端本体（\(expectedJAR.lastPathComponent)），"
+                  + "它既不在版本目录里，也不在其继承的父版本目录里。"
+                  + "请在「下载」页重新安装该版本，或改用已完整的版本。"
         )))
         return
     }
