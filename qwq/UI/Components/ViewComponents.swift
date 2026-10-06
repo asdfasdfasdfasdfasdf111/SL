@@ -107,7 +107,7 @@ struct SponsorCard: View {
         }
         .padding()
         .frame(width: 180, height: 180)
-        .background(RoundedRectangle(cornerRadius: 20).fill(Color.white.opacity(0.05)).shadow(radius: 6))
+        .background(RoundedRectangle(cornerRadius: 20).fill(Color.white.opacity(0.09)).shadow(radius: 6))
     }
 }
 
@@ -130,7 +130,7 @@ struct ThanksCard: View {
         }
         .padding()
         .frame(width: 180, height: 180)
-        .background(RoundedRectangle(cornerRadius: 20).fill(Color.white.opacity(0.05)).shadow(radius: 6))
+        .background(RoundedRectangle(cornerRadius: 20).fill(Color.white.opacity(0.09)).shadow(radius: 6))
     }
 }
 

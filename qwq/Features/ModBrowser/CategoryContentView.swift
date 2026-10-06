@@ -217,7 +217,7 @@ struct CategoryContentView: View {
         // 透明玻璃（同上：深色模式下 regularMaterial 会发黑）
         .background(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(Color.white.opacity(0.05))
+                .fill(Color.white.opacity(0.09))
                 .shadow(color: Color.black.opacity(0.28), radius: 10, y: 3)
         )
     }
@@ -267,7 +267,7 @@ struct CategoryContentView: View {
                 .padding(.vertical, 8)
                 .background(
                     RoundedRectangle(cornerRadius: 20)
-                        .fill(Color.white.opacity(0.08))
+                        .fill(Color.white.opacity(0.14))
                         .opacity(isUsernameFocused ? 1 : 0)
                 )
                 .foregroundColor(.primary)
@@ -323,7 +323,7 @@ struct CategoryContentView: View {
                 .padding(.vertical, 6)
                 .background(
                     RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.white.opacity(0.08))
+                        .fill(Color.white.opacity(0.14))
                 )
         }
         .buttonStyle(.plain)
@@ -363,7 +363,7 @@ struct CategoryContentView: View {
         .frame(width: 216)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.05))
+                .fill(Color.white.opacity(0.09))
                 .shadow(color: Color.black.opacity(0.28), radius: 10, y: 3)
         )
         .overlay(

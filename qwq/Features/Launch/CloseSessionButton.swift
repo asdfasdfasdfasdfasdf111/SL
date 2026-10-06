@@ -46,7 +46,7 @@ struct CloseSessionButton: View {
                                     .font(.system(size: 18, weight: .medium))
                                     .foregroundColor(.primary)
                                     .frame(width: 44, height: 44)
-                                    .background(Circle().fill(Color.white.opacity(0.05)).shadow(radius: 4))
+                                    .background(Circle().fill(Color.white.opacity(0.09)).shadow(radius: 4))
                                     .scaleEffect(closeButtonScale)
                             }
                             .onAppear {

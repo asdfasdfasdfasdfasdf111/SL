@@ -4,7 +4,7 @@
 //
 //  设计依据（用户要求 + 天气 App 现成配方）：
 //  - 玻璃配方**直接抄天气 App 的侧栏**（BetterWeather/View/SideSettings/SideSettingsView.swift）：
-//    `RoundedRectangle(cornerRadius:).fill(Color.white.opacity(0.08))` +
+//    `RoundedRectangle(cornerRadius:).fill(Color.white.opacity(0.14))` +
 //    `.stroke(.white.opacity(0.08), lineWidth: 0.5)`；
 //  - 面板四周**留间隙**（不贴窗口边），否则看不到玻璃的边与投影，会读成「一条深色横条」；
 //  - 红绿灯要**落在玻璃上**，所以面板从窗口顶端向下留 8pt 开始、左右各留 10pt，
@@ -55,7 +55,7 @@ struct HomeHeader: View {
         // 背景渐变能直接透上来，但仍看得出边界与层次。
         .background(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(Color.white.opacity(0.07))
+                .fill(Color.white.opacity(0.13))
         )
         .overlay(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)

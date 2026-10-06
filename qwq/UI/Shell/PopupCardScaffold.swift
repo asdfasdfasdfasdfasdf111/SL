@@ -86,7 +86,7 @@ struct PopupCardScaffold<Header: View, Content: View>: View {
                         .frame(width: 80, height: 32)
                         .background(
                             RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.white.opacity(0.08))
+                                .fill(Color.white.opacity(0.14))
                         )
                 }
                 .buttonStyle(.plain)
@@ -111,7 +111,7 @@ struct PopupCardScaffold<Header: View, Content: View>: View {
         // 毛玻璃卡片 + 外阴影：本弹窗不是系统 sheet，背景需要自己画。
         .background(
             RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white.opacity(0.05))
+                .fill(Color.white.opacity(0.09))
                 .shadow(color: .black.opacity(0.2), radius: 20, x: 0, y: 8)
         )
         // 入场动画初始态：缩小 + 全透明，onAppear 后动画到 1 —— 故初值必须为 false。

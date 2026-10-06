@@ -106,7 +106,7 @@ struct VersionPickerCard: View {
                                     .font(.system(size: 16, weight: .medium))
                                     .foregroundColor(.primary)
                                     .frame(width: 160, height: 40)
-                                    .background(RoundedRectangle(cornerRadius: 20).fill(Color.white.opacity(0.08)).shadow(radius: 2))
+                                    .background(RoundedRectangle(cornerRadius: 20).fill(Color.white.opacity(0.14)).shadow(radius: 2))
                             }
                             .buttonStyle(.plain)
                         }
@@ -118,7 +118,7 @@ struct VersionPickerCard: View {
                 // 透明玻璃（此前 `.regularMaterial` 在深色模式下是暗灰，压在渐变上发黑）
                 .background(
                     RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .fill(Color.white.opacity(0.05))
+                        .fill(Color.white.opacity(0.09))
                         .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 5)
                 )
                 // 右上角 Java 选择入口。没有版本时不出现 —— 没版本可跑，选 Java 没意义。
@@ -136,7 +136,7 @@ struct VersionPickerCard: View {
                             }
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.08)))
+                            .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.14)))
                         }
                         .buttonStyle(.plain)
                         // arrowEdge: .trailing 让气泡箭头指向右侧按钮，视觉上说明「从哪弹出来的」。
@@ -161,7 +161,7 @@ struct VersionPickerCard: View {
                             .background(
                                 RoundedRectangle(cornerRadius: 12)
                                     .stroke(theme.accentColor, lineWidth: 1)
-                                    .background(Color.white.opacity(0.08))
+                                    .background(Color.white.opacity(0.14))
                             )
                     }
                     .buttonStyle(.plain)
@@ -246,11 +246,11 @@ private struct VersionTile: View {
             .frame(width: 116, height: 106)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color.white.opacity(0.06))
+                    .fill(Color.white.opacity(0.11))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(isSelected ? Color.white.opacity(0.85) : Color.white.opacity(0.08),
+                    .stroke(isSelected ? Color.white.opacity(0.85) : Color.white.opacity(0.14),
                             lineWidth: isSelected ? 2 : 0.5)
             )
             .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))

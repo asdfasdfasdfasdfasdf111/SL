@@ -50,7 +50,7 @@ struct CategorySearchBar: View {
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.white.opacity(0.08))
+                    .fill(Color.white.opacity(0.14))
             )
         }
         .padding(.top, cardPadding)

@@ -98,7 +98,7 @@ struct LaunchButton: View {
                 }
                 RoundedRectangle(cornerRadius: 25)
                     .strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 1)
-                    .background(RoundedRectangle(cornerRadius: 25).fill(Color.white.opacity(0.08)))
+                    .background(RoundedRectangle(cornerRadius: 25).fill(Color.white.opacity(0.14)))
                 ZStack {
                     // 文案用一串 if 而非 switch，每个相位一段独立文案；
                     // idle 那段还带「从下方进、向上出」的转场（见下面的 transition）。

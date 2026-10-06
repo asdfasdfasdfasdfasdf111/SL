@@ -101,7 +101,7 @@ struct ContentCard: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 20)
-                    .stroke(Color.white.opacity(0.06), lineWidth: 0.5)
+                    .stroke(Color.white.opacity(0.11), lineWidth: 0.5)
             )
         }
         .buttonStyle(.plain)

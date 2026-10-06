@@ -50,7 +50,7 @@ struct PrerequisiteModCard: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+                .stroke(Color.white.opacity(0.14), lineWidth: 0.5)
         )
         .scaleEffect(scale)
         .opacity(appearOpacity)
@@ -195,7 +195,7 @@ struct VersionLoaderCard: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .stroke(isSelected ? theme.accentColor : Color.white.opacity(0.08), lineWidth: isSelected ? 2 : 0.5)
+                .stroke(isSelected ? theme.accentColor : Color.white.opacity(0.14), lineWidth: isSelected ? 2 : 0.5)
         )
         .scaleEffect(scale)
         .contentShape(Rectangle())

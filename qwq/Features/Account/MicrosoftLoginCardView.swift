@@ -114,7 +114,7 @@ struct MicrosoftLoginCardView: View {
         }
         .padding(20)
         .frame(width: 440)
-        .background(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(0.05)))
+        .background(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(0.09)))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
                 .stroke(Color.primary.opacity(0.18), lineWidth: 1)

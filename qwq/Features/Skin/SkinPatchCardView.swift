@@ -91,14 +91,14 @@ struct SkinPatchCardView: View {
         .background(
             RoundedRectangle(cornerRadius: 16)
                 // 用材质而非纯色：这张卡片浮在启动页任意内容之上，材质能保证任何底色下都可读
-                .fill(Color.white.opacity(0.05))
+                .fill(Color.white.opacity(0.09))
                 .shadow(color: .black.opacity(0.2), radius: 20, x: 0, y: 8)
         )
         // **高光**：与 `LoaderSelectorCard` 的选中态同一套写法（accent 描边 2pt）。
         // 只在 `canInstall` 时点亮；其余状态给一条极淡的中性描边，保证卡片边界在任何底色下都看得见。
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .stroke(coordinator.state.canInstall ? theme.accentColor : Color.white.opacity(0.08),
+                .stroke(coordinator.state.canInstall ? theme.accentColor : Color.white.opacity(0.14),
                         lineWidth: coordinator.state.canInstall ? 2 : 0.5)
         )
         .scaleEffect(showContent ? 1 : 0.85)
@@ -252,7 +252,7 @@ struct SkinPatchCardView: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(.secondary)
                     .frame(width: 96, height: 32)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.08)))
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.14)))
             }
             .buttonStyle(.plain)
         }

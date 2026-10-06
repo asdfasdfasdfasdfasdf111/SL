@@ -47,7 +47,7 @@ struct VersionButton: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 10)
                 .padding(.horizontal, 12)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.08)).shadow(radius: 1))
+                .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.14)).shadow(radius: 1))
                 // 未选中时刻意使用 `Color.clear` 而不是去掉 overlay：
                 // 保持描边图层恒定存在，选中/取消选中之间不会因图层增删而重排。
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(isSelected ? theme.accentColor : Color.clear, lineWidth: 2))
