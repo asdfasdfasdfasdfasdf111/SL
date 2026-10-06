@@ -48,7 +48,7 @@ class ThemeManager: ObservableObject {
     /// 不再是存储里那个固定 `.blue`。写入口保留兼容（无 UI 会触发），
     /// 但写入不再影响任何读取方。
     var accentColor: Color {
-        get { Color.accentColor }
+        get { Color.primary }
         set { }
     }
 

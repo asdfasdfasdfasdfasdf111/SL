@@ -23,6 +23,10 @@ import SwiftUI
 struct SLApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
+    /// 锁定的窗口尺寸（内容区，不含标题栏）。全应用布局按此尺寸校对。
+    static let windowWidth: CGFloat = 800
+    static let windowHeight: CGFloat = 560
+
     init() {
         // 装配根：首帧之前的一次性初始化（崩溃自捕获 / 内存压力订阅 / 目录预热）集中在
         // AppCompositionRoot。这里**必须保持一行调用** —— 用例用
@@ -47,8 +51,16 @@ struct SLApp: App {
                 // 启动卡片现在会随窗口高度等比缩放（见 CategoryContentView.launchView），
                 // 所以更矮的窗口不再会把卡片挤爆；这里给出的是「分类栏 180 + 缩放后卡片
                 // + 日志面板」还能并排站得住的下限。
-                .frame(minWidth: 680, minHeight: 500)
+                // ⚠️ 2026-10-06 用户要求：**锁定窗口尺寸，做成小窗口**。
+                // 用法改为固定 `width/height`（而不是 minWidth/minHeight）：内容尺寸固定后，
+                // 配合下面的 `.windowResizability(.contentSize)`，窗口即不可拉伸。
+                // 尺寸取原先的最小可用尺寸 680×500 —— 这是「分类栏 + 缩放后卡片 + 日志面板」
+                // 仍能并排站得下的下限，也正是当前所有页面布局按此尺寸校对的基准。
+                .frame(width: Self.windowWidth, height: Self.windowHeight)
         }
+        // 窗口尺寸跟随内容且不可拉伸（macOS 13.0+，正是本项目部署目标）。
+        // 依据：https://developer.apple.com/documentation/swiftui/scene/windowresizability(_:)
+        .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
         // 默认窗口尺寸 900×660（居中由系统处理）。
         //
@@ -58,7 +70,7 @@ struct SLApp: App {
         // 没发现 defaultSize 已丢 —— 期间全库没有任何地方声明默认尺寸。
         // 2026-09-23 恢复：`.defaultSize` 是 Scene 级 API，自 macOS 13.0 起可用，
         // 正好等于本项目部署目标，无需任何可用性守卫。
-        .defaultSize(width: 900, height: 660)
+        .defaultSize(width: Self.windowWidth, height: Self.windowHeight)
         // 菜单栏命令：「分类」菜单 + ⌘1…⌘6。
         //
         // 之前全库没有任何 `.commands { }` / `CommandGroup` / `keyboardShortcut`（评审第 10 条）：

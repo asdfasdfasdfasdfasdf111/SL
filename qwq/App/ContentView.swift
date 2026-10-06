@@ -99,10 +99,19 @@ struct ContentView: View {
             // meaning and recommended usage.`）：这里是**窗口内容底**，语义对应
             // `underWindowBackground`；此前用 `.fullScreenUI`（那是给全屏 UI 覆盖层的深色重材质），
             // 结果整窗压黑、上面的玻璃面板和背景之间没有层次（用户：「上面这个毛玻璃实在是太黑了」）。
-            BlurView(material: .underWindowBackground, blendingMode: .withinWindow).ignoresSafeArea()
+            BlurView(material: .fullScreenUI, blendingMode: .withinWindow).ignoresSafeArea()
                 .onDrop(of: [.fileURL], isTargeted: $interaction.isDropTargeted) { providers in
                     return dropInstall.handle(providers: providers)
                 }
+            // 滚轮/触控板横向滚动 → 翻分类页（此前只有鼠标拖拽能翻页，滚轮完全没接）。
+            // 放在内容层**下面**：纵向滚动仍由列表等 ScrollView 自己消费，不受影响。
+            HorizontalScrollCatcher { step in
+                let target = navigation.selectedIndex + step
+                guard navigation.categories.indices.contains(target) else { return }
+                withAnimation(NavigationState.canvasSpring) {
+                    navigation.selectedCategory = navigation.categories[target]
+                }
+            }
             VStack(alignment: .leading, spacing: 0) {
                 // 标题栏（早期版本样式）：标题行 + 分类导航 + 底部分隔线，整体由 HomeHeader 负责
                 HomeHeader(selectedCategory: $navigation.selectedCategory, categories: navigation.categories)
@@ -119,6 +128,9 @@ struct ContentView: View {
                     .clipped()
                 }
             }
+            // 头部玻璃面板要贴到窗口上沿附近（红绿灯落在玻璃上），因此整个内容列
+            // 忽略顶部安全区；面板自身再用 padding 留出间隙与红绿灯位置。
+            .ignoresSafeArea(edges: .top)
         }
     }
     /// 旧版分类画布：所有分类页完整横向排布，点击导航或拖拽时整页连续滑动；

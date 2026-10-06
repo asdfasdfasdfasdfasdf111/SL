@@ -38,7 +38,7 @@ struct MicrosoftLoginCardView: View {
             HStack(alignment: .top, spacing: 14) {
                 Image(systemName: "person.badge.key")
                     .font(.system(size: 26, weight: .medium))
-                    .foregroundColor(.accentColor)
+                    .foregroundColor(.primary)
                     .frame(width: 34, height: 34, alignment: .center)
 
                 VStack(alignment: .leading, spacing: 8) {
@@ -71,7 +71,7 @@ struct MicrosoftLoginCardView: View {
             if let code = viewModel.currentDeviceCode {
                 Text(code.userCode)
                     .font(.system(size: 32, weight: .bold, design: .monospaced))
-                    .foregroundColor(.accentColor)
+                    .foregroundColor(.primary)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 6)
 
@@ -117,7 +117,7 @@ struct MicrosoftLoginCardView: View {
         .background(RoundedRectangle(cornerRadius: 16).fill(.regularMaterial))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .stroke(Color.accentColor.opacity(0.25), lineWidth: 1)
+                .stroke(Color.primary.opacity(0.18), lineWidth: 1)
         )
         .shadow(radius: 12)
         // 缩放弹入：初值 0.85 + 透明 → onAppear 后 1.0 + 不透明

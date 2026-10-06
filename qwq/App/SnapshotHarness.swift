@@ -31,13 +31,20 @@ enum SnapshotHarness {
             // 缩小态的过渡画面（实测曾抓到 154×200 的「迷你窗口」误判为布局出错）。
             try? await Task.sleep(nanoseconds: 3_000_000_000)
 
+            // 可选：先切到指定分类页再拍（SL_SNAPSHOT_CATEGORY=分类下标，0=启动 1=游戏 …）。
+            // 没有这个开关时，游戏/下载等页面的渲染结果根本无法被看到 —— 也就无法验收。
+            if let raw = env["SL_SNAPSHOT_CATEGORY"], let index = Int(raw) {
+                NavigationIntent.shared.requestCategory(at: index)
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+            }
+
             for size in sizes {
                 guard let window = targetWindow() else { break }
                 // setContentSize 改的是**内容区**尺寸，正是我们关心的口径。
                 window.setContentSize(size)
                 // 等窗口真正达到目标尺寸（尺寸被最小约束/动画钳住时不要急着拍）。
                 await waitUntilSettled(window: window, size: size)
-                capture(window: window, to: "\(dir)/snap-\(Int(size.width))x\(Int(size.height)).png")
+                await capture(window: window, to: "\(dir)/snap-\(Int(size.width))x\(Int(size.height)).png")
             }
 
             if shouldExit { NSApp.terminate(nil) }
@@ -85,7 +92,7 @@ enum SnapshotHarness {
     /// 先把窗口激活并置前，再按「合成图 → 视图层绘制」多路径尝试，**取尺寸与窗口相符的那张**；
     /// 都不符时保留最大的那张并明确标注，避免把「抓取失败」误判成「布局错了」。
     @MainActor
-    private static func capture(window: NSWindow, to path: String) {
+    private static func capture(window: NSWindow, to path: String) async {
         let url = URL(fileURLWithPath: path)
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
                                                  withIntermediateDirectories: true)
@@ -101,38 +108,50 @@ enum SnapshotHarness {
 
         var best: (image: CGImage, tag: String)?
 
-        // 路径 ①：整窗合成（含毛玻璃）。
-        let windowID = CGWindowID(window.windowNumber)
-        if let image = CGWindowListCreateImage(.null, .optionIncludingWindow, windowID,
-                                               [.boundsIgnoreFraming, .bestResolution]) {
-            best = (image, "窗口合成")
-        }
-        // 路径 ②：同上，但用窗口自身矩形作为抓取范围（部分系统版本下 ① 会取到错误区域）。
-        if let current = best, !isSizePlausible(current.image, expected: expected),
-           let image = CGWindowListCreateImage(window.frame, .optionIncludingWindow, windowID,
-                                               [.boundsIgnoreFraming, .bestResolution]) {
-            best = (image, "窗口合成(指定矩形)")
-        }
-        // 路径 ③：视图层绘制兜底（毛玻璃会丢，但布局一定真实）。
-        if let current = best, !isSizePlausible(current.image, expected: expected),
-           let view = window.contentView,
-           let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
-            view.cacheDisplay(in: view.bounds, to: rep)
-            if let image = rep.cgImage {
-                best = (image, "视图层兜底(无毛玻璃)")
+        // 重试若干轮：抓取窗口合成图偶尔会返回「尺寸对但整张纯色」的占位图
+        // （实测遇到过整张纯白），只靠尺寸判定会把空白图当成有效结果。
+        for attempt in 1...3 {
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            try? await Task.sleep(nanoseconds: 600_000_000)
+
+            let windowID = CGWindowID(window.windowNumber)
+
+            // 路径 ①：整窗合成（含毛玻璃）——首选。
+            if let image = CGWindowListCreateImage(.null, .optionIncludingWindow, windowID,
+                                                   [.boundsIgnoreFraming, .bestResolution]),
+               isSizePlausible(image, expected: expected), !isBlank(image) {
+                best = (image, "窗口合成")
+                break
             }
+            // 路径 ②：用窗口自身矩形作为抓取范围。
+            if let image = CGWindowListCreateImage(window.frame, .optionIncludingWindow, windowID,
+                                                   [.boundsIgnoreFraming, .bestResolution]),
+               isSizePlausible(image, expected: expected), !isBlank(image) {
+                best = (image, "窗口合成(指定矩形)")
+                break
+            }
+            // 路径 ③：视图层绘制兜底（毛玻璃会丢，但布局一定真实）。
+            if let view = window.contentView,
+               let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                view.cacheDisplay(in: view.bounds, to: rep)
+                if let image = rep.cgImage, !isBlank(image) {
+                    best = (image, attempt == 1 ? "视图层兜底(无毛玻璃)" : "视图层兜底(无毛玻璃,第\(attempt)轮)")
+                    break
+                }
+            }
+            print("[snapshot] 第 \(attempt) 轮未拿到有效图像，重试…")
         }
 
         guard let best else {
-            print("[snapshot] 抓取失败：\(path)")
+            print("[snapshot] 抓取失败（3 轮均为空白/尺寸不符）：\(path)")
             return
         }
         let rep = NSBitmapImageRep(cgImage: best.image)
         if let data = rep.representation(using: .png, properties: [:]) {
             try? data.write(to: url)
-            let ok = isSizePlausible(best.image, expected: expected) ? "✓" : "⚠️尺寸可疑"
             print("[snapshot] \(url.lastPathComponent)  \(best.image.width)x\(best.image.height)"
-                  + "  \(best.tag) \(ok)")
+                  + "  \(best.tag)")
         }
     }
 
@@ -141,5 +160,27 @@ enum SnapshotHarness {
         guard expected.width > 0, expected.height > 0 else { return false }
         let ratio = Double(image.width) / Double(expected.width)
         return ratio > 0.9 && ratio < 2.1
+    }
+
+    /// 图像是否「近纯色」（抓取失败时的占位图特征）。用 24×24 缩略图的亮度标准差判定。
+    private static func isBlank(_ image: CGImage) -> Bool {
+        let w = 24, h = 24
+        let buf = UnsafeMutablePointer<UInt8>.allocate(capacity: w * h * 4)
+        defer { buf.deallocate() }
+        buf.initialize(repeating: 0, count: w * h * 4)
+        guard let ctx = CGContext(data: buf, width: w, height: h, bitsPerComponent: 8,
+                                  bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            return false
+        }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        var lums: [Double] = []
+        lums.reserveCapacity(w * h)
+        for i in stride(from: 0, to: w * h * 4, by: 4) {
+            lums.append(0.299 * Double(buf[i]) + 0.587 * Double(buf[i + 1]) + 0.114 * Double(buf[i + 2]))
+        }
+        let mean = lums.reduce(0, +) / Double(lums.count)
+        let variance = lums.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / Double(lums.count)
+        return variance.squareRoot() < 4.0
     }
 }

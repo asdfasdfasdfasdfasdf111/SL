@@ -51,24 +51,45 @@ struct VersionPickerCard: View {
                 VStack(alignment: .leading, spacing: 16) {
                     // 两条互斥分支：有版本 → 列表；无版本 → 空态引导。
                     if hasVersions {
-                        Text("选择游戏版本").font(.headline).foregroundColor(.secondary).padding(.bottom, 4)
+                        // 标题 = **游戏目录名**（用户要求：原来写死的「选择游戏版本」改成目录名），
+                        // 双击可就地编辑，提交后**真实重命名磁盘上的目录**。
+                        GameFolderTitle()
+                            .padding(.bottom, 6)
+
                         ScrollView(.vertical, showsIndicators: false) {
-                            VStack(alignment: .leading, spacing: 16) {
+                            // 每个版本一个**小方块**：上面名称、下面加载器图标（白色单色）。
+                            // 列宽自适应：锁窗 800×560 下每行 5~6 个方块。
+                            LazyVGrid(
+                                columns: [GridItem(.adaptive(minimum: 104, maximum: 124), spacing: 14)],
+                                spacing: 14
+                            ) {
                                 ForEach(versions, id: \.self) { version in
-                                    VersionButton(title: version, isSelected: selectedVersion == version, theme: theme) {
+                                    VersionTile(
+                                        title: version,
+                                        loaderIcon: Self.loaderIconName(for: version),
+                                        isSelected: selectedVersion == version
+                                    ) {
                                         onSelect(version)
                                     }
                                 }
                             }
-                            // ⚠️ 这段横向内边距是**给放大动画留的余量**，不是为了好看：
-                            // `VersionButton` 按下时会 `scaleEffect(1.08)`，而 `ScrollView`
-                            // **会裁剪超出自身边界的子视图**（macOS 13 没有 `scrollClipDisabled`）。
-                            // 行本身是 `maxWidth: .infinity`（占满滚动区宽度），放大 8% 后左右各
-                            // 溢出约 4%，左边缘连圆角带内边距一起被切掉 —— 表现为「选中放大时左侧被裁」。
-                            // 预留 14pt（≈ 4% × 350pt 行宽）后，常见卡片宽度下放大不再越界。
-                            .padding(.horizontal, 14)
+                            // 方块按下放大 1.06，四周各溢出约 3pt；16pt 余量足够（不再出现被裁）。
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 6)
                         }
-                        // 版本多时列表内部滚动，高度封顶 420，避免面板长到超出屏高。
+                        // 上下渐变过渡：滚动边界不硬切方块（用户要求「过渡条」），
+                        // 只作用于列表自身高度内，不会盖住下方按钮区。
+                        .mask(
+                            LinearGradient(
+                                stops: [
+                                    .init(color: .clear, location: 0.0),
+                                    .init(color: .black, location: 0.05),
+                                    .init(color: .black, location: 0.95),
+                                    .init(color: .clear, location: 1.0)
+                                ],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        )
                         .frame(maxHeight: 420)
                     } else {
                         // 空态：一句「为什么找不到」+ 一句「怎么办」，再给一个按钮。
@@ -148,6 +169,153 @@ struct VersionPickerCard: View {
                 }
             }
             Spacer()
+        }
+    }
+}
+
+
+// MARK: - 版本方块与目录名标题
+
+extension VersionPickerCard {
+    /// 由版本名推断加载器图标（版本名遵循「主版本-加载器」约定，见 VersionUtils 的重命名规则）。
+    /// NeoForge 必须先判：它的名字里含 "forge"，否则会误判成 Forge。
+    static func loaderIconName(for version: String) -> String? {
+        let v = version.lowercased()
+        if v.contains("neoforge") { return "LoaderNeoForge" }
+        if v.contains("forge") { return "LoaderForge" }
+        if v.contains("fabric") { return "LoaderFabric" }
+        if v.contains("quilt") { return "LoaderQuilt" }
+        return nil
+    }
+}
+
+/// 单个版本方块：上方版本名、下方加载器图标（白色单色），玻璃底。
+/// 图标资源见 Assets.xcassets/Loader*.imageset —— 已统一处理为「白 + alpha」，
+/// Forge 额外抠掉了黑色底（原图无透明通道）。
+private struct VersionTile: View {
+    let title: String
+    let loaderIcon: String?
+    let isSelected: Bool
+    let onTap: () -> Void
+
+    @State private var pressed = false
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(spacing: 10) {
+                // 上面：名称
+                Text(title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .padding(.horizontal, 6)
+
+                // 下面：加载器图标（白色单色）。无加载器（原版）时给一个中性方块符号。
+                if let loaderIcon {
+                    Image(loaderIcon)
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(height: 30)
+                        .foregroundStyle(.white.opacity(isSelected ? 1.0 : 0.75))
+                } else {
+                    Image(systemName: "cube.fill")
+                        .font(.system(size: 22))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .frame(height: 30)
+                }
+            }
+            .frame(width: 104, height: 96)
+            .background(
+                BlurView(material: .underWindowBackground, blendingMode: .withinWindow)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(isSelected ? Color.white.opacity(0.85) : Color.white.opacity(0.08),
+                            lineWidth: isSelected ? 2 : 0.5)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .scaleEffect(pressed ? 1.06 : 1.0)
+        }
+        .buttonStyle(.plain)
+        .onHover { _ in }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in if !pressed { withAnimation(.punchySpring) { pressed = true } } }
+                .onEnded { _ in withAnimation(.punchySpring) { pressed = false } }
+        )
+    }
+}
+
+/// 游戏目录名标题：双击就地编辑，提交后真实重命名磁盘目录并更新设置里的路径。
+private struct GameFolderTitle: View {
+    @ObservedObject private var settings = LauncherSettings.shared
+    @State private var isEditing = false
+    @State private var draft = ""
+    @State private var errorText: String?
+    @FocusState private var focused: Bool
+
+    /// 当前目录名（路径的最后一段）。
+    private var folderName: String {
+        let path = settings.selectedGameRoot
+        guard !path.isEmpty else { return "未选择游戏目录" }
+        return URL(fileURLWithPath: path).lastPathComponent
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if isEditing {
+                TextField("目录名", text: $draft)
+                    .textFieldStyle(.plain)
+                    .font(.headline)
+                    .frame(width: 220)
+                    .focused($focused)
+                    .onSubmit { commit() }
+                Button("取消") { isEditing = false; errorText = nil }
+                    .buttonStyle(.plain).font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text(folderName)
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                Text("双击可改名")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            if let errorText {
+                Text(errorText).font(.caption2).foregroundStyle(.red)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            draft = folderName
+            isEditing = true
+            errorText = nil
+            DispatchQueue.main.async { focused = true }
+        }
+    }
+
+    /// 真实重命名：在同级目录下改名，成功后把设置里的路径指过去。
+    private func commit() {
+        let name = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let old = URL(fileURLWithPath: settings.selectedGameRoot)
+        guard !name.isEmpty, !name.contains("/"), name != folderName else {
+            isEditing = false
+            return
+        }
+        let new = old.deletingLastPathComponent().appendingPathComponent(name)
+        guard !FileManager.default.fileExists(atPath: new.path) else {
+            errorText = "同名目录已存在"
+            return
+        }
+        do {
+            try FileManager.default.moveItem(at: old, to: new)
+            settings.selectedGameRoot = new.path
+            isEditing = false
+            errorText = nil
+        } catch {
+            errorText = "改名失败：\(error.localizedDescription)"
         }
     }
 }
