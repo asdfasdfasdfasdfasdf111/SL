@@ -446,7 +446,16 @@ public enum MicrosoftAuthService {
             "TokenType": "JWT"
         ]
         let (data, response) = try await postJSON(MicrosoftAuthConstants.xblAuthenticateURL, json: payload)
-        _ = response
+        guard let http = response as? HTTPURLResponse else {
+            throw MicrosoftAuthError.badResponse("非 HTTP 响应")
+        }
+        // ⚠️ 必须检查状态码：XBL 401 时服务端返回**空 body**（实测 401 / 0 字节），
+        // 此前不检查、直接解析空 data → decodeOrThrow 抛"xbl 响应解析失败"——
+        // 这正是用户看到的「微软服务器返回了无效的解析」（认证失败被误报成解析失败）。
+        guard (200..<300).contains(http.statusCode) else {
+            let body = String(data: data, encoding: .utf8) ?? ""
+            throw MicrosoftAuthError.unexpectedStatus(endpoint: "xbl", code: http.statusCode, body: body)
+        }
         return try decodeOrThrow(XboxTokenResponse.self, data: data, endpoint: "xbl")
     }
 
