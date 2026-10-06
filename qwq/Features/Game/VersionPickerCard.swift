@@ -73,18 +73,22 @@ struct VersionPickerCard: View {
                                     }
                                 }
                             }
-                            // 方块按下放大 1.06，四周各溢出约 3pt；16pt 余量足够（不再出现被裁）。
+                            // 方块按下放大 8%，四周各溢出约 4pt；16pt 横向余量足够（不再出现被裁）。
                             .padding(.horizontal, 16)
-                            .padding(.vertical, 6)
+                            // 纵向留白(12pt) > 过渡带宽度(约 10pt)：方块不落在淡出区里。
+                            .padding(.vertical, 12)
                         }
                         // 上下渐变过渡：滚动边界不硬切方块（用户要求「过渡条」），
                         // 只作用于列表自身高度内，不会盖住下方按钮区。
                         .mask(
                             LinearGradient(
+                                // ⚠️ 过渡必须**收得很窄**：此前 5%（约 21pt）会把第一排方块也淡掉，
+                                // 用户反馈「过渡线直接影响了这个小方块」。现在只淡最边缘约 10pt，
+                                // 方块再由下方 padding 让开这段区域，因此方块本身不被过渡影响。
                                 stops: [
                                     .init(color: .clear, location: 0.0),
-                                    .init(color: .black, location: 0.05),
-                                    .init(color: .black, location: 0.95),
+                                    .init(color: .black, location: 0.022),
+                                    .init(color: .black, location: 0.978),
                                     .init(color: .clear, location: 1.0)
                                 ],
                                 startPoint: .top, endPoint: .bottom
@@ -198,10 +202,17 @@ private struct VersionTile: View {
     let isSelected: Bool
     let onTap: () -> Void
 
-    @State private var pressed = false
+    @State private var animationScale: CGFloat = 1.0
+    /// 计数变化才能让每次点击都重启回弹计时，且随视图销毁自动取消（无不可取消闭包）。
+    @State private var clickCount = 0
 
     var body: some View {
-        Button(action: onTap) {
+        Button(action: {
+            // 与旧 `VersionButton` 逐字一致的手感：先弹到 1.08 给即时反馈，再执行动作。
+            withAnimation(.bouncySpring) { animationScale = 1.08 }
+            onTap()
+            clickCount += 1
+        }) {
             VStack(spacing: 10) {
                 // 上面：名称
                 Text(title)
@@ -237,15 +248,15 @@ private struct VersionTile: View {
                             lineWidth: isSelected ? 2 : 0.5)
             )
             .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .scaleEffect(pressed ? 1.06 : 1.0)
         }
         .buttonStyle(.plain)
-        .onHover { _ in }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0)
-                .onChanged { _ in if !pressed { withAnimation(.punchySpring) { pressed = true } } }
-                .onEnded { _ in withAnimation(.punchySpring) { pressed = false } }
-        )
+        .scaleEffect(animationScale)
+        // 回弹：点击后 0.12s 复位到 1.0。`.task(id:)` 在计数变化时重启、视图销毁时取消。
+        .task(id: clickCount) {
+            guard clickCount > 0 else { return }
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            withAnimation(.bouncySpring) { animationScale = 1.0 }
+        }
     }
 }
 
