@@ -66,10 +66,9 @@ struct CategoryContentView: View {
     private static let designWindowHeight: CGFloat = 660
     /// 缩放基准窗口宽度：默认宽度下卡片按 1:1 渲染（对应启动页左卡 + 日志区的横向排布）。
     private static let designWidth: CGFloat = 900
-    /// 缩放下限：窗口很矮（最小高度 500）时卡片缩到 0.68，再小字就看不清了。
-    private static let minCardScale: CGFloat = 0.68
-    /// 缩放上限：窗口拉很高时最多放到 1.15 倍，避免卡片跟着无限长大。
-    private static let maxCardScale: CGFloat = 1.15
+    // ⚠️ 不再设缩放上下限（2026-10-06）：此前钳在 0.68…1.15，窗口小于设计尺寸时
+    // 卡片被钳在固定值「纹丝不动」，拉过阈值才突然开始缩放 —— 用户反馈「把那个地方
+    // 当成了底座」「不是完全的自适应」。改为全程连续：任何窗口尺寸下都按比例缩放。
 
     /// 启动页外层：用 GeometryReader 按窗口尺寸算出卡片 / 按钮 / 头像的尺寸，再交给内容层。
     /// 所有尺寸都从 `cardWidth` 一个基准按比例推出来，改一处即可整体缩放。
@@ -87,7 +86,8 @@ struct CategoryContentView: View {
             // 保证整卡在任何宽高下都完整落在窗口内、且等比放大/缩小。
             let scaleByHeight = geometry.size.height / Self.designWindowHeight
             let scaleByWidth = geometry.size.width / Self.designWidth
-            let cardScale = min(Self.maxCardScale, max(Self.minCardScale, min(scaleByHeight, scaleByWidth)))
+            // 完全自适应：不夹上下限，任何窗口尺寸都连续缩放（用户：不要「底座」）。
+            let cardScale = min(scaleByHeight, scaleByWidth)
             let cardWidth: CGFloat = 280
             let buttonWidth = cardWidth * 0.7
             let avatarSize = buttonWidth * 0.7

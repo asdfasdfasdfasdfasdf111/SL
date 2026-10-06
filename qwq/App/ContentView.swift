@@ -114,7 +114,6 @@ struct ContentView: View {
                     }
                     .clipped()
                 }
-                .background(BlurView(material: .fullScreenUI, blendingMode: .withinWindow))
             }
         }
     }
