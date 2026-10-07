@@ -50,15 +50,15 @@ enum CategoryKind: Hashable {
     case game
     /// 「下载」→ `DownloadCategoryView`
     case download
-    /// 「联机」：空网格占位分支。
+    /// 「联机」：空态占位页（联机功能建设中，见 CategoryContentView.OnlineComingSoonView）。
     case online
     /// 「赞助」：静态赞助卡页。
     case sponsor
 }
 
 extension Category {
-    /// 全部分类，**顺序即侧边栏顺序，也是 ⌘1…⌘6 的归属**：
-    /// 启动=⌘1、游戏=⌘2、下载=⌘3、联机=⌘4、赞助=⌘5、个性化=⌘6。
+    /// 全部分类，**顺序即侧边栏顺序，也是 ⌘1…⌘5 的归属**：
+    /// 启动=⌘1、游戏=⌘2、下载=⌘3、联机=⌘4、赞助=⌘5。
     ///
     /// 这里是 `static let`，不是计算属性：`id` 是每实例化的 UUID，
     /// 若写成 `static var { [...] }` 每次访问都会造出新实例，

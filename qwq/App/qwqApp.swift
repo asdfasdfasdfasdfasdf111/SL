@@ -6,7 +6,7 @@
 //           内存压力订阅注册）都已收进 `AppCompositionRoot`，本文件只留**一行调用**，
 //           以便测试断言「装配根接线成立」（见 AppCompositionRoot 文件头）；
 //        ② 声明 WindowGroup 与**窗口最小尺寸 680×500 的唯一来源**（内容约束）；
-//        ③ 声明「分类」菜单与 ⌘1…⌘6（经 NavigationIntent 单槽送到 ContentView）；
+//        ③ 声明「分类」菜单与 ⌘1…⌘5（经 NavigationIntent 单槽送到 ContentView）；
 //        ④ 声明「设置…」（⌘,）的 Settings 场景（内容镜像「个性化」页）。
 //  边界：不含任何界面布局与业务逻辑（内容全在 ContentView 及其子树），
 //        也不含装配动作本身（已移到 AppCompositionRoot，这里只负责在启动时调用它一次）。
@@ -71,7 +71,7 @@ struct SLApp: App {
         // 2026-09-23 恢复：`.defaultSize` 是 Scene 级 API，自 macOS 13.0 起可用，
         // 正好等于本项目部署目标，无需任何可用性守卫。
         .defaultSize(width: Self.windowWidth, height: Self.windowHeight)
-        // 菜单栏命令：「分类」菜单 + ⌘1…⌘6。
+        // 菜单栏命令：「分类」菜单 + ⌘1…⌘5。
         //
         // 之前全库没有任何 `.commands { }` / `CommandGroup` / `keyboardShortcut`（评审第 10 条）：
         // 没有偏好设置入口、没有菜单命令、没有快捷键，全部操作只能靠鼠标点导航。

@@ -57,8 +57,10 @@ enum SnapshotHarness {
         for _ in 0..<40 {
             let current = window.contentLayoutRect.size
             if abs(current.width - size.width) <= 2, abs(current.height - size.height) <= 2 { break }
+            // 100ms 轮询间隔 × 40 次 = 最多等 4s（目标见函数头注释）
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
+        // 尺寸到位后再等 500ms 让布局/动画稳定（时长依据见函数头注释）
         try? await Task.sleep(nanoseconds: 500_000_000)
     }
 

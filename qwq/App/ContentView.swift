@@ -12,7 +12,7 @@
 //    启动提示归 LaunchPanelState（注入式：本视图只订阅、不创建）、
 //    下载详情开关归 DownloadDetailManager（经 NavigationState 透传）。
 //  关键约束：
-//    · 六个分类页在 `categoryCanvas` 里是**整排常驻**的（HStack，不是惰性容器），
+//    · 五个分类页在 `categoryCanvas` 里是**整排常驻**的（HStack，不是惰性容器），
 //      各页 onAppear 因此会在冷启动时全部触发 —— 这是"首屏即有数据"的刻意设计，
 //      改动容器类型前先读各页 onAppear 的副作用清单（版本扫描 / 目录预热 / 取数）。
 //    · 菜单栏「分类」命令经 NavigationIntent 单槽中转后落到本视图的 NavigationState，
@@ -91,12 +91,14 @@ struct ContentView: View {
     @ViewBuilder
     private var mainContent: some View {
         ZStack {
-            // 底层：流动渐变氛围光（橙/粉/紫暖色，15s 周期漂移，见 UI/LaunchBackground.swift）
-            LaunchBackground()
+            // 底层：流动渐变氛围光（橙/粉/紫暖色，15s 周期漂移，见 UI/LaunchBackground.swift）。
             // ⚠️ 2026-10-06 用户要求「毛玻璃全都要透明」：这里原本又叠了一层 `.fullScreenUI`
             // 深色材质，把渐变整体压暗（观感发黑）。现直接去掉该层，只留渐变本身 ——
             // 各面板/方块各自用 BlurView 做局部玻璃，整体才真正透亮。
-            // 拖放落点随之挂到渐变层上（作用范围同为整窗）。
+            // 拖放落点也挂在这一层上（作用范围同为整窗）。
+            // ⚠️ 只渲染**一层**：这里曾并排叠过两层完全相同的 LaunchBackground
+            //（第二层只为挂 onDrop）—— 每层都是整窗 220pt 半径的常驻动画模糊，
+            // 叠两层等于白烧一倍 GPU，视觉上则毫无差别（不透明同色渐变叠自身不变）。
             LaunchBackground()
                 .onDrop(of: [.fileURL], isTargeted: $interaction.isDropTargeted) { providers in
                     return dropInstall.handle(providers: providers)
