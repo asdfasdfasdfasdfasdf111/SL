@@ -50,35 +50,36 @@ extension DownloadCategoryViewModel {
             // 其余分类：优先本地全量目录过滤（标题/简介/标签，含中文标签直接匹配）
             // 仅当后台已解析完成时读取本地目录，避免主线程同步解压 12 万条目录造成卡顿
             if LocalModCatalog.isReady {
-            let local = LocalModCatalog.items(for: selectedSection)
-            if !local.isEmpty {
-                var filtered = local.filter { ItemFilter.matches($0, query: normalized) }
-                // 中文查询且原词零命中：目录的名称/简介是 Modrinth **英文原文**，
-                // 只按原文匹配等于中文永远搜不到 —— 取英文候选词后重新过滤。
-                // 候选词两条来源并发取：MC 百科定译名（社区标准译名，如「地平线」→
-                // "Distant Horizons"，机翻给不出）在前，机翻兜底在后；
-                // 已翻译的中文副标题（CardTranslationModel 缓存）一并参与匹配。
-                // 两条来源都取不到（断网/无译文）时保持空结果，与旧行为一致。
-                // 原词已命中时不翻译：不为中国标签（已安装等）能命中的查询白烧请求配额。
-                if filtered.isEmpty, ChineseText.contains(normalized) {
-                    async let communityNames = CommunityNameResolver.englishNames(for: normalized)
-                    async let machineTerms = SearchTranslator.translate(normalized)
-                    let (community, machine) = await (communityNames, machineTerms)
-                    // 两个 await 期间用户可能已继续输入（防抖任务被取消重启），
-                    // 旧任务不得回写过滤结果 —— 与下方联网分支的取消守卫同一约定
-                    if Task.isCancelled { return }
-                    let englishTerms = community + machine
-                    if !englishTerms.isEmpty {
-                        let queries = [normalized] + englishTerms
-                        filtered = local.filter {
-                            ItemFilter.matchesAny($0,
-                                                  queries: queries,
-                                                  originalQuery: normalized,
-                                                  translatedSubtitle: translation.translated[$0.id])
+                let local = LocalModCatalog.items(for: selectedSection)
+                if !local.isEmpty {
+                    let literalHits = local.filter { ItemFilter.matches($0, query: normalized) }
+                    var filtered = literalHits
+                    // 中文查询一律取英文候选词并**合并**结果（不能挂在「零命中才触发」上）：
+                    // Modrinth 允许作者用中文起项目名，原词常能字面命中少数中文命名模组——
+                    // 若命中即短路，定译名能对上的正主（搜「地平线」的 Distant Horizons）
+                    // 反而永远进不来，用户实测踩中。字面命中的条目排前面，定译名/机翻
+                    // 新增的条目按目录原序接在后面；两条来源都取不到（断网）时只剩字面结果。
+                    if ChineseText.contains(normalized) {
+                        async let communityNames = CommunityNameResolver.englishNames(for: normalized)
+                        async let machineTerms = SearchTranslator.translate(normalized)
+                        let (community, machine) = await (communityNames, machineTerms)
+                        // 两个 await 期间用户可能已继续输入（防抖任务被取消重启），
+                        // 旧任务不得回写过滤结果 —— 与下方联网分支的取消守卫同一约定
+                        if Task.isCancelled { return }
+                        let englishTerms = community + machine
+                        if !englishTerms.isEmpty {
+                            let literalIds = Set(literalHits.map { $0.id })
+                            let extra = local.filter {
+                                !literalIds.contains($0.id) &&
+                                ItemFilter.matchesAny($0,
+                                                      queries: englishTerms,
+                                                      originalQuery: normalized,
+                                                      translatedSubtitle: translation.translated[$0.id])
+                            }
+                            filtered = literalHits + extra
                         }
                     }
-                }
-                await MainActor.run {
+                    await MainActor.run {
                     // 搜索结果弹入填充点之一：本分支是「用户输入关键词 → 本地全量目录检索结果写回」，
                     // 与下面的联网检索同属「搜索结果出现」语义（见 searchPopInIds 声明处的说明）：
                     // 目录随包分发且 `warmUp()` 预解析，实际运行时 isReady 恒为真、本分支先于联网分支
