@@ -54,15 +54,20 @@ extension DownloadCategoryViewModel {
             if !local.isEmpty {
                 var filtered = local.filter { ItemFilter.matches($0, query: normalized) }
                 // 中文查询且原词零命中：目录的名称/简介是 Modrinth **英文原文**，
-                // 只按原文匹配等于中文永远搜不到 —— 译出英文候选词后重新过滤；
+                // 只按原文匹配等于中文永远搜不到 —— 取英文候选词后重新过滤。
+                // 候选词两条来源并发取：MC 百科定译名（社区标准译名，如「地平线」→
+                // "Distant Horizons"，机翻给不出）在前，机翻兜底在后；
                 // 已翻译的中文副标题（CardTranslationModel 缓存）一并参与匹配。
-                // 译不出（网络失败/无译文）时保持空结果，与旧行为一致。
-                // 原词已命中时不翻译：不为中国标签（已安装等）能命中的查询白烧翻译 API 配额。
+                // 两条来源都取不到（断网/无译文）时保持空结果，与旧行为一致。
+                // 原词已命中时不翻译：不为中国标签（已安装等）能命中的查询白烧请求配额。
                 if filtered.isEmpty, ChineseText.contains(normalized) {
-                    let englishTerms = await SearchTranslator.translate(normalized)
-                    // 翻译 await 期间用户可能已继续输入（防抖任务被取消重启），
+                    async let communityNames = CommunityNameResolver.englishNames(for: normalized)
+                    async let machineTerms = SearchTranslator.translate(normalized)
+                    let (community, machine) = await (communityNames, machineTerms)
+                    // 两个 await 期间用户可能已继续输入（防抖任务被取消重启），
                     // 旧任务不得回写过滤结果 —— 与下方联网分支的取消守卫同一约定
                     if Task.isCancelled { return }
+                    let englishTerms = community + machine
                     if !englishTerms.isEmpty {
                         let queries = [normalized] + englishTerms
                         filtered = local.filter {
