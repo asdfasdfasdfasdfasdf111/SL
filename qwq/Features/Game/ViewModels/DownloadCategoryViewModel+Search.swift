@@ -52,7 +52,27 @@ extension DownloadCategoryViewModel {
             if LocalModCatalog.isReady {
             let local = LocalModCatalog.items(for: selectedSection)
             if !local.isEmpty {
-                let filtered = local.filter { ItemFilter.matches($0, query: normalized) }
+                var filtered = local.filter { ItemFilter.matches($0, query: normalized) }
+                // 中文查询且原词零命中：目录的名称/简介是 Modrinth **英文原文**，
+                // 只按原文匹配等于中文永远搜不到 —— 译出英文候选词后重新过滤；
+                // 已翻译的中文副标题（CardTranslationModel 缓存）一并参与匹配。
+                // 译不出（网络失败/无译文）时保持空结果，与旧行为一致。
+                // 原词已命中时不翻译：不为中国标签（已安装等）能命中的查询白烧翻译 API 配额。
+                if filtered.isEmpty, ChineseText.contains(normalized) {
+                    let englishTerms = await SearchTranslator.translate(normalized)
+                    // 翻译 await 期间用户可能已继续输入（防抖任务被取消重启），
+                    // 旧任务不得回写过滤结果 —— 与下方联网分支的取消守卫同一约定
+                    if Task.isCancelled { return }
+                    if !englishTerms.isEmpty {
+                        let queries = [normalized] + englishTerms
+                        filtered = local.filter {
+                            ItemFilter.matchesAny($0,
+                                                  queries: queries,
+                                                  originalQuery: normalized,
+                                                  translatedSubtitle: translation.translated[$0.id])
+                        }
+                    }
+                }
                 await MainActor.run {
                     // 搜索结果弹入填充点之一：本分支是「用户输入关键词 → 本地全量目录检索结果写回」，
                     // 与下面的联网检索同属「搜索结果出现」语义（见 searchPopInIds 声明处的说明）：

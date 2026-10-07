@@ -132,4 +132,59 @@ final class ItemFilterTests: XCTestCase {
         let it = item(name: "Sodium", subtitle: "Fast renderer", tags: ["optimization"])
         XCTAssertFalse(ItemFilter.matches(it, query: "zzzz-not-present"))
     }
+
+    // MARK: - 多候选词过滤（中文搜索的本地目录路径）
+
+    /// 中文搜索的接线前提：本地目录的名称/简介是英文原文，中文原词经 SearchTranslator
+    /// 译出英文候选词后由 `matchesAny` 逐词匹配 —— 任一词命中即命中。
+    func testMatchesAnyHitsViaEnglishTerm() async {
+        let sodium = item(name: "Sodium", subtitle: "A modern rendering engine")
+        XCTAssertTrue(ItemFilter.matchesAny(sodium,
+                                            queries: ["钠", "sodium"],
+                                            originalQuery: "钠",
+                                            translatedSubtitle: nil),
+                      "英文候选词 sodium 应命中标题")
+    }
+
+    /// 中文原词本身也参与匹配（中文标签/中文副标题的场景不依赖翻译）
+    func testMatchesAnyStillTriesOriginalQuery() async {
+        let installed = item(name: "X", tags: ["已安装"])
+        XCTAssertTrue(ItemFilter.matchesAny(installed,
+                                            queries: ["已安装", "installed"],
+                                            originalQuery: "已安装",
+                                            translatedSubtitle: nil))
+    }
+
+    /// 已翻译的中文副标题只对**中文原词**匹配 —— 它不可能命中英文候选词
+    func testMatchesAnyUsesTranslatedSubtitleForOriginalQuery() async {
+        let it = item(name: "Sodium", subtitle: "A modern rendering engine")
+        XCTAssertTrue(ItemFilter.matchesAny(it,
+                                            queries: ["钠", "sodium"],
+                                            originalQuery: "性能",
+                                            translatedSubtitle: "现代化的渲染引擎，大幅优化性能"),
+                      "中文副标题包含原词「性能」应命中")
+        XCTAssertFalse(ItemFilter.matchesAny(item(name: "Sodium", subtitle: "A modern rendering engine"),
+                                             queries: ["钠"],
+                                             originalQuery: "钠",
+                                             translatedSubtitle: nil),
+                       "没有译文候选词时，中文原词不应凭空命中英文字段")
+    }
+
+    /// 候选词逐词尝试：第二个词（render）命中标题 —— 证明不是只试第一个词
+    func testMatchesAnyTriesEveryTerm() async {
+        let it = item(name: "Sodium", subtitle: "Fast renderer")
+        XCTAssertTrue(ItemFilter.matchesAny(it,
+                                            queries: ["钠", "sodium", "render"],
+                                            originalQuery: "钠",
+                                            translatedSubtitle: "快速渲染器"),
+                      "「render」应命中标题 —— 此断言校验候选词真的在逐词尝试")
+    }
+
+    func testMatchesAnyAllMiss() async {
+        let it = item(name: "Sodium", subtitle: "Fast renderer")
+        XCTAssertFalse(ItemFilter.matchesAny(it,
+                                             queries: ["zzz", "钠"],
+                                             originalQuery: "钠",
+                                             translatedSubtitle: nil))
+    }
 }

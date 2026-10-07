@@ -53,6 +53,10 @@ struct CategorySearchBar: View {
                     .fill(Color.white.opacity(0.14))
             )
         }
+        // 搜索框原先贴到窗口右缘（外层 listContainer 的 frame 比内容宽 40pt 且被裁切），
+        // 比下方卡片网格的右缘多凸出 20pt。用户要求左移 15~30px：取 20pt，
+        // 与网格的横向留白对齐；只动位置，不动样式与交互。
         .padding(.top, cardPadding)
+        .padding(.trailing, 20)
     }
 }
