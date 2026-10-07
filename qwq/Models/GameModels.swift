@@ -56,7 +56,10 @@ enum GameSidebarSection: String, CaseIterable, Identifiable {
 /// 上游新增标签后，界面上会一直显示英文，直到这里补上映射。
 /// ⚠️ 键集合是「内容标签 + 分辨率标签 + 光影特性标签」三类的混装，
 /// 与 Modrinth 官方标签集同名不同义的情况存在，改动前先核对上游。
-let ModrinthTagMap: [String: String] = [
+/// ⚠️ 标注 `nonisolated`：不可变 Sendable 常量，且被后台过滤管线
+///（`ItemFilter`，nonisolated）逐条目读取 —— 默认隔离会让它绑到主 actor，
+/// 后台批量匹配每条都跨 actor 访问，既告警又慢。
+nonisolated let ModrinthTagMap: [String: String] = [
     "technology": "科技", "magic": "魔法", "adventure": "冒险",
     "utility": "实用", "optimization": "性能优化", "vanilla-like": "原版风",
     "realistic": "写实风", "worldgen": "世界元素", "food": "食物/烹饪",

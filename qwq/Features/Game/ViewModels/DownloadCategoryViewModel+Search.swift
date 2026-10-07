@@ -52,33 +52,61 @@ extension DownloadCategoryViewModel {
             if LocalModCatalog.isReady {
                 let local = LocalModCatalog.items(for: selectedSection)
                 if !local.isEmpty {
-                    let literalHits = local.filter { ItemFilter.matches($0, query: normalized) }
-                    var filtered = literalHits
+                    // 已翻译副标题快照：后台过滤管线只读值，不触碰主 actor 上的模型
+                    let translatedSnapshot = translation.translated
                     // 中文查询一律取英文候选词并**合并**结果（不能挂在「零命中才触发」上）：
                     // Modrinth 允许作者用中文起项目名，原词常能字面命中少数中文命名模组——
                     // 若命中即短路，定译名能对上的正主（搜「地平线」的 Distant Horizons）
                     // 反而永远进不来，用户实测踩中。字面命中的条目排前面，定译名/机翻
                     // 新增的条目按目录原序接在后面；两条来源都取不到（断网）时只剩字面结果。
-                    if ChineseText.contains(normalized) {
-                        async let communityNames = CommunityNameResolver.englishNames(for: normalized)
+                    //
+                    // ⚠️ 整条过滤管线（两遍 12 万条 + 候选词网络请求）都在**后台线程**跑：
+                    // 上一版在主线程逐条目扫描映射表，中文搜索把整个 App 卡出风火轮（用户实测）。
+                    // 本方法只做收结果与写状态。管线是 detached 任务，不随防抖任务取消而中止
+                    //（最多少烧一两秒后台 CPU），被新输入取代的结果在下方写回点由
+                    // `Task.isCancelled` 拦截，绝不会上屏 —— 与下方联网分支的取消守卫同一约定。
+                    let isChinese = ChineseText.contains(normalized)
+                    let pipeline = Task.detached(priority: .userInitiated) { () -> [DownloadedItem] in
+                        // 第一遍：原词字面匹配（名称/简介/标签/已翻译副标题）
+                        let literalHits = ItemFilter.filterItems(in: local,
+                                                                 queries: [normalized],
+                                                                 originalQuery: normalized,
+                                                                 translatedSubtitles: translatedSnapshot)
+                        guard isChinese else { return literalHits }
+                        // 第二遍：MC 百科定译名（含中英文对）与机翻并发取，合并其余命中
+                        async let communityNames = CommunityNameResolver.names(for: normalized)
                         async let machineTerms = SearchTranslator.translate(normalized)
-                        let (community, machine) = await (communityNames, machineTerms)
-                        // 两个 await 期间用户可能已继续输入（防抖任务被取消重启），
-                        // 旧任务不得回写过滤结果 —— 与下方联网分支的取消守卫同一约定
-                        if Task.isCancelled { return }
-                        let englishTerms = community + machine
-                        if !englishTerms.isEmpty {
-                            let literalIds = Set(literalHits.map { $0.id })
-                            let extra = local.filter {
-                                !literalIds.contains($0.id) &&
-                                ItemFilter.matchesAny($0,
-                                                      queries: englishTerms,
-                                                      originalQuery: normalized,
-                                                      translatedSubtitle: translation.translated[$0.id])
-                            }
-                            filtered = literalHits + extra
+                        let (resolved, machine) = await (communityNames, machineTerms)
+                        guard !Task.isCancelled else { return literalHits }
+                        let englishTerms = resolved.map(\.english) + machine
+                        guard !englishTerms.isEmpty else { return literalHits }
+                        let literalIds = Set(literalHits.map { $0.id })
+                        let extra = ItemFilter.filterItems(in: local,
+                                                           queries: englishTerms,
+                                                           originalQuery: normalized,
+                                                           translatedSubtitles: translatedSnapshot)
+                            .filter { !literalIds.contains($0.id) }
+                        // 卡片显示名换定译中文名：既然拿到了社区定译，列表就不该顶着英文名
+                        //（英文原名仍在简介与目录数据里，英文搜索不受影响 —— 过滤始终
+                        // 针对原始目录，改的只是这批展示副本）
+                        let chineseByEnglish = Dictionary(
+                            resolved.compactMap { pair -> (String, String)? in
+                                guard let chinese = pair.chinese else { return nil }
+                                return (pair.english.lowercased(), chinese)
+                            },
+                            uniquingKeysWith: { first, _ in first })
+                        let renamedExtra = extra.map { item -> DownloadedItem in
+                            guard let chinese = chineseByEnglish[item.name.lowercased()] else { return item }
+                            return DownloadedItem(id: item.id,
+                                                  name: chinese,
+                                                  subtitle: item.subtitle,
+                                                  iconURL: item.iconURL,
+                                                  tags: item.tags)
                         }
+                        return literalHits + renamedExtra
                     }
+                    let filtered = await pipeline.value
+                    if Task.isCancelled { return }
                     await MainActor.run {
                     // 搜索结果弹入填充点之一：本分支是「用户输入关键词 → 本地全量目录检索结果写回」，
                     // 与下面的联网检索同属「搜索结果出现」语义（见 searchPopInIds 声明处的说明）：

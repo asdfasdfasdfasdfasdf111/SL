@@ -36,6 +36,7 @@
 //
 
 import XCTest
+import os
 @testable import qwq
 
 // MARK: - 测试替身与小工具
@@ -364,34 +365,49 @@ final class JavaResolverBridgeTests: XCTestCase {
     /// 并发调用各持自己的信号量：不得死锁、不得互相污染返回值。
     /// 每个迭代都注入各自的替身，因此可以断言**每次都能拿到自己的结果**，
     /// 而不是像改写前那样只能断言「都返回 nil」（那种断言在早退分支下毫无区分力）。
+    ///
+    /// ⚠️ 并发载体必须是 **GCD 全局队列线程**（与生产路径 `SLLaunchBridge.slLaunch`
+    /// 的 `DispatchQueue.global` 一致），不能用 `Task.detached`：
+    /// `resolveSynchronously` 会用信号量阻塞当前线程最长 8s，从协程池线程调用等于
+    /// 占住池宽度；CI runner 只有 3~4 核，6 个并发把池占满后，真正干活的后台任务
+    /// 排不进池，全员超时拿 nil（本地高核数侥幸通过 —— 典型的「绿在本地红在 CI」，
+    /// 2026-10-07 macos-15 与 macos-26 两个 runner 上实测均红）。
+    /// 完成等待用 continuation 挂起而不是信号量阻塞：本用例跑在主 actor 上，
+    /// 阻塞它会让内部分析任务需要的 `MainActor.run` 永远排不上。
     func testConcurrentCallsDoNotDeadlockOrCrossTalk() async {
-        await withTaskGroup(of: (Int, URL?).self) { group in
-            for index in 0..<6 {
-                group.addTask {
-                    let installation = JavaInstallation(
-                        executableURL: URL(fileURLWithPath: "/opt/stub/java\(index)/bin/java"),
-                        majorVersion: 8 + index,
-                        fullVersion: "\(8 + index).0.1",
-                        architecture: .universal,
-                        vendor: "stub",
-                        isCompatible: true,
-                        isJDK: true
-                    )
-                    let url = await Task.detached(priority: .userInitiated) {
-                        JavaResolverBridge.resolveSynchronously(
-                            minimumMajor: 0,
-                            mcVersion: nil,
-                            timeout: 8,
-                            makeResolver: { StubJavaResolver(returning: installation) }
-                        )
-                    }.value
-                    return (index, url)
-                }
+        let results = OSAllocatedUnfairLock<[Int: String]>(initialState: [:])
+        let group = DispatchGroup()
+        for index in 0..<6 {
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                let installation = JavaInstallation(
+                    executableURL: URL(fileURLWithPath: "/opt/stub/java\(index)/bin/java"),
+                    majorVersion: 8 + index,
+                    fullVersion: "\(8 + index).0.1",
+                    architecture: .universal,
+                    vendor: "stub",
+                    isCompatible: true,
+                    isJDK: true
+                )
+                let url = JavaResolverBridge.resolveSynchronously(
+                    minimumMajor: 0,
+                    mcVersion: nil,
+                    timeout: 8,
+                    makeResolver: { StubJavaResolver(returning: installation) }
+                )
+                results.withLock { $0[index] = url?.path }
+                group.leave()
             }
-            for await (index, url) in group {
-                XCTAssertEqual(url?.path, "/opt/stub/java\(index)/bin/java",
-                               "第 \(index) 次并发调用拿到了别人的结果，说明信号量/结果容器被串扰")
-            }
+        }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            group.notify(queue: .global()) { continuation.resume() }
+        }
+        let snapshot = results.withLock { $0 }
+        XCTAssertEqual(snapshot.count, 6,
+                       "6 次并发调用都应拿到结果；nil 意味着超时（协程池/线程饥饿或串扰）")
+        for (index, path) in snapshot {
+            XCTAssertEqual(path, "/opt/stub/java\(index)/bin/java",
+                           "第 \(index) 次并发调用拿到了别人的结果，说明信号量/结果容器被串扰")
         }
     }
 }

@@ -2,8 +2,11 @@ import Foundation
 
 // MARK: - 搜索翻译（中文 → 英文，自 GameViews 拆出）
 // 调用 MyMemory 翻译 API，带内存缓存（上限 100 条，超出清空一半）。
+//
+// ⚠️ 标注 `nonisolated`：在中文搜索的后台过滤管线里被调用，网络与响应解析
+// 不应折回主线程（缓存有锁保护，本就可跨线程使用）。
 
-enum SearchTranslator {
+nonisolated enum SearchTranslator {
     /// 译文缓存（原文 → 候选词列表）。⚠️ static var、全局、无上限增长，
     /// 靠下面「满 100 条就砍掉一半」的粗粒度策略控制体积。含锁保护，可跨线程使用。
     private static var cache: [String: [String]] = [:]

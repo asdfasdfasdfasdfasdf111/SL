@@ -187,4 +187,39 @@ final class ItemFilterTests: XCTestCase {
                                              originalQuery: "钠",
                                              translatedSubtitle: nil))
     }
+
+    // MARK: - 批量过滤（filterItems，12 万条本地目录的后台路径）
+
+    /// 批量路径与逐条目 matchesAny 同语义：候选词命中 + 已翻译中文副标题对原词命中
+    func testFilterItemsMatchesCandidatesAndTranslatedSubtitles() async {
+        let sodium = item(name: "Sodium", subtitle: "A modern rendering engine", tags: [])
+        let chineseNamed = item(name: "村庄地平线 Village Horizons +", subtitle: "villagers live better")
+        let translated = ["sodium-id": "现代化的渲染引擎，大幅优化性能"]
+        let result = ItemFilter.filterItems(
+            in: [sodium, chineseNamed],
+            queries: ["地平线", "sodium"],
+            originalQuery: "地平线",
+            translatedSubtitles: translated)
+        XCTAssertEqual(Set(result.map { $0.id }), Set([sodium.id, chineseNamed.id]),
+                       "英文候选词命中 Sodium，中文副标题命中 Village Horizons")
+    }
+
+    /// 「中文译名 → 英文标签键」的反查在批量路径里被预计算成键集合：行为与逐条目扫描等价
+    func testFilterItemsPrecomputesTagKeys() async {
+        let tagged = item(name: "X", subtitle: "y", tags: ["optimization"])
+        let result = ItemFilter.filterItems(in: [tagged],
+                                            queries: ["性能优化"],
+                                            originalQuery: "性能优化",
+                                            translatedSubtitles: [:])
+        XCTAssertEqual(result.map { $0.id }, [tagged.id], "「性能优化」应经映射表反查命中 optimization 标签")
+    }
+
+    /// 全不命中 ⇒ 空结果（含 translatedSubtitles 为空的常规路径）
+    func testFilterItemsAllMiss() async {
+        let it = item(name: "Sodium", subtitle: "Fast renderer", tags: [])
+        XCTAssertTrue(ItemFilter.filterItems(in: [it],
+                                             queries: ["zzz", "钠"],
+                                             originalQuery: "钠",
+                                             translatedSubtitles: [:]).isEmpty)
+    }
 }
