@@ -114,7 +114,9 @@ struct MicrosoftLoginCardView: View {
         }
         .padding(20)
         .frame(width: 440)
-        .background(RoundedRectangle(cornerRadius: 16).fill(Color.white.opacity(0.09)))
+        // 登录卡片浮在启动页内容之上 → FloatingGlass（单层玻璃规则）
+        .background(FloatingGlass(shape: RoundedRectangle(cornerRadius: 16),
+                                  tint: Color.white.opacity(0.09)))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
                 .stroke(Color.primary.opacity(0.18), lineWidth: 1)

@@ -109,9 +109,10 @@ struct PopupCardScaffold<Header: View, Content: View>: View {
         }
         .frame(width: cardWidth)
         // 毛玻璃卡片 + 外阴影：本弹窗不是系统 sheet，背景需要自己画。
+        // 弹窗浮在内容面板之上 → 用 FloatingGlass（单层玻璃规则），tint 数值不变。
         .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white.opacity(0.09))
+            FloatingGlass(shape: RoundedRectangle(cornerRadius: 16),
+                          tint: Color.white.opacity(0.09))
                 .shadow(color: .black.opacity(0.2), radius: 20, x: 0, y: 8)
         )
         // 入场动画初始态：缩小 + 全透明，onAppear 后动画到 1 —— 故初值必须为 false。

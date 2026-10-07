@@ -2,11 +2,15 @@
 //  ContentView.swift
 //  应用根视图（窗口内容层）。
 //
-//  职责：三段式结构 ——
-//    ① 主内容 `mainContent`：毛玻璃背景 + HomeHeader 标题栏 + categoryCanvas 分类画布；
+//  职责：三段式结构（外面包着一个「挖洞合成组」，见 body 内注释）——
+//    ① 主内容 `mainContent`：HomeHeader 标题栏 + categoryCanvas 分类画布
+//       （流动渐变背景在合成组**外**，是所有玻璃共同的那一层「底」）；
 //    ② 全局叠加层 `RootOverlays`（弹窗 / 提示 / 下载圆按钮）：放在页面切换层**之外**，
 //       因此不随页面卸载；它必须声明在 mainContent 之后（同 zIndex 时由声明顺序决定上下）；
 //    ③ 全局提示横幅 `NoticeOverlay`（PopupManager / hint 的唯一可见出口）。
+//       原先是根 ZStack 的 `.overlay`，2026-10-08 为让横幅玻璃也参与「单层玻璃」
+//       挖洞（见 ViewComponents.FloatingGlass）移入合成组，zIndex(400) 保住
+//       「横幅在所有叠加层之上」的层级契约（RootOverlays 内最高 300）。
 //  边界：本视图**只渲染、只转发事件**，不含业务决策 ——
 //    页面导航归 NavigationState、拖拽安装归 DropInstallCoordinator、
 //    启动提示归 LaunchPanelState（注入式：本视图只订阅、不创建）、
@@ -42,22 +46,46 @@ struct ContentView: View {
     
     var body: some View {
         ZStack {
-            // 顶部标题栏与分类导航永久保留；下载详情只替换导航栏下方的内容区。
-            // 不能在这里整页替换，否则会把用户要求保留的导航栏一并卸载。
-            mainContent
+            // 最底：流动渐变氛围光（橙/粉/紫暖色，15s 周期漂移，见 UI/LaunchBackground.swift）。
+            // ⚠️ 2026-10-06 用户要求「毛玻璃全都要透明」：这里原本又叠了一层 `.fullScreenUI`
+            // 深色材质，把渐变整体压暗（观感发黑）。现直接去掉该层，只留渐变本身。
+            // ⚠️ 2026-10-08 单层玻璃规则（用户定稿）：上层玻璃要「删除」压在下面的玻璃。
+            // 为此渐变必须留在挖洞合成组**之外** —— FloatingGlass 用 destinationOut 擦掉
+            // 组内下层玻璃后，露出来的就是这层裸渐变，上层玻璃底下才永远只有一层玻璃
+            // （组件侧约定见 ViewComponents.FloatingGlass 的文档注释）。
+            // 拖放落点挂在本层（作用范围同为整窗）。
+            // ⚠️ 只渲染**一层**：这里曾并排叠过两层完全相同的 LaunchBackground
+            //（第二层只为挂 onDrop）—— 每层都是整窗 220pt 半径的常驻动画模糊，
+            // 叠两层等于白烧一倍 GPU，视觉上则毫无差别（不透明同色渐变叠自身不变）。
+            LaunchBackground()
+                .onDrop(of: [.fileURL], isTargeted: $interaction.isDropTargeted) { providers in
+                    return dropInstall.handle(providers: providers)
+                }
+            // 挖洞合成组：主内容 + 全局叠加层 + 顶部提示都在组内。
+            // FloatingGlass 的挖洞（destinationOut）只擦「同组内先画的像素」——所以
+            // 所有会压在别人上面的玻璃面都必须声明在本组内，组外渐变不受挖洞影响。
+            ZStack {
+                // 顶部标题栏与分类导航永久保留；下载详情只替换导航栏下方的内容区。
+                // 不能在这里整页替换，否则会把用户要求保留的导航栏一并卸载。
+                mainContent
 
-            // 全局弹窗/提示/圆按钮：放在页面切换层之外，不随页面卸载。
-            // 必须置于 mainContent 之后：本层与 mainContent 的 zIndex 同为默认值，
-            // 由声明顺序决定上下关系，调换位置会使全部叠加层落到主内容之下。
-            // 各叠加层之间的层级与顺序由 RootOverlays 内部保留。
-            RootOverlays(launchPanel: launchPanel,
-                         dropInstall: dropInstall,
-                         interaction: interaction,
-                         navigation: navigation)
+                // 全局弹窗/提示/圆按钮：放在页面切换层之外，不随页面卸载。
+                // 必须置于 mainContent 之后：本层与 mainContent 的 zIndex 同为默认值，
+                // 由声明顺序决定上下关系，调换位置会使全部叠加层落到主内容之下。
+                // 各叠加层之间的层级与顺序由 RootOverlays 内部保留。
+                RootOverlays(launchPanel: launchPanel,
+                             dropInstall: dropInstall,
+                             interaction: interaction,
+                             navigation: navigation)
+
+                // 全局用户提示层（PopupManager / hint 的唯一可见出口）：仅顶部横幅区域可点，
+                // 其余区域点击穿透到下方界面。zIndex(400) 高于 RootOverlays 内最高档（300），
+                // 保住原 .overlay 时代「横幅盖住一切叠加层」的层级契约（文件头③有沿革）。
+                NoticeOverlay(center: NoticeCenter.shared, theme: ThemeManager.shared)
+                    .zIndex(400)
+            }
+            .compositingGroup()
         }
-        // 全局用户提示层（PopupManager / hint 的唯一可见出口）：仅顶部横幅区域可点，
-        // 其余区域点击穿透到下方界面；不参与、不改变原有视图层级。
-        .overlay { NoticeOverlay(center: NoticeCenter.shared, theme: ThemeManager.shared) }
         .environmentObject(settings)
         // 切换分类时自动收起下载详情（下载与圆按钮保持，仅关闭覆盖层）
         .onChange(of: navigation.selectedCategory) { _ in
@@ -88,21 +116,11 @@ struct ContentView: View {
 
     /// 主内容页（分类导航 + 内容区 + 拖拽背景），与下载详情页互斥整页切换：
     /// 详情页打开时本视图从视图树卸载，关闭后重建（状态靠全局单例/磁盘缓存兜底）。
+    /// ⚠️ 流动渐变背景（LaunchBackground）不在这里 —— 它在 body 里、挖洞合成组**外**
+    /// （单层玻璃规则的「底」，沿革见 body 内注释与文件头①）。
     @ViewBuilder
     private var mainContent: some View {
         ZStack {
-            // 底层：流动渐变氛围光（橙/粉/紫暖色，15s 周期漂移，见 UI/LaunchBackground.swift）。
-            // ⚠️ 2026-10-06 用户要求「毛玻璃全都要透明」：这里原本又叠了一层 `.fullScreenUI`
-            // 深色材质，把渐变整体压暗（观感发黑）。现直接去掉该层，只留渐变本身 ——
-            // 各面板/方块各自用 BlurView 做局部玻璃，整体才真正透亮。
-            // 拖放落点也挂在这一层上（作用范围同为整窗）。
-            // ⚠️ 只渲染**一层**：这里曾并排叠过两层完全相同的 LaunchBackground
-            //（第二层只为挂 onDrop）—— 每层都是整窗 220pt 半径的常驻动画模糊，
-            // 叠两层等于白烧一倍 GPU，视觉上则毫无差别（不透明同色渐变叠自身不变）。
-            LaunchBackground()
-                .onDrop(of: [.fileURL], isTargeted: $interaction.isDropTargeted) { providers in
-                    return dropInstall.handle(providers: providers)
-                }
             // 滚轮/触控板横向滚动 → 翻分类页（此前只有鼠标拖拽能翻页，滚轮完全没接）。
             // 放在内容层**下面**：纵向滚动仍由列表等 ScrollView 自己消费，不受影响。
             HorizontalScrollCatcher { step in

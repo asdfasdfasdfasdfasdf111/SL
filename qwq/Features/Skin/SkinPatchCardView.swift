@@ -89,9 +89,10 @@ struct SkinPatchCardView: View {
         // 横长方形：宽度定死、高度随内容。460 与下载页弹窗（420）同量级，启动页放得下
         .frame(width: 460)
         .background(
-            RoundedRectangle(cornerRadius: 16)
-                // 用材质而非纯色：这张卡片浮在启动页任意内容之上，材质能保证任何底色下都可读
-                .fill(Color.white.opacity(0.09))
+            // 这张卡片浮在启动页任意内容之上 → FloatingGlass（单层玻璃规则），
+            // 真模糊层保证下层玻璃被「删除」、任何底色下玻璃都只有这一层。
+            FloatingGlass(shape: RoundedRectangle(cornerRadius: 16),
+                          tint: Color.white.opacity(0.09))
                 .shadow(color: .black.opacity(0.2), radius: 20, x: 0, y: 8)
         )
         // **高光**：与 `LoaderSelectorCard` 的选中态同一套写法（accent 描边 2pt）。

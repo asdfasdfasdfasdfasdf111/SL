@@ -11,6 +11,9 @@
 //     层级关系为：主内容 < 圆形按钮(40) < 任务/失败气泡(100 / 300) < 拖拽高亮(150)
 //     < 安装弹窗(200)。改动数值或顺序即改变遮挡关系，属于视觉变更。
 //     （两颗气泡共用同一锚点，正常情况下不会同时出现；万一同时出现，失败提示在上。）
+//     ⚠️ 本视图整体之上还有一层 zIndex(400) 的全局提示横幅（NoticeOverlay），
+//     它与本视图同处 ContentView 的挖洞合成组（单层玻璃规则，见 FloatingGlass），
+//     不在本视图内部 —— 改动这里的最上层级时记得核对那层的取值。
 //  3. 气泡锚点 `pillAnchor`（450, 200）以本视图左上角为坐标原点。本视图尺寸与
 //     原根 ZStack 一致（各叠加层中自带铺满容器者），故坐标语义不变。
 //
@@ -82,6 +85,7 @@ struct RootOverlays: View {
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(ThemeManager.shared.accentColor, lineWidth: 3)
 
+                    // 拖入提示卡浮在各玻璃面板之上 → FloatingGlass（单层玻璃规则）
                     VStack(spacing: 8) {
                         Image(systemName: "arrow.down.doc.fill")
                             .font(.system(size: 30, weight: .medium))
@@ -96,8 +100,8 @@ struct RootOverlays: View {
                     .padding(.horizontal, 20)
                     .padding(.vertical, 16)
                     .background(
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(Color.white.opacity(0.14))
+                        FloatingGlass(shape: RoundedRectangle(cornerRadius: 14),
+                                      tint: Color.white.opacity(0.14))
                             .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
                     )
                 }
@@ -111,8 +115,8 @@ struct RootOverlays: View {
             // zIndex(40) 高于详情页(30)：详情页打开时按钮仍可见可点。
             if navigation.isDownloadCircleVisible {
                 ZStack {
-                    Circle()
-                        .fill(Color.white.opacity(0.14))
+                    // 圆按钮浮在下载详情页的玻璃卡之上 → FloatingGlass（单层玻璃规则）
+                    FloatingGlass(shape: Circle(), tint: Color.white.opacity(0.14))
                         .frame(width: Self.downloadCircleDiameter, height: Self.downloadCircleDiameter)
                         .overlay(
                             Circle()

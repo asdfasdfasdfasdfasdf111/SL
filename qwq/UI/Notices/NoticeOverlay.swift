@@ -5,10 +5,11 @@ import SwiftUI
 ///
 /// ## 层级契约（此前是隐式的，这里写明）
 ///
-/// 本视图由 `ContentView` 以 `.overlay { }` 挂在**根 ZStack 之外**，因此它恒在
-/// 窗口内所有图层之上 —— 包括 `RootOverlays` 里 zIndex(200) 的安装弹窗与
+/// 本视图挂在 `ContentView` 根部**挖洞合成组内**、zIndex(400)（2026-10-08 前是根
+/// ZStack 的 `.overlay`，为参与「单层玻璃」挖洞移入组内，沿革见 ContentView 文件头③），
+/// 因此它恒在窗口内所有图层之上 —— 包括 `RootOverlays` 里 zIndex(200) 的安装弹窗与
 /// zIndex(300) 的启动失败气泡。`RootOverlays.swift` 文件头声明的那套
-/// 「40 / 100 / 150 / 200 / 300」契约**不包含本层**，本层在它之上。
+/// 「40 / 100 / 150 / 200 / 300」契约**不包含本层**，本层的 zIndex(400) 在它之上。
 ///
 /// 这是有意为之，不是遗漏。依据（Apple HIG《Modality》）：
 /// `Although an alert can appear on top of all other content — including other modal views —
@@ -187,8 +188,9 @@ private struct NoticeCard: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.14))
+            // 通知横幅浮在头部玻璃面板之上 → FloatingGlass（单层玻璃规则）
+            FloatingGlass(shape: RoundedRectangle(cornerRadius: 12),
+                          tint: Color.white.opacity(0.14))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(accent.opacity(0.35), lineWidth: 1)

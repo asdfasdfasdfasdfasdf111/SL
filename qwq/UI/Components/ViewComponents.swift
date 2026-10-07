@@ -79,6 +79,38 @@ struct BlurView: NSViewRepresentable {
     }
 }
 
+/// 上层浮动的毛玻璃面（弹窗卡片 / 任务药丸 / 浮动按钮等**会压在别的玻璃面板上**的表面）。
+///
+/// 规则（用户定稿 2026-10-08）：**毛玻璃永远只有一层** —— 上层玻璃要「删除」压在
+/// 它下面的玻璃，不允许两层半透明白直接叠出更白的一块（叠白会糊视野）。
+///
+/// 实现（纯 SwiftUI 挖洞，不用 NSVisualEffectView —— 实测 `.withinWindow` 的窗内
+/// 模糊会把卡片自己的文字/按钮一起磨白，见 2026-10-08 截图 A/B）：
+/// 1. 先用 `destinationOut` 在自己位置把**合成组内**已画的一切（下层玻璃的增白、
+///    边界、内容与阴影）整块擦掉 —— 即「删除后面的毛玻璃」；
+/// 2. 再画自己这一层定稿 tint。洞底露出的是合成组**之外**的裸 `LaunchBackground`
+///    渐变，于是上层玻璃底下永远只有一层玻璃。
+///
+/// ⚠️ 前提（耦合约定）：本组件只在 `ContentView` 根部的「挖洞合成组」内生效 ——
+/// 那个 ZStack 打了 `.compositingGroup()`，且 `LaunchBackground` 在组**外**。
+/// 把浮层移出该组（或把渐变挪进组内）都会让挖洞失效/漏底，改动前先读 ContentView。
+struct FloatingGlass<Shape: SwiftUI.Shape>: View {
+    let shape: Shape
+    /// 半透明白 tint：由调用方按各面板定稿数值传入（如 `Color.white.opacity(0.09)`），
+    /// 本组件不替任何面板决定颜色。
+    let tint: Color
+
+    var body: some View {
+        ZStack {
+            // 挖洞：白块不透明 → 洞内全擦；圆角抗锯齿由同一 shape 保证与 tint 边缘重合。
+            shape.fill(Color.white)
+                .blendMode(.destinationOut)
+            // 自己这一层玻璃。
+            shape.fill(tint)
+        }
+    }
+}
+
 /// 赞助方式卡片：180×180 固定方块，上方图片 + 下方标题。
 /// 图片资源缺失时**降级成灰底 + 「图片缺失」文案**而非留空 —— 便于一眼看出是资源问题。
 struct SponsorCard: View {

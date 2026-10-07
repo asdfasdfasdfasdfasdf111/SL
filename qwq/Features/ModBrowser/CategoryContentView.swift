@@ -361,9 +361,11 @@ struct CategoryContentView: View {
         }
         .padding(6)
         .frame(width: 216)
+        // 账号面板浮在本卡（左卡片）的玻璃之上 → FloatingGlass（单层玻璃规则），
+        // 面板底下只显示这一层玻璃，不再与左卡片玻璃叠出更白的一块。
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.09))
+            FloatingGlass(shape: RoundedRectangle(cornerRadius: 12),
+                          tint: Color.white.opacity(0.09))
                 .shadow(color: Color.black.opacity(0.28), radius: 10, y: 3)
         )
         .overlay(
