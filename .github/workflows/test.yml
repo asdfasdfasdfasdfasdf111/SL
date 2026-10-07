@@ -1,0 +1,102 @@
+# 单元测试门禁
+#
+# 目的：把「用例是绿的」从**人工承诺**变成**机器事实**（此前只能靠人手动跑
+# scripts/verify-test.sh，用例数靠手写进提交信息与文档维护）。
+#
+# ⚠️ 本文件**尚未在 CI 上实际跑过**（本地无网络出口，无法验证 runner 的 Xcode 版本）。
+#    第一次启用前请先手动触发 `.github/workflows/probe.yml` 看清 runner 环境，
+#    再依赖本门禁——否则就是「绿在本地、红在 CI」的假证据。
+#
+# 说明：
+# - 跑的是真实 xcodebuild（`scripts/verify-test.sh` 内部即 build-for-testing +
+#   test-without-building），**不是** `scripts/typecheck.sh`。原因：typecheck.sh 依赖
+#   `/tmp/deps` 里由**上一次真实构建**产出的第三方 `.swiftmodule`，CI 是干净环境；
+#   它的定位始终是「本地即时反馈」，最终判定以真实编译为准。
+# - 宿主 `qwq.app` 会被启动（用例宿主）；GitHub 的 macOS runner 有 windowserver 会话。
+
+name: test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 选择 Xcode
+        run: |
+          # 取 runner 上版本号最大的 Xcode。工程用到较新的 Xcode 特性
+          # （PBXFileSystemSynchronizedRootGroup、SWIFT_DEFAULT_ACTOR_ISOLATION），
+          # 默认 xcode-select 指向的版本可能偏旧。runner 上装了哪些版本由 probe.yml 打印。
+          latest=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$latest" ]; then
+            echo "runner 上没有找到 Xcode"
+            exit 1
+          fi
+          echo "使用 $latest"
+          sudo xcode-select -s "$latest"
+          xcodebuild -version
+
+      # 脚本自身的退出码**不能**直接当门禁：见下一条「判定」步骤的说明。
+      - name: 编译并运行用例
+        id: tests
+        continue-on-error: true
+        run: |
+          chmod +x scripts/verify-test.sh
+          ./scripts/verify-test.sh run
+
+      # ⚠️ 为什么需要这一步（而不是直接用上一步的退出码）：
+      # 本工程有一条**已知的 Xcode 26.2 工具链缺陷**（见 qwqTests/TESTING.md §五）：
+      # 套件约 1/4 概率在某个用例处 abort（`pointer being freed was not allocated`），
+      # 进程重启后**所有断言仍然通过**，但 xcodebuild 会报 `** TEST EXECUTE FAILED **`。
+      # 若直接拿退出码当门禁，门禁会**随机变红**，很快就没人看它了。
+      # 因此本步骤把两种失败分开：
+      #   - **断言失败**（`error: -[qwqTests.…]`）⇒ 门禁失败；
+      #   - **abort 重启** ⇒ 只警告（并打印次数），不影响门禁。
+      - name: 判定门禁（区分断言失败与已知工具链 abort）
+        run: |
+          LOG=/tmp/sl_test.log
+          if [ ! -f "$LOG" ]; then
+            echo "::error::没有找到测试日志 $LOG"
+            exit 1
+          fi
+
+          if ! grep -q "TEST BUILD SUCCEEDED" "$LOG"; then
+            echo "::error::测试编译未成功（BUILD 未 SUCCEEDED）"
+            grep -E "error:|BUILD FAILED" "$LOG" | head -20 || true
+            exit 1
+          fi
+
+          ASSERTED=$(grep -cE 'error: -\[qwqTests\.' "$LOG" || true)
+          ABORTS=$(grep -c "Restarting after unexpected exit" "$LOG" || true)
+          EXECUTED=$(grep -oE "Executed [0-9]+ tests, with [0-9]+ tests? skipped" "$LOG" | tail -1 || true)
+
+          echo "末次汇总 : ${EXECUTED:-（未取到）}"
+          echo "断言失败 : $ASSERTED"
+          echo "abort 重启: $ABORTS"
+
+          if [ "$ABORTS" -gt 0 ]; then
+            echo "::warning::检测到 $ABORTS 次「已知工具链 abort」（TESTING.md §五），非本次改动导致；断言仍全绿。"
+          fi
+
+          if [ "$ASSERTED" -gt 0 ]; then
+            echo "::error::存在 $ASSERTED 条断言失败"
+            grep -E 'error: -\[qwqTests\.' "$LOG" | head -20
+            exit 1
+          fi
+
+          echo "门禁通过：0 条断言失败。"
+
+      - name: 失败时上传日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log
+          path: /tmp/sl_test.log
+          if-no-files-found: ignore

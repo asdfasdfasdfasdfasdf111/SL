@@ -1,0 +1,56 @@
+# 运行环境探针（**只探查，不门禁**）
+#
+# 为什么单独有这一条（而不是把探针塞进 test.yml）：
+# CI 的 runner 镜像与其中的 Xcode 版本**不随仓库走**，只能实测。
+# 一上来就写完整的测试流水线，很容易得到「绿在本地、红在 CI」的假证据 ——
+# 而排查那种失败的成本远高于先花 1 分钟看清环境。
+#
+# 用法：Actions 页面手动 `Run workflow`（或 push 本文件触发一次），
+# 看输出的「可用 Xcode 列表」与 `xcodebuild -version`，
+# 再回 `.github/workflows/test.yml` 决定是否需要把 `runs-on` 或 Xcode 选择逻辑钉死。
+#
+# 本 workflow **不编译、不跑用例、不设门禁**，所以它可以一直是绿的 ——
+# 它绿不代表代码是好的，只代表 runner 能起来。
+
+name: probe
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/probe.yml'
+
+jobs:
+  probe:
+    runs-on: macos-15
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 系统与工具链
+        run: |
+          echo "===== runner 环境 ====="
+          sw_vers
+          uname -m
+          echo
+          echo "===== 当前 xcode-select ====="
+          xcode-select -p
+          xcodebuild -version || true
+          echo
+          echo "===== 可用 Xcode 列表（test.yml 会自动选版本号最大的那个）====="
+          ls -d /Applications/Xcode*.app 2>/dev/null || echo "（/Applications 下没有 Xcode*.app）"
+          echo
+          echo "===== Swift ====="
+          swift --version || true
+          echo
+          echo "===== macOS SDK ====="
+          xcodebuild -showsdks 2>/dev/null | head -20 || true
+
+      - name: 工程可否被 xcodebuild 识别
+        run: |
+          echo "===== scheme 列表 ====="
+          xcodebuild -project qwq.xcodeproj -list 2>&1 | head -30 || true
+          echo
+          echo "===== 测试脚本是否可执行 ====="
+          ls -la scripts/verify-test.sh || true
