@@ -71,27 +71,22 @@ struct GameSidebarView: View {
             if section == .game { onSelect(section, .release) }
             else { onSelect(section, nil) }
         }) {
-            // 用户要求「中间是文字」：图标+文字整体**居中**；
-            // 展开箭头单独钉在右侧，不参与居中（否则箭头会把文字挤偏）。
-            ZStack {
-                HStack(spacing: 8) {
-                    Image(systemName: section.systemImage)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(selectedSection == section ? .primary : .secondary)
-                        .frame(width: 18)
-                    Text(section.rawValue)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(selectedSection == section ? .primary : .secondary)
-                }
-                .frame(maxWidth: .infinity)
-                HStack {
-                    Spacer(minLength: 0)
-                    // 只有「游戏」这节显示展开箭头。该节目前恒展开，所以箭头是静态装饰。
-                    if section == .game {
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(.secondary)
-                    }
+            // 大分类顶左对齐（2026-10-07 用户要求，取代早先的「图标+文字整体居中」）：
+            // 与下方子分类的左对齐视觉连续，展开箭头仍钉在最右。
+            HStack(spacing: 8) {
+                Image(systemName: section.systemImage)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(selectedSection == section ? .primary : .secondary)
+                    .frame(width: 18)
+                Text(section.rawValue)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(selectedSection == section ? .primary : .secondary)
+                Spacer(minLength: 0)
+                // 只有「游戏」这节显示展开箭头。该节目前恒展开，所以箭头是静态装饰。
+                if section == .game {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(.secondary)
                 }
             }
             .padding(.horizontal, 16)
