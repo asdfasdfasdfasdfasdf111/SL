@@ -42,12 +42,17 @@ struct SupportedMetaSection: View {
                         ForEach(filteredLoaders, id: \.self) { loader in
                             // 资源名解析统一走 LoaderNameResolver —— 视图层不自己拼资源名，
                             // 解析规则变化时只需改那一处。
-                            Image(LoaderNameResolver.assetName(for: loader))
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(height: 28)
-                                .cornerRadius(6)
-                                .shadow(color: .black.opacity(0.12), radius: 2, x: 0, y: 1)
+                            // 解析不出（光影的 canvas、暂无图标的 OptiFine 等）→ 跳过该图标：
+                            // assetName 的 fabric 兜底在这个场景是「冒充」，元信息行宁缺毋滥。
+                            if let asset = LoaderNameResolver.resolvedAssetName(for: loader),
+                               NSImage(named: asset) != nil {
+                                Image(asset)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(height: 28)
+                                    .cornerRadius(6)
+                                    .shadow(color: .black.opacity(0.12), radius: 2, x: 0, y: 1)
+                            }
                         }
                     }
                 }

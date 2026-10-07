@@ -180,12 +180,22 @@ struct VersionLoaderCard: View {
             Text(version)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(.primary)
-            Image(loader)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(height: 32)
-                .cornerRadius(6)
-                .shadow(color: .black.opacity(0.12), radius: 2, x: 0, y: 1)
+            // 资源名不存在（光影的 canvas / 无图标的光影加载器等）→ 中性方块占位，
+            // 绝不显示成空气或错误图标 —— 调用方传入前已经过 LoaderNameResolver，
+            // 不该出现「回退成 Fabric 冒充」的情况。
+            if NSImage(named: loader) != nil {
+                Image(loader)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(height: 32)
+                    .cornerRadius(6)
+                    .shadow(color: .black.opacity(0.12), radius: 2, x: 0, y: 1)
+            } else {
+                Image(systemName: "cube.fill")
+                    .font(.system(size: 24))
+                    .foregroundColor(.secondary.opacity(0.6))
+                    .frame(height: 32)
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity)

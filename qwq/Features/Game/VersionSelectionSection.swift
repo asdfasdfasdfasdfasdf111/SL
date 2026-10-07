@@ -244,7 +244,7 @@ struct VersionSelectionSection: View {
                 VersionLoaderCard(
                     version: version,
                     isSelected: selectedVersion == version,
-                    loader: assetName(for: projectLoaderName(for: version)),
+                    loader: loaderAssetName(for: projectLoaderName(for: version)),
                     theme: theme
                 ) {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.6)) {
@@ -274,5 +274,17 @@ struct VersionSelectionSection: View {
     /// 薄封装，纯粹让上面的调用点读起来短一些；解析规则仍在 LoaderNameResolver。
     private func assetName(for loader: String) -> String {
         LoaderNameResolver.assetName(for: loader)
+    }
+
+    /// 版本卡加载器资源名（按页面类型区分兜底语义）：
+    /// - 模组：加载器真实存在（fabric/forge/…），沿用既有兜底；
+    /// - 光影/资源包：加载器只有 iris / optifine（光影）或根本没有（资源包），
+    ///   解析不出就用「unknown」占位名交给 VersionLoaderCard 画方块 ——
+    ///   旧逻辑在这里回退 fabric，光影页满屏 Fabric 图标就是它（用户实测）。
+    private func loaderAssetName(for loader: String) -> String {
+        if pageType == .shader || pageType == .resourcePack {
+            return LoaderNameResolver.resolvedAssetName(for: loader) ?? "unknown"
+        }
+        return assetName(for: loader)
     }
 }

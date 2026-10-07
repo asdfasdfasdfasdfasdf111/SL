@@ -9,8 +9,16 @@ enum LoaderNameResolver {
     /// `ModLoaderTests` 的「assetName 不是单射」用例），这里只做字符串反查。
     /// `neoforged` 是历史版本后缀里出现过的别名（enum 无此 case），故补一行特例；
     /// 其余大小写不敏感地反查 enum，未知 key 返回 nil、由调用方决定回退。
+    ///
+    /// 光影加载器（Modrinth 光影项目的 loaders 字段就是这些值）：`iris` / `optifine`
+    /// 不是模组加载器，绝不能走「未知 → fabric」的兜底冒充 —— 认不出就返回 nil，
+    /// 由调用方决定显示方块占位（VersionLoaderCard）或跳过图标（SupportedMetaSection）。
+    /// 「OptiFine」暂无平面图标资源（官方不提供，2026-10-07 wiki/官网/mcmod 三处取源均失败），
+    /// 先映射到资源名占位：资源缺失时按未知处理，日后补图即自动点亮。
     static func resolvedAssetName(for loader: String) -> String? {
         let key = loader.lowercased()
+        if key == "optifine" { return "OptiFine" }
+        if key == "iris" { return "Iris" }
         if key == "neoforged" { return "NeoForged" }
         return ModLoader(rawValue: key)?.assetName
     }
