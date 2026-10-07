@@ -1,0 +1,57 @@
+# 发版流水线：打 v* 标签 → Release 编译 → 打包 zip → 创建 GitHub Release 并上传。
+#
+# 与 test.yml 的分工：test.yml 管「push/PR 的用例门禁」，本文件只在发版标签上跑。
+# 产物（qwq-<tag>.zip）是 App 内自动更新（AppUpdateService → AppUpdateCoordinator）
+# 的更新源：releases/latest 的 tag_name 供版本比较，zip 资产供下载换装，
+# 因此**发版必须带 zip**，否则客户端会视为「没有可用更新」。
+#
+# 前置：仓库必须保持 public（自动更新的 Releases API 与资产下载走匿名访问）。
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 选择 Xcode
+        run: |
+          latest=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$latest" ]; then
+            echo "runner 上没有找到 Xcode"
+            exit 1
+          fi
+          echo "使用 $latest"
+          sudo xcode-select -s "$latest"
+          xcodebuild -version
+
+      - name: Release 编译
+        run: |
+          xcodebuild -project qwq.xcodeproj -scheme qwq -configuration Release build \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO 2>&1 | tail -5
+
+      - name: 打包 zip
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            build/Build/Products/Release/qwq.app "qwq-${GITHUB_REF_NAME}.zip"
+          ls -la "qwq-${GITHUB_REF_NAME}.zip"
+
+      - name: 创建 Release 并上传
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "qwq-${GITHUB_REF_NAME}.zip" \
+            --title "$GITHUB_REF_NAME" \
+            --notes "自动构建于 commit ${GITHUB_SHA::7}。" \
+            --verify-tag

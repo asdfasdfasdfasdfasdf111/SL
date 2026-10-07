@@ -90,6 +90,12 @@ struct SLApp: App {
                     .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
                 }
             }
+            CommandMenu("帮助") {
+                // 手动检查更新入口：与启动后的自动检查共用同一编排（手动会给「已是最新」反馈）
+                Button("检查更新…") {
+                    Task { await AppUpdateCoordinator.shared.checkAndPromptIfNeeded(force: true) }
+                }
+            }
         }
 
         // 「设置…」（⌘,）：`Settings` 场景由系统自动在 App 菜单里生成入口，无需手工建菜单项。

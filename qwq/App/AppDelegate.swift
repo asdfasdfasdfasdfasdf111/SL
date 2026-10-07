@@ -43,5 +43,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // 开发期 UI 自拍（仅 SL_SNAPSHOT_DIR 环境变量存在时生效，产品运行不参与）。
         SnapshotHarness.runIfRequested()
+        // 自动更新检查：延迟 5s 启动（首帧/目录预热/快照优先），检查-提示是静默的，
+        // 下载与换装只在用户点了「立即更新」后才发生；手动入口在「帮助」菜单。
+        // 5 秒的依据：快照 harness 首帧等待 3s，再晚用户已经开点了，再早抢首屏资源。
+        Task.detached(priority: .utility) {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            await AppUpdateCoordinator.shared.checkAndPromptIfNeeded()
+        }
     }
 }
