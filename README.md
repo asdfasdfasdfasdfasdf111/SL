@@ -2,7 +2,7 @@
 
 [![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-blue)](https://www.apple.com/macos/)
 [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](./LICENSE)
-[![Status](https://img.shields.io/badge/status-1.0-orange)](./CHANGELOG.md)
+[![Status](https://img.shields.io/badge/status-Beta-orange)](./CHANGELOG.md)
 
 SL（应用内名 **qwq**）是一个使用 **Swift + SwiftUI** 原生编写的 macOS Minecraft 启动器。启动核心为从零实现的 Swift 原生代码（`qwq/SLCore`），部分算法（如离线 UUID 生成）移植自 PCL2，均在源码注释中标注了来源。
 
