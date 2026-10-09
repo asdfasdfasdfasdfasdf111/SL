@@ -1,6 +1,6 @@
 # SL 更新服务 · 站点配置（Apache；InfinityFree 等 cPanel 系主机直接生效）
 #
-# 目标：数据目录不可被浏览/执行，静态 JSON 与 zip 正常分发。
+# 目标：数据目录不可被浏览/执行，静态 JSON 与安装包（dmg/zip）正常分发。
 
 # 关掉目录列表（没有 index 的目录不暴露文件清单）
 Options -Indexes
@@ -10,10 +10,10 @@ Options -Indexes
     Require all denied
 </FilesMatch>
 
-# zip 与 json 的分发缓存：检查更新是低频请求，但别让浏览器缓存 latest.json
+# 安装包与 json 的分发缓存：检查更新是低频请求，但别让浏览器缓存 latest.json
 #（否则旧版本号会把「有更新」多藏几分钟）。Header 模块缺失时不报错。
 <IfModule mod_headers.c>
-    <FilesMatch "\.zip$">
+    <FilesMatch "\.(zip|dmg)$">
         Header set Cache-Control "public, max-age=3600"
     </FilesMatch>
     <FilesMatch "\.json$">

@@ -9,28 +9,51 @@
 htdocs/
 ├── index.php            公开页：最新版本 / 更新说明 / 下载按钮 / 历史版本
 ├── .htaccess            关目录列表 + 缓存策略
-├── admin/index.php      管理页：发版登记（唯一写文件的 PHP）
-├── api/latest.json      ← App 检查更新读这里（管理页生成，GitHub 同形 JSON）
-├── data/releases.json   ← 版本档案（管理页生成，公开页读）
-└── updates/             ← 安装包 zip 存放处（FTP 上传，静态分发）
+├── admin/index.php      管理页：手动发版登记（登录 → 选 zip → 发布）
+├── publish.php          一键发版：服务器自动从 GitHub 拉最新 Release（key 鉴权）
+├── config.secret.php    ⚠️ 部署机密：管理密码/发布 key 的盐与哈希（绝不提交 git）
+├── api/latest.json      ← App 检查更新读这里（GitHub 同形 JSON）
+├── data/releases.json   ← 版本档案（公开页读）
+└── updates/             ← 安装包 zip 存放处（静态分发）
 ```
 
 ## 部署（一次性，约 5 分钟）
 
 1. 主机控制面板把域名 `apple.ct.ws` 绑到站点（或主机就是送的这个域名）。
 2. 用 FTP（InfinityFree 免费档只给 FTP，账号在控制面板里看）把 `htdocs/` 里的
-   **全部内容**传到网站根目录（`public_html/`）。
-3. **改管理密码**：编辑 `admin/index.php` 顶部的 `ADMIN_PASSWORD`（改成只有你
-   知道的一长串），重新上传。⚠️ 不改默认值 = 任何人都能替你发版。
-4. 打开 `https://apple.ct.ws/` 应看到「还没有发布任何版本」的空态页。
+   **全部内容**传到网站根目录（`apple.ct.ws/htdocs`）。
+3. **配置机密**：`config.secret.php` 不在 git 里，部署时手动生成：
+   ```bash
+   php -r '
+     $salt = bin2hex(random_bytes(32));
+     $key  = bin2hex(random_bytes(32));
+     echo "admin_salt: $salt\n";
+     echo "admin_hash: " . hash("sha256", $salt . "你的管理密码") . "\n";
+     echo "publish_key: $key\n";
+     echo "key_hash: " . hash("sha256", $key) . "\n";
+   '
+   ```
+   把结果写进服务器上的 `config.secret.php`（格式见文件内注释）。
+4. 打开 `https://apple.ct.ws/` 应看到版本空态页（或已发布的版本）。
 
-## 发版流程（每次发版）
+## 发版（两条路，任选）
 
-1. CI 打出的 `qwq-<版本>.zip`（GitHub Release 页下载）用 FTP 传到 `updates/`。
-2. 打开 `https://apple.ct.ws/admin/` → 登录 → 选 zip、填版本号（如 `v1.7.0`）、
+### A. 一键发布（推荐）：服务器从 GitHub 自动同步
+
+CI 把 zip 传到 GitHub Release 后，本地跑一条命令：
+
+```bash
+bash publish.sh     # 见仓库里 update-server/publish.sh（key 在文件顶部改）
+```
+
+`publish.php` 会调 GitHub Releases API 拉最新 release → 下载 zip 到
+`updates/` → 原子改写 `api/latest.json` + `data/releases.json`。全自动。
+
+### B. 手动上传（管理页）
+
+1. 文件管理器/FTP 把 `qwq-<版本>.zip` 传到 `updates/`；
+2. 打开 `https://apple.ct.ws/admin/` → 用管理密码登录 → 选 zip、填版本号、
    填更新说明 → 「发布」。
-3. 完成。所有旧版 App 下次启动检查更新（读 `/api/latest.json`）即收到提示，
-   点「立即更新」从本站下载 zip 完成换装。
 
 App 端无需任何代码改动：`api/latest.json` 与 GitHub `releases/latest` 同形
 （`tag_name` / `body` / `assets[].browser_download_url`），把

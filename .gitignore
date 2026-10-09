@@ -61,3 +61,12 @@ PCL2/
 
 # opencode 项目配置 & 第三方 skill 安装目录（勿提交，与 .omo 同理）
 .opencode/
+
+# 更新服务器部署机密（绝不提交：管理密码/发布 key 的盐与哈希）
+update-server/htdocs/config.secret.php
+# 本地一键发布脚本（内含明文发布 key，绝不提交；服务器同步走 GitHub Actions + Secret）
+update-server/publish.sh
+# 挑战/部署临时辅助文件（probe.php 等只用于运维诊断）
+update-server/htdocs/probe.php
+# ZCode 编辑器的本机忽略配置（由工具维护，不入仓库）
+.zcodeignore

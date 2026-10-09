@@ -1,11 +1,16 @@
-# 发版流水线：打 v* 标签 → Release 编译 → 打包 zip → 创建 GitHub Release 并上传。
+# 发版流水线：打 v* 标签 → Release 编译 → 打包 dmg → 创建 GitHub Release 并上传 → 同步服务器。
 #
 # 与 test.yml 的分工：test.yml 管「push/PR 的用例门禁」，本文件只在发版标签上跑。
-# 产物（qwq-<tag>.zip）是 App 内自动更新（AppUpdateService → AppUpdateCoordinator）
-# 的更新源：releases/latest 的 tag_name 供版本比较，zip 资产供下载换装，
-# 因此**发版必须带 zip**，否则客户端会视为「没有可用更新」。
+# 产物（qwq-<tag>.dmg）是 App 内自动更新（AppUpdateService → AppUpdateCoordinator）
+# 的更新源：releases/latest 的 tag_name 供版本比较，dmg 资产供下载换装，
+# 因此**发版必须带 dmg**（zip 仅为 App 端兜底解析，不再作为发版主产物）。
 #
-# 前置：仓库必须保持 public（自动更新的 Releases API 与资产下载走匿名访问）。
+# 发布完成后自动调用 apple.ct.ws/publish.php（GitHub Actions 解 slowAES 挑战后
+# 带 key 触发），服务器把最新 dmg 同步到本站 updates/ 并改写 latest.json ——
+# App 检查更新时读到的是服务器已就位的最新版本，无需每次打开都检测。
+#
+# 前置：仓库必须保持 public（Releases API 与资产下载走匿名访问）；
+#       仓库 Secrets 需配 PUBLISH_KEY（服务器 publish.php 的鉴权 key）。
 
 name: release
 
@@ -41,17 +46,64 @@ jobs:
           xcodebuild -project qwq.xcodeproj -scheme qwq -configuration Release build \
             -derivedDataPath build CODE_SIGNING_ALLOWED=NO 2>&1 | tail -5
 
-      - name: 打包 zip
+      - name: 打包 dmg
         run: |
-          ditto -c -k --sequesterRsrc --keepParent \
-            build/Build/Products/Release/qwq.app "qwq-${GITHUB_REF_NAME}.zip"
-          ls -la "qwq-${GITHUB_REF_NAME}.zip"
+          hdiutil create -volname "SL 启动器" -srcfolder build/Build/Products/Release/qwq.app \
+            -ov -format UDZO -imagekey zlib-level=9 "qwq-${GITHUB_REF_NAME}.dmg"
+          ls -la "qwq-${GITHUB_REF_NAME}.dmg"
 
-      - name: 创建 Release 并上传
+      - name: 创建 Release 并上传 dmg
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" "qwq-${GITHUB_REF_NAME}.zip" \
-            --title "$GITHUB_REF_NAME" \
-            --notes "自动构建于 commit ${GITHUB_SHA::7}。" \
+          gh release create "$GITHUB_REF_NAME" "qwq-${GITHUB_REF_NAME}.dmg" \
+            --title "$GITHUB_REF_NAME (Beta)" \
+            --notes "Beta 版本，自动构建于 commit ${GITHUB_SHA::7}。
+发布后本站（apple.ct.ws）自动同步，App 内「检查更新」即可获得。" \
             --verify-tag
+
+  # 发布后同步到 apple.ct.ws：解 slowAES 挑战 → 调 publish.php → 服务器拉最新包
+  sync-server:
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 触发服务器同步
+        env:
+          PUBLISH_KEY: ${{ secrets.PUBLISH_KEY }}
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess, urllib.request
+
+          key = os.environ["PUBLISH_KEY"]
+          url = "https://apple.ct.ws/publish.php"
+
+          def call(cookie=None):
+              req = urllib.request.Request(url + (("?key=" + key) if not cookie else ""),
+                  headers={"User-Agent": "SL-Release-Sync/1.0"})
+              if cookie:
+                  req.add_header("Cookie", "__test=" + cookie)
+              with urllib.request.urlopen(req, timeout=120) as r:
+                  return r.read().decode(errors="replace")
+
+          page = call()
+          if "toNumbers(" in page:
+              a = re.search(r'a=toNumbers\("([0-9a-f]{32})"', page).group(1)
+              b = re.search(r'b=toNumbers\("([0-9a-f]{32})"', page).group(1)
+              c = re.search(r'c=toNumbers\("([0-9a-f]{32})"', page).group(1)
+              pt = subprocess.run(["openssl", "enc", "-d", "-aes-128-cbc", "-K", a, "-iv", b, "-nopad"],
+                  input=bytes.fromhex(c), capture_output=True, check=True).stdout
+              cookie = pt.hex()
+              result = call(cookie=cookie)
+          else:
+              # 未带 key 却直接放行：重新带 key 请求
+              result = call(cookie="x")
+              if "forbidden" in result or result.startswith("ok"):
+                  pass
+              else:
+                  result = page
+          print("sync result:", result)
+          if not result.startswith("ok"):
+              raise SystemExit("sync failed: " + result)
+          PY

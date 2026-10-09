@@ -10,14 +10,18 @@
  *        data/releases.json —— 公开页与历史列表读它
  *   4. 完成。所有已装旧版 App 下次启动即收到更新提示。
  *
- * 鉴权：文件级密码。首次部署后**必须**改掉下方 ADMIN_PASSWORD 里的默认值
- *（改成只有你知道的一长串），否则任何人都能替你发版。会话用 PHP session。
+ * 鉴权：文件级密码（哈希存于 htdocs/config.secret.php，不提交 git）。
  */
 
 declare(strict_types=1);
 
-// ── 配置（部署后按需修改这两行）───────────────────────────────────────────
-const ADMIN_PASSWORD = 'change-me-please';   // ⚠️ 部署后立刻改掉
+// ── 配置（部署后按需修改）─────────────────────────────────────────────
+// 管理密码与一键发布 key 都不写在源码里：在 htdocs/config.secret.php 里
+// 各存一份哈希，本文件运行时加载。直接访问 config.secret.php 会 404。
+define('SL_ENTRY', 1);
+$__config = require dirname(__DIR__) . '/config.secret.php';
+define('ADMIN_SALT',  (string) ($__config['admin_salt'] ?? ''));
+define('ADMIN_PASSWORD_HASH', (string) ($__config['admin_password_hash'] ?? ''));
 const RELEASES_KEPT  = 10;                    // releases.json 保留最近多少个版本
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -32,6 +36,12 @@ foreach ([$DATA_DIR, $API_DIR, $UPD_DIR] as $dir) {
     }
 }
 
+ini_set('session.use_strict_mode', '1');   // 未登记的会话 ID 一律重新生成（配合登录时的 regenerate 防会话固定）
+session_set_cookie_params([
+    'httponly' => true,
+    'samesite' => 'Lax',                   // 跨站 POST 不带 cookie：写操作有 CSRF 令牌，浏览器这层再兜一道
+    'secure'   => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),
+]);
 session_start();
 
 /** 是否已登录。 */
@@ -40,11 +50,26 @@ function is_logged_in(): bool
     return !empty($_SESSION['sl_admin_authed']);
 }
 
-/** 列出 updates/ 里的 zip（文件名排序，新上传的未必名字最新——按 mtime 倒序更直观）。 */
+/** CSRF 令牌：跨站页面拿不到它，就无法替你「发版/删版本」。 */
+function csrf_token(): string
+{
+    if (empty($_SESSION['sl_admin_csrf'])) {
+        $_SESSION['sl_admin_csrf'] = bin2hex(random_bytes(16));
+    }
+    return $_SESSION['sl_admin_csrf'];
+}
+
+/** 写操作（发版/删版本）的令牌校验。 */
+function csrf_ok(): bool
+{
+    return hash_equals($_SESSION['sl_admin_csrf'] ?? '', (string) ($_POST['csrf'] ?? ''));
+}
+
+/** 列出 updates/ 里的安装包（dmg 与 zip；按 mtime 倒序更直观）。 */
 function list_zips(string $dir): array
 {
     $out = [];
-    foreach (glob($dir . '/*.zip') ?: [] as $path) {
+    foreach (glob($dir . '/*.{dmg,zip}', GLOB_BRACE) ?: [] as $path) {
         $out[] = [
             'name' => basename($path),
             'size' => filesize($path) ?: 0,
@@ -77,17 +102,52 @@ function atomic_write(string $path, string $contents): bool
     return rename($tmp, $path);
 }
 
-/** 当前站点的绝对 URL 前缀（assets.browser_download_url 要绝对地址）。 */
+/**
+ * 当前站点的绝对 URL 前缀（assets.browser_download_url 要绝对地址）。
+ *
+ * 线上**一律写 https**：App 的 ATS 默认拒绝明文下载，若管理页是经 http 打开的，
+ * 把请求里的 scheme 原样烧进 JSON 会让客户端「立即更新」在下载一步直接失败。
+ * 本地调试（php -S 跑 127.0.0.1/localhost）保留实际 scheme，否则本机没法下载验证。
+ */
 function site_base(): string
 {
-    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-    return $scheme . '://' . ($_SERVER['HTTP_HOST'] ?? 'apple.ct.ws');
+    $host = $_SERVER['HTTP_HOST'] ?? 'apple.ct.ws';
+    if (preg_match('/^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/', $host)) {
+        $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        return $scheme . '://' . $host;
+    }
+    return 'https://' . $host;
 }
 
 /** 版本号是否合法：可选 v 前缀 + 至少一段数字（与 App 端逐段数值比较兼容）。 */
 function valid_tag(string $tag): bool
 {
     return (bool) preg_match('/^v?\d+(\.\d+)*$/', $tag);
+}
+
+/** 版本号 → 数值段数组（与 App 端 numericComponents 同一套语义：剥 v 前缀、段内取前导数字）。 */
+function version_parts(string $tag): array
+{
+    $segments = explode('.', ltrim(trim($tag), 'vV'));
+    return array_map(function (string $segment): int {
+        preg_match('/^\d+/', $segment, $m);
+        return (int) ($m[0] ?? 0);
+    }, $segments);
+}
+
+/** 版本号比较：段数不齐按 0 补齐（1.6 == 1.6.0），语义与 App 端 isNewer 一致。 */
+function compare_tags(string $a, string $b): int
+{
+    $pa = version_parts($a);
+    $pb = version_parts($b);
+    for ($i = 0, $width = max(count($pa), count($pb)); $i < $width; $i++) {
+        $x = $pa[$i] ?? 0;
+        $y = $pb[$i] ?? 0;
+        if ($x !== $y) {
+            return $x <=> $y;
+        }
+    }
+    return 0;
 }
 
 /** 单个 release 记录（GitHub releases/latest 同形，App 解析端零改动兼容）。 */
@@ -110,9 +170,19 @@ function build_release(string $tag, string $body, string $zipName, int $zipSize,
 function publish(array $releases, string $apiDir, string $dataDir): bool
 {
     $flags = JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT;
-    if (!atomic_write($apiDir . '/latest.json', json_encode($releases[0], $flags) ?: '')) {
+    $latestPath = $apiDir . '/latest.json';
+
+    if ($releases === []) {
+        // 一条不剩：**删掉** latest.json，而不是写 `null`
+        //（空数组下标 0 不存在，旧写法会写出字面量 null + 一条 PHP Warning；
+        //  GitHub 对没有任何 Release 的仓库同样回 404，客户端一律视为「无可用更新」）。
+        if (is_file($latestPath) && !unlink($latestPath)) {
+            return false;
+        }
+    } elseif (!atomic_write($latestPath, json_encode($releases[0], $flags) ?: '')) {
         return false;
     }
+
     return atomic_write($dataDir . '/releases.json',
         json_encode(['releases' => array_values($releases)], $flags) ?: '');
 }
@@ -125,11 +195,13 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
     $action = $_POST['action'] ?? '';
 
     if ($action === 'login') {
-        if (hash_equals(ADMIN_PASSWORD, (string) ($_POST['password'] ?? ''))) {
+        // SHA-256(salt + 密码)：恒定时间比较，config 里只有哈希与盐
+        $given = hash('sha256', ADMIN_SALT . (string) ($_POST['password'] ?? ''));
+        if (ADMIN_PASSWORD_HASH !== '' && hash_equals(ADMIN_PASSWORD_HASH, $given)) {
             session_regenerate_id(true);   // 登录成功换会话 ID（防会话固定）
             $_SESSION['sl_admin_authed'] = true;
         } else {
-            $error = '密码不对。若你还没改过 ADMIN_PASSWORD，先去 admin/index.php 顶部改掉默认值。';
+            $error = '密码不对。管理密码在 htdocs/config.secret.php 里（哈希），改那里即可。';
         }
     } elseif ($action === 'logout') {
         $_SESSION = [];
