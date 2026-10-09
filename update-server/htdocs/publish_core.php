@@ -18,6 +18,13 @@
 
 declare(strict_types=1);
 
+// 非入口直访（如直接请求 publish_core.php）一律 404——本文件只是共享函数库，
+// 只能被 publish.php / admin/index.php 在定义 SL_ENTRY 后 require。
+if (!defined('SL_ENTRY')) {
+    http_response_code(404);
+    exit;
+}
+
 if (!defined('GH_UA'))  define('GH_UA', 'SL-Update-Publisher/1.0'); // GitHub API 强制要求 UA
 if (!defined('GH_API_URL')) define('GH_API_URL',
     'https://api.github.com/repos/asdfasdfasdfasdfasdf111/SL/releases/latest');
