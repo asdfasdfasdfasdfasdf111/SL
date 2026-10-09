@@ -2,11 +2,12 @@
 /**
  * SL 启动器 · 更新服务 —— 一键发版（GitHub → 本站，手动入口）
  *
- * 本地一行命令即可触发（保留此入口作为 webhook 的兜底/手动复查）：
+ * 本地一行命令即可触发（保留此入口作为 Actions 之外的兜底/手动复查）：
  *
  *     curl "https://apple.ct.ws/publish.php?key=<PUBLISH_KEY>"
  *
- * 实际逻辑在 publish_core.php 的 sync_from_github()，与 webhook.php 共用：
+ * 实际逻辑在 publish_core.php 的 sync_from_github()，与 GitHub Actions
+ * 的 sync-server job 共用：
  * 调 GitHub 拉最新 release → 下载 dmg（zip 回退）→ 原子改写 latest.json 等。
  *
  * 鉴权：URL 里的 key 必须与 config.secret.php 的 publish_key_sha256 对应

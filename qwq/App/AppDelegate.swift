@@ -45,7 +45,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         SnapshotHarness.runIfRequested()
         // 自动更新检查已移除：不再在打开 App 时主动检查。
         // 检查改由用户手动触发（帮助菜单「检查更新…」，force: true 给反馈）；
-        // 服务器的版本同步由站点侧每小时自动与 GitHub 对齐（见 update-server/webhook.php
-        // 与 publish_core.php），App 检查时读到的是已就位的最新版本与安装包。
+        // 服务器版本在每次发布新版本时由 GitHub Actions 自动同步（publish.php），
+        // App 检查时读到的是已就位的最新版本与安装包。
     }
 }

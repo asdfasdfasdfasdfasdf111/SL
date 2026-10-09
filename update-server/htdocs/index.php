@@ -7,8 +7,9 @@
  *     AppUpdateService.parseLatestRelease 可以零改动解析）——请求路径不跑 PHP；
  *   · App / 网页下载的是**静态** /updates/*.dmg（或 *.zip）——同样不跑 PHP，
  *     服务器支持 HTTP Range（Accept-Ranges: bytes），下载端可并发分块加速；
- *   · PHP 只在 /admin（发版登记页）里执行：把安装包登记成新版本，原子改写
- *     api/latest.json 与 data/releases.json。流程见 update-server/README.md。
+ *   · PHP 只在发布入口（publish.php）里执行：GitHub Actions 在 Release 发布时
+ *     自动触发，把最新安装包同步到 updates/ 并原子改写 api/latest.json 与
+ *     data/releases.json。手动兜底用 update-server/publish.sh。
  *
  * 本页面在任何数据都缺失时也要能渲染（刚部署、还没发过版的形态）。
  * 页面下载按钮 = 前端多线程下载（并发 Range 分块 → 拼装 → 触发浏览器保存），
@@ -28,15 +29,25 @@ if (is_file($DATA_DIR . '/releases.json')) {
 }
 $latest = $releases[0] ?? null;
 
-/** 取某条记录的第一个 zip 资产；没有则 null。 */
-function first_zip(array $release): ?array
+/** 取某条记录的第一个安装包资产（dmg 优先，zip 回退）；没有则 null。 */
+function first_package(array $release): ?array
 {
-    foreach (($release['assets'] ?? []) as $asset) {
-        if (is_array($asset) && isset($asset['browser_download_url'])) {
-            return $asset;
-        }
+    $assets = array_filter(($release['assets'] ?? []), function ($asset) {
+        $name = strtolower((string) ($asset['name'] ?? ''));
+        return is_array($asset) && isset($asset['browser_download_url'])
+            && (str_ends_with($name, '.dmg') || str_ends_with($name, '.zip'));
+    });
+    $assets = array_values($assets);
+    if ($assets === []) {
+        return null;
     }
-    return null;
+    usort($assets, function ($a, $b) {
+        $rank = function ($asset) {
+            return str_ends_with(strtolower((string) ($asset['name'] ?? '')), '.dmg') ? 0 : 1;
+        };
+        return $rank($a) <=> $rank($b);
+    });
+    return $assets[0];
 }
 
 /** 字节数 → 人话（用于展示包体大小）。 */
@@ -150,13 +161,12 @@ $base = $scheme . '://' . $host;
         <div class="card">
             <div class="empty">
                 还没有发布任何版本。<br>
-                发版方法：把 qwq-&lt;版本&gt;.zip 上传到 <code>updates/</code> 目录，
-                然后到 <a href="admin/" style="color:#b03a5b;font-weight:600">管理页</a> 登记版本号即可。
-                详见 <code>update-server/README.md</code>。
+                发版方法：在 GitHub 仓库创建 <code>v*</code> tag（如 <code>v1.6.1</code>），
+                自动构建 dmg 并同步到本站；也可用 <code>update-server/publish.sh</code> 手动发布。
             </div>
         </div>
     <?php else: ?>
-        <?php $asset = first_zip($latest); ?>
+        <?php $asset = first_package($latest); ?>
         <div class="card">
             <div class="version"><?= htmlspecialchars((string) ($latest['tag_name'] ?? '?'), ENT_QUOTES) ?></div>
             <div class="meta">当前最新版本 · 发布于 <?= htmlspecialchars(nice_date($latest['published_at'] ?? null), ENT_QUOTES) ?></div>
@@ -182,7 +192,7 @@ $base = $scheme . '://' . $host;
             <table>
                 <tr><th>历史版本</th><th>发布时间</th><th></th></tr>
                 <?php foreach (array_slice($releases, 1) as $release): ?>
-                    <?php $asset = first_zip($release); ?>
+                    <?php $asset = first_package($release); ?>
                     <tr>
                         <td><strong><?= htmlspecialchars((string) ($release['tag_name'] ?? '?'), ENT_QUOTES) ?></strong></td>
                         <td><?= htmlspecialchars(nice_date($release['published_at'] ?? null), ENT_QUOTES) ?></td>

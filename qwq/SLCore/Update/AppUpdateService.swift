@@ -65,7 +65,7 @@ nonisolated enum AppUpdateService {
         guard let url = URL(string: latestReleaseAPI) else { return nil }
         var request = URLRequest(url: url)
         request.setLaunchUserAgent()
-        request.timeoutInterval = 45   // 首次同步可能拉包写 JSON，给足时间；后续走本地缓存毫秒级
+        request.timeoutInterval = 45   // 干净网络下秒回；兜底给足时间，失败由调用方提示
         do {
             try await request.attachChallengeCookie()
             let (data, _) = try await AppContext.shared.apiSession.data(for: request)

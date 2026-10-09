@@ -1,14 +1,10 @@
 <?php
 /**
- * SL 启动器 · 更新服务 —— 管理页（发版登记，唯一会写文件的 PHP 页面）。
+ * SL 启动器 · 更新服务 —— 管理页（手动发版兜底）
  *
- * 发版流程（零美元档：没有 SSH / 没有 Git / 没有 cron，只有 FTP + PHP）：
- *   1. CI 打出 qwq-<版本>.zip 后，用 FTP 把它传到 htdocs/updates/ 目录；
- *   2. 打开本页 → 选 zip → 填版本号与更新说明 → 「发布」；
- *   3. 本页原子改写两个 JSON：
- *        api/latest.json    —— App 检查更新读它（GitHub releases/latest 同形）
- *        data/releases.json —— 公开页与历史列表读它
- *   4. 完成。所有已装旧版 App 下次启动即收到更新提示。
+ * 主发版路径：GitHub Actions 发布 Release 时自动调 publish.php 同步（零手工）；
+ * 本页是网页兜底：把 updates/ 里已有的安装包登记成新版本（登录 → 选包 → 发布），
+ * 与 publish.php 共用 publish_core.php 的读写逻辑，无重复实现。
  *
  * 鉴权：文件级密码（哈希存于 htdocs/config.secret.php，不提交 git）。
  */
@@ -22,7 +18,6 @@ define('SL_ENTRY', 1);
 $__config = require dirname(__DIR__) . '/config.secret.php';
 define('ADMIN_SALT',  (string) ($__config['admin_salt'] ?? ''));
 define('ADMIN_PASSWORD_HASH', (string) ($__config['admin_password_hash'] ?? ''));
-const RELEASES_KEPT  = 10;                    // releases.json 保留最近多少个版本
 // ──────────────────────────────────────────────────────────────────────────
 
 $ROOT     = dirname(__DIR__);          // htdocs/
@@ -50,20 +45,9 @@ function is_logged_in(): bool
     return !empty($_SESSION['sl_admin_authed']);
 }
 
-/** CSRF 令牌：跨站页面拿不到它，就无法替你「发版/删版本」。 */
-function csrf_token(): string
-{
-    if (empty($_SESSION['sl_admin_csrf'])) {
-        $_SESSION['sl_admin_csrf'] = bin2hex(random_bytes(16));
-    }
-    return $_SESSION['sl_admin_csrf'];
-}
-
-/** 写操作（发版/删版本）的令牌校验。 */
-function csrf_ok(): bool
-{
-    return hash_equals($_SESSION['sl_admin_csrf'] ?? '', (string) ($_POST['csrf'] ?? ''));
-}
+// ── 共享发布读写逻辑（load_releases / atomic_write / build_release /
+//    publish_releases / RELEASES_KEPT）统一来自 publish_core.php，避免双份实现 ──
+require __DIR__ . '/../publish_core.php';
 
 /** 列出 updates/ 里的安装包（dmg 与 zip；按 mtime 倒序更直观）。 */
 function list_zips(string $dir): array
@@ -78,28 +62,6 @@ function list_zips(string $dir): array
     }
     usort($out, fn($a, $b) => $b['mtime'] <=> $a['mtime']);
     return $out;
-}
-
-/** 读 releases.json（没有/坏了都返回空数组，管理页永不因数据坏掉而 500）。 */
-function load_releases(string $dataDir): array
-{
-    $path = $dataDir . '/releases.json';
-    if (!is_file($path)) {
-        return [];
-    }
-    $decoded = json_decode((string) file_get_contents($path), true);
-    return (is_array($decoded) && isset($decoded['releases']) && is_array($decoded['releases']))
-        ? $decoded['releases'] : [];
-}
-
-/** 原子写文件：先写临时文件再 rename（读方永远读到完整 JSON，不会读到半截）。 */
-function atomic_write(string $path, string $contents): bool
-{
-    $tmp = $path . '.tmp.' . getmypid();
-    if (file_put_contents($tmp, $contents) === false) {
-        return false;
-    }
-    return rename($tmp, $path);
 }
 
 /**
@@ -123,68 +85,6 @@ function site_base(): string
 function valid_tag(string $tag): bool
 {
     return (bool) preg_match('/^v?\d+(\.\d+)*$/', $tag);
-}
-
-/** 版本号 → 数值段数组（与 App 端 numericComponents 同一套语义：剥 v 前缀、段内取前导数字）。 */
-function version_parts(string $tag): array
-{
-    $segments = explode('.', ltrim(trim($tag), 'vV'));
-    return array_map(function (string $segment): int {
-        preg_match('/^\d+/', $segment, $m);
-        return (int) ($m[0] ?? 0);
-    }, $segments);
-}
-
-/** 版本号比较：段数不齐按 0 补齐（1.6 == 1.6.0），语义与 App 端 isNewer 一致。 */
-function compare_tags(string $a, string $b): int
-{
-    $pa = version_parts($a);
-    $pb = version_parts($b);
-    for ($i = 0, $width = max(count($pa), count($pb)); $i < $width; $i++) {
-        $x = $pa[$i] ?? 0;
-        $y = $pb[$i] ?? 0;
-        if ($x !== $y) {
-            return $x <=> $y;
-        }
-    }
-    return 0;
-}
-
-/** 单个 release 记录（GitHub releases/latest 同形，App 解析端零改动兼容）。 */
-function build_release(string $tag, string $body, string $zipName, int $zipSize, string $base): array
-{
-    return [
-        'tag_name'       => $tag,
-        'name'           => 'SL 启动器 ' . $tag,
-        'body'           => $body,
-        'published_at'   => gmdate('Y-m-d\TH:i:s\Z'),
-        'assets'         => [[
-            'name'               => $zipName,
-            'browser_download_url' => $base . '/updates/' . rawurlencode($zipName),
-            'size'               => $zipSize,
-        ]],
-    ];
-}
-
-/** 把 releases 数组写成 latest.json + releases.json。 */
-function publish(array $releases, string $apiDir, string $dataDir): bool
-{
-    $flags = JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT;
-    $latestPath = $apiDir . '/latest.json';
-
-    if ($releases === []) {
-        // 一条不剩：**删掉** latest.json，而不是写 `null`
-        //（空数组下标 0 不存在，旧写法会写出字面量 null + 一条 PHP Warning；
-        //  GitHub 对没有任何 Release 的仓库同样回 404，客户端一律视为「无可用更新」）。
-        if (is_file($latestPath) && !unlink($latestPath)) {
-            return false;
-        }
-    } elseif (!atomic_write($latestPath, json_encode($releases[0], $flags) ?: '')) {
-        return false;
-    }
-
-    return atomic_write($dataDir . '/releases.json',
-        json_encode(['releases' => array_values($releases)], $flags) ?: '');
 }
 
 $message = '';   // 结果提示（发布/删除/登录失败）
@@ -223,18 +123,18 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             array_unshift($releases, build_release($tag, $body, $zip, (int) filesize($zipPath), site_base()));
             $releases = array_slice($releases, 0, RELEASES_KEPT);
 
-            if (publish($releases, $API_DIR, $DATA_DIR)) {
+            if (publish_releases($releases, $API_DIR, $DATA_DIR)) {
                 $message = "已发布 {$tag}（{$zip}）。旧版 App 下次启动即会收到更新提示。";
             } else {
-                $error = '写入失败：检查 api/ 与 data/ 目录权限（FTP 客户端里改为 755 或 775）。';
+                $error = '写入失败：检查 api/ 与 data/ 目录权限（改为 755 或 775）。';
             }
         }
     } elseif ($action === 'delete' && is_logged_in()) {
         $tag = trim((string) ($_POST['tag'] ?? ''));
         $releases = array_values(array_filter(load_releases($DATA_DIR),
             fn($r) => ($r['tag_name'] ?? '') !== $tag));
-        if (publish($releases, $API_DIR, $DATA_DIR)) {
-            $message = "已从列表移除 {$tag}（zip 文件仍在 updates/，可 FTP 删除）。";
+        if (publish_releases($releases, $API_DIR, $DATA_DIR)) {
+            $message = "已从列表移除 {$tag}（安装包文件仍在 updates/）。";
         } else {
             $error = '写入失败（见上）。';
         }
@@ -312,9 +212,9 @@ $releases  = load_releases($DATA_DIR);
         <div class="card">
             <form method="post">
                 <input type="hidden" name="action" value="publish">
-                <label>安装包（updates/ 目录里的 zip）</label>
+                <label>安装包（updates/ 目录里的 dmg / zip）</label>
                 <?php if ($zips === []): ?>
-                    <div class="hint">updates/ 里还没有 zip。先用 FTP 把 CI 打好的 qwq-&lt;版本&gt;.zip 传进去，再刷新本页。</div>
+                    <div class="hint">updates/ 里还没有安装包。GitHub Actions 发版后会自动同步过来，或手动上传一个 dmg/zip 再刷新本页。</div>
                 <?php else: ?>
                     <select name="zip" required>
                         <?php foreach ($zips as $z): ?>

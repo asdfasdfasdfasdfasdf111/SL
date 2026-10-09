@@ -4,7 +4,8 @@
  *
  * 被两类入口共用：
  *   · publish.php   手动一键发布（curl "…/publish.php?key=…"）
- *   · webhook.php   GitHub Release 事件自动同步（发布即生效，零手工）
+ *   · GitHub Actions 的 sync-server job（发布 Release 时自动同步，发布即生效）
+ *     （Actions 的 runner 先解 slowAES 挑战，再带 Cookie 调 publish.php?key=…）
  *
  * 职责：
  *   1. 调 GitHub Releases API 拉最新 release（tag_name / body / 资产）；
@@ -12,7 +13,7 @@
  *   3. 原子改写 api/latest.json + data/releases.json（App 解析端零改动兼容）。
  *
  * 无 SSH / cron / 数据库：全靠 HTTP 入口触发，免费档即可运行。
- * 鉴权不在本文件 —— 由各自入口负责（手动命令 KEY / webhook HMAC-SHA256）。
+ * 鉴权不在本文件 —— 由各自入口负责（命令行 / Actions 触发时带 PUBLISH_KEY）。
  */
 
 declare(strict_types=1);

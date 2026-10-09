@@ -80,7 +80,7 @@ jobs:
           url = "https://apple.ct.ws/publish.php"
 
           def call(cookie=None):
-              req = urllib.request.Request(url + (("?key=" + key) if not cookie else ""),
+              req = urllib.request.Request(url + "?key=" + key,
                   headers={"User-Agent": "SL-Release-Sync/1.0"})
               if cookie:
                   req.add_header("Cookie", "__test=" + cookie)
@@ -89,20 +89,16 @@ jobs:
 
           page = call()
           if "toNumbers(" in page:
+              # InfinityFree 对所有请求先发 slowAES 挑战：解出 __test cookie 后再调一次
               a = re.search(r'a=toNumbers\("([0-9a-f]{32})"', page).group(1)
               b = re.search(r'b=toNumbers\("([0-9a-f]{32})"', page).group(1)
               c = re.search(r'c=toNumbers\("([0-9a-f]{32})"', page).group(1)
               pt = subprocess.run(["openssl", "enc", "-d", "-aes-128-cbc", "-K", a, "-iv", b, "-nopad"],
                   input=bytes.fromhex(c), capture_output=True, check=True).stdout
-              cookie = pt.hex()
-              result = call(cookie=cookie)
+              result = call(cookie=pt.hex())
           else:
-              # 未带 key 却直接放行：重新带 key 请求
-              result = call(cookie="x")
-              if "forbidden" in result or result.startswith("ok"):
-                  pass
-              else:
-                  result = page
+              # 主机无挑战页：首次请求已是真实响应（ok / forbidden / error）
+              result = page
           print("sync result:", result)
           if not result.startswith("ok"):
               raise SystemExit("sync failed: " + result)
