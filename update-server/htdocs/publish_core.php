@@ -9,8 +9,9 @@
  *
  * 职责：
  *   1. 调 GitHub Releases API 拉最新 release（tag_name / body / 资产）；
- *   2. 把安装包（dmg 优先，zip 回退）下载到 updates/（已存在且大小一致跳过）；
- *   3. 原子改写 api/latest.json + data/releases.json（App 解析端零改动兼容）。
+ *   2. 把安装包（dmg 优先，zip 回退）下载到 updates/（**同资产 id** 且大小一致才跳过）；
+ *   3. 原子改写 api/latest.json + data/releases.json（App 解析端零改动兼容）；
+ *   4. 清理旧命名的历史包（见 cleanup_old_packages），避免免费主机配额被逐版吃掉。
  *
  * 无 SSH / cron / 数据库：全靠 HTTP 入口触发，免费档即可运行。
  * 鉴权不在本文件 —— 由各自入口负责（命令行 / Actions 触发时带 PUBLISH_KEY）。
@@ -104,6 +105,66 @@ function atomic_write(string $path, string $contents): bool
     return rename($tmp, $path);
 }
 
+/**
+ * 上次发布写入的包标记（GitHub 资产 id / 资产名 / tag）。
+ *
+ * 为什么要它：包名现在固定为 `qwq.dmg`，只靠「文件存在且大小一致」判断
+ * 「这个包已经在服务器上了」是不够的 —— 新旧包大小若碰巧相同（同一个工具链、
+ * 同一份依赖，完全可能），服务器就会**留着旧包却对外宣称新版本**，
+ * 客户端装完仍报旧版、反复提示更新。资产 id 是 GitHub 分配的唯一值，比对它才可靠。
+ */
+function load_pkg_marker(string $dataDir): array
+{
+    $path = $dataDir . '/pkg.json';
+    if (!is_file($path)) {
+        return [];
+    }
+    $json = json_decode((string) @file_get_contents($path), true);
+    return is_array($json) ? $json : [];
+}
+
+function save_pkg_marker(string $dataDir, string $assetId, string $pkgName, string $tag): void
+{
+    atomic_write($dataDir . '/pkg.json', json_encode([
+        'asset_id' => $assetId,
+        'name'     => $pkgName,
+        'tag'      => $tag,
+    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) ?: '');
+}
+
+/**
+ * 删掉 updates/ 里**旧命名**的历史安装包（`qwq-<版本>.dmg` / `.zip`）与失败残留的 `.part`。
+ *
+ * 包名固定为 `qwq.dmg` 之后，带版本号的那些文件不会再被 latest.json 引用，
+ * 留着只会吃免费主机的磁盘配额（实测发三版就堆了 45 MB）。只匹配严格模式，
+ * 且显式排除本次发布的包 —— `.htaccess` / `*.json` / 其它任何文件都不碰。
+ *
+ * @return int 实际删掉的个数
+ */
+function cleanup_old_packages(string $updDir, string $keepName): int
+{
+    $removed = 0;
+    $candidates = array_merge(
+        (array) glob($updDir . '/qwq-*.dmg'),
+        (array) glob($updDir . '/qwq-*.zip'),
+        (array) glob($updDir . '/qwq*.part')
+    );
+    foreach ($candidates as $path) {
+        $name = basename((string) $path);
+        if ($name === $keepName) {
+            continue;   // 本次发布正在对外提供的包
+        }
+        if (!preg_match('/^qwq-[A-Za-z0-9._-]+\.(dmg|zip)$/i', $name)
+            && !preg_match('/^qwq\.dmg\.part$/', $name)) {
+            continue;   // 严格白名单，拒绝一切意料之外的文件名
+        }
+        if (is_file($path) && @unlink($path)) {
+            $removed++;
+        }
+    }
+    return $removed;
+}
+
 /** 单个 release 记录（GitHub releases/latest 同形）。 */
 function build_release(string $tag, string $body, string $pkgName, int $pkgSize, string $base): array
 {
@@ -184,9 +245,15 @@ function sync_from_github(string $root): array
     $pkgUrl  = (string) ($asset['browser_download_url'] ?? '');
     $pkgPath = $UPD_DIR . '/' . $pkgName;
 
-    // 已存在且大小一致 → 跳过下载
-    $expect = (int) ($asset['size'] ?? 0);
-    if (is_file($pkgPath) && $expect > 0 && filesize($pkgPath) === $expect) {
+    // 已存在、大小一致**且资产 id 与上次发布的一致** → 跳过下载。
+    // 只比大小不够：包名固定为 qwq.dmg 时，新旧包大小相同会留着旧包当好包（见 load_pkg_marker 说明）。
+    $expect    = (int) ($asset['size'] ?? 0);
+    $assetId   = (string) ($asset['id'] ?? '');
+    $marker    = load_pkg_marker($DATA_DIR);
+    $sameAsset = $assetId !== ''
+        && ($marker['asset_id'] ?? '') === $assetId
+        && ($marker['name'] ?? '') === $pkgName;
+    if (is_file($pkgPath) && $expect > 0 && filesize($pkgPath) === $expect && $sameAsset) {
         $size = $expect;
     } else {
         $dl = gh_download($pkgUrl, $pkgPath . '.part');
@@ -197,6 +264,7 @@ function sync_from_github(string $root): array
             return ['error' => 'cannot move package into updates/'];
         }
         $size = (int) $dl['size'];
+        save_pkg_marker($DATA_DIR, $assetId, $pkgName, $tag);
     }
 
     // 写两个 JSON（同 tag 覆盖，否则插到最前，保留最近 RELEASES_KEPT 条）
@@ -210,5 +278,10 @@ function sync_from_github(string $root): array
         return ['error' => 'write failed: check api/ and data/ permissions'];
     }
 
-    return ['ok' => "{$tag} ({$pkgName}, " . number_format(round($size / 1048576, 1), 1) . ' MB)'];
+    // 清理旧命名（qwq-<版本>.dmg/zip）的历史包：固定名生效后它们不再被 latest.json 引用。
+    // 放在发布成功之后——写 JSON 失败时一个字节都不删。
+    $removed = cleanup_old_packages($UPD_DIR, $pkgName);
+
+    return ['ok' => "{$tag} ({$pkgName}, " . number_format(round($size / 1048576, 1), 1) . ' MB)'
+        . ($removed > 0 ? "，清理旧包 {$removed} 个" : '')];
 }

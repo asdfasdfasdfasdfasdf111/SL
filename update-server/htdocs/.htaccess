@@ -10,11 +10,15 @@ Options -Indexes
     Require all denied
 </FilesMatch>
 
-# 安装包与 json 的分发缓存：检查更新是低频请求，但别让浏览器缓存 latest.json
-#（否则旧版本号会把「有更新」多藏几分钟）。Header 模块缺失时不报错。
+# 分发缓存策略（Header 模块缺失时不报错）：
+#  · latest.json → no-cache：否则旧版本号会把「有更新」多藏几分钟；
+#  · 安装包 → **no-store**：包名固定为 qwq.dmg、每次发布**就地覆盖**同一个文件，
+#    一旦客户端或中间代理缓存了上一版，而 latest.json 已是新版本号，App 会
+#    「装完仍报旧版 → 再提示更新」死循环。所以这里不能给任何缓存窗口
+#    （原先是 public, max-age=3600，配合带版本号的文件名用；文件名固定后必须改掉）。
 <IfModule mod_headers.c>
     <FilesMatch "\.(zip|dmg)$">
-        Header set Cache-Control "public, max-age=3600"
+        Header set Cache-Control "no-store"
     </FilesMatch>
     <FilesMatch "\.json$">
         Header set Cache-Control "no-cache"

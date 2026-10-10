@@ -1,9 +1,14 @@
 # 发版流水线：打 v* 标签 → Release 编译 → 打包 dmg → 创建 GitHub Release 并上传 → 同步服务器。
 #
 # 与 test.yml 的分工：test.yml 管「push/PR 的用例门禁」，本文件只在发版标签上跑。
-# 产物（qwq-<tag>.dmg）是 App 内自动更新（AppUpdateService → AppUpdateCoordinator）
+# 产物（qwq.dmg）是 App 内自动更新（AppUpdateService → AppUpdateCoordinator）
 # 的更新源：releases/latest 的 tag_name 供版本比较，dmg 资产供下载换装，
 # 因此**发版必须带 dmg**（zip 仅为 App 端兜底解析，不再作为发版主产物）。
+#
+# 包名**固定为 qwq.dmg**（不带版本号，2026-10-10 起）：客户端只看资产名是否以
+# .dmg/.zip 结尾，版本号取自 tag_name 而不是文件名；固定名让站点就地覆盖同一个文件，
+# 既不会在免费主机上按版本堆积安装包，也不存在「旧链接失效」。代价是必须让
+# updates/*.dmg 不可缓存（见 update-server/htdocs/.htaccess 的 no-store）。
 #
 # 发布完成后自动调用 apple.ct.ws/publish.php（GitHub Actions 解 slowAES 挑战后
 # 带 key 触发），服务器把最新 dmg 同步到本站 updates/ 并改写 latest.json ——
@@ -49,14 +54,14 @@ jobs:
       - name: 打包 dmg
         run: |
           hdiutil create -volname "SL 启动器" -srcfolder build/Build/Products/Release/qwq.app \
-            -ov -format UDZO -imagekey zlib-level=9 "qwq-${GITHUB_REF_NAME}.dmg"
-          ls -la "qwq-${GITHUB_REF_NAME}.dmg"
+            -ov -format UDZO -imagekey zlib-level=9 "qwq.dmg"
+          ls -la "qwq.dmg"
 
       - name: 创建 Release 并上传 dmg
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" "qwq-${GITHUB_REF_NAME}.dmg" \
+          gh release create "$GITHUB_REF_NAME" "qwq.dmg" \
             --title "$GITHUB_REF_NAME (Beta)" \
             --notes "Beta 版本，自动构建于 commit ${GITHUB_SHA::7}；发布后本站 apple.ct.ws 自动同步，App 内「检查更新」即可获得。" \
             --verify-tag
