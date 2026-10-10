@@ -188,14 +188,24 @@ private struct NoticeCard: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .background(
-            // 通知横幅浮在头部玻璃面板之上 → FloatingGlass（单层玻璃规则）
-            FloatingGlass(shape: RoundedRectangle(cornerRadius: 12),
-                          tint: Color.white.opacity(0.14))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(accent.opacity(0.35), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.25), radius: 14, y: 6)
+            // 通知横幅压在**头部标题栏**上（本视图 padding(.top, 10)，见 body）。
+            // ⚠️ 这里不能用 FloatingGlass（单层玻璃规则的挖洞）：头部基底是
+            // HomeHeader 的 `BlurView` = AppKit 的 NSVisualEffectView，平台视图的图层
+            // 不参与 SwiftUI 合成组的栅格化，`destinationOut` 擦不掉它 ——
+            // 结果是本卡与头部那层玻璃叠影（用户 2026-10-10 报告：只有更新弹窗会重叠）。
+            // 改用「随主题实底 + 定稿 tint」：不依赖挖洞，下层无论是 SwiftUI 玻璃
+            // 还是 AppKit 玻璃都不会透出来。tint 数值仍为定稿的 0.14，未改观感基调。
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.78))
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.white.opacity(0.14))
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(accent.opacity(0.35), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.25), radius: 14, y: 6)
         )
         // 整张卡宽度上限：这是**卡片尺寸的唯一上限**（正文不再各自限宽，见上）。
         //
