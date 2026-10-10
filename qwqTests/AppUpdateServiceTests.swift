@@ -80,6 +80,27 @@ final class AppUpdateServiceTests: XCTestCase {
         XCTAssertNil(AppUpdateService.parseLatestRelease(Data("not json".utf8)))
     }
 
+    // MARK: - Content-Range → 资源总长（进度条与下载是否卡死的唯一判据）
+
+    /// `Range: bytes=0-0` 的 206 响应里 `expectedContentLength` 是**分片长度 1**，不是资源总长。
+    /// 必须从 `Content-Range` 解析总长，否则进度 = received/1，5% 门限每字节都成立 →
+    /// 每字节发一次通知 → 主线程被 SwiftUI 重绘打满 → 下载卡在 0%（2026-10-10 真机实测，
+    /// 当时四个历史更新包全是 0 字节）。
+    func testTotalSizeParsesContentRangeTotal() async {
+        XCTAssertEqual(AppUpdateService.totalSize(fromContentRange: "bytes 0-0/13586791"), 13_586_791)
+        XCTAssertEqual(AppUpdateService.totalSize(fromContentRange: "bytes 0-1023/2048"), 2048)
+    }
+
+    func testTotalSizeRejectsUnknownOrMalformedInput() async {
+        XCTAssertNil(AppUpdateService.totalSize(fromContentRange: nil))
+        XCTAssertNil(AppUpdateService.totalSize(fromContentRange: "bytes 0-0/*"),
+                     "总长未知时必须返回 nil —— 回落成 1 就会重新引入「每字节一次通知」")
+        XCTAssertNil(AppUpdateService.totalSize(fromContentRange: "garbage"))
+        XCTAssertNil(AppUpdateService.totalSize(fromContentRange: "bytes 0-0/"))
+        XCTAssertNil(AppUpdateService.totalSize(fromContentRange: "bytes 0-0/0"))
+        XCTAssertNil(AppUpdateService.totalSize(fromContentRange: "bytes 0-0/-5"))
+    }
+
     // MARK: - 更新提示的安全属性
 
     /// 更新提示的**隐式应答**（兜底超时 / 点右上角 × / 被新提示顶替 / 无 UI 承载）必须落在

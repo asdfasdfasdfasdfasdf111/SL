@@ -124,9 +124,16 @@ nonisolated enum AppUpdateService {
         probe.setValue("bytes=0-0", forHTTPHeaderField: "Range")
         try await probe.attachChallengeCookie()
         let (_, probeResponse) = try await URLSession.direct.data(for: probe)
-        let total = probeResponse.expectedContentLength
+        let http = probeResponse as? HTTPURLResponse
+        // ⚠️ 总长必须从 `Content-Range` 解析，**不能**用 `expectedContentLength`：
+        // `Range: bytes=0-0` 的 206 响应里后者是**分片长度 1**，把它当资源总长会让
+        // `received/total` 每收 1 字节就涨 1 —— 进度回调的 5% 门限形同失效，
+        // 于是**每字节发一次通知**，主线程被 SwiftUI 重绘打满，下载表现为
+        // 「卡在 0%、update.dmg 一直 0 字节、进程 CPU 100%」（2026-10-10 真机实测）。
+        let total = Self.totalSize(fromContentRange: http?.value(forHTTPHeaderField: "Content-Range"))
+            ?? probeResponse.expectedContentLength
         let supportsRange: Bool
-        if let http = probeResponse as? HTTPURLResponse {
+        if let http {
             // 206 = Range 生效；200 带完整体 = 忽略 Range（须回退单流）
             supportsRange = http.statusCode == 206 && total > 0
         } else {
@@ -147,6 +154,18 @@ nonisolated enum AppUpdateService {
         }
 
         try await downloadParallel(source, to: destination, total: total, chunkCount: chunkCount, progress: progress)
+    }
+
+    /// 从 206 响应的 `Content-Range` 头解析**资源总长**（纯函数，供单测）。
+    ///
+    /// 形如 `bytes 0-0/13586791` → `13586791`；总长未知时是 `bytes 0-0/*` → `nil`。
+    /// 为什么单独成一个函数：这是「进度条会不会每字节发一次通知」的**唯一**判据，
+    /// 而它只能靠真机 + 响应头才能验证（见 `download` 里的说明）。
+    static func totalSize(fromContentRange header: String?) -> Int64? {
+        guard let header, let slash = header.lastIndex(of: "/") else { return nil }
+        let tail = header[header.index(after: slash)...].trimmingCharacters(in: .whitespaces)
+        guard tail != "*", let value = Int64(tail), value > 0 else { return nil }
+        return value
     }
 
     /// 单流下载（不支持 Range / 小文件）：缓冲写盘，每 ≥5% 回调进度。
@@ -176,7 +195,10 @@ nonisolated enum AppUpdateService {
                 buffer.removeAll(keepingCapacity: true)
             }
             if total > 0 {
-                let fraction = Double(received) / Double(total)
+                // `min(1,…)` 是**防御**：只要 `total` 被低估（历史上就发生过——见 download 的说明），
+                // 未夹取的 fraction 会一路上涨，5% 门限每字节都成立 → 通知风暴打满主线程。
+                // 夹取后即使 total 错得离谱，也最多多发一次通知，不会失控。
+                let fraction = min(1.0, Double(received) / Double(total))
                 if fraction - lastReported >= 0.05 {
                     lastReported = fraction
                     progress(fraction)
@@ -197,6 +219,11 @@ nonisolated enum AppUpdateService {
         let workDir = destination.deletingLastPathComponent()
         let chunkSize = (total + Int64(chunkCount) - 1) / Int64(chunkCount)
 
+        // 各分片在自己的任务里累加字节，跨任务读改写由锁保护。
+        // 为什么要有它：分块路径此前**只在全部合并完成时回调一次 `progress(1)`**，
+        // 13 MB 的包在整个下载期间界面停在 0%（用户实测：以为卡死）。
+        let aggregator = DownloadProgressAggregator(total: total, report: progress)
+
         // ① 并行下载各块到独立文件：各 chunk 独立写，无锁无竞争
         let chunkURLs: [(index: Int, url: URL)] = await withTaskGroup(of: (Int, URL?).self) { group in
             var results = Array<(Int, URL?)>(repeating: (0, nil), count: chunkCount)
@@ -206,7 +233,8 @@ nonisolated enum AppUpdateService {
                 let chunkFile = workDir.appendingPathComponent(".chunk-\(index)-\(UUID().uuidString)")
                 group.addTask {
                     do {
-                        try await Self.fetchRange(source, from: start, to: end, to: chunkFile)
+                        try await Self.fetchRange(source, from: start, to: end, to: chunkFile,
+                                                  onBytes: { aggregator.add($0) })
                         return (index, chunkFile)
                     } catch {
                         try? FileManager.default.removeItem(at: chunkFile)
@@ -250,7 +278,9 @@ nonisolated enum AppUpdateService {
     }
 
     /// 拉取 [start, end] 区间流式写入文件，自动跟随重定向。
-    private static func fetchRange(_ source: URL, from start: Int64, to end: Int64, to chunkFile: URL) async throws {
+    /// `onBytes`：每落盘一批就报告增量字节数（供分块下载汇总进度）。
+    private static func fetchRange(_ source: URL, from start: Int64, to end: Int64, to chunkFile: URL,
+                                   onBytes: (@Sendable (Int64) -> Void)? = nil) async throws {
         var request = URLRequest(url: source)
         request.setLaunchUserAgent()
         request.timeoutInterval = 120
@@ -268,11 +298,43 @@ nonisolated enum AppUpdateService {
         for try await byte in bytes {
             buffer.append(byte)
             if buffer.count >= 1 << 20 {
+                let written = Int64(buffer.count)
                 try handle.write(contentsOf: buffer)
                 buffer.removeAll(keepingCapacity: true)
+                onBytes?(written)
             }
         }
-        if !buffer.isEmpty { try handle.write(contentsOf: buffer) }
+        if !buffer.isEmpty {
+            let written = Int64(buffer.count)
+            try handle.write(contentsOf: buffer)
+            onBytes?(written)
+        }
+    }
+
+    /// 分块下载的进度汇总（跨任务累加，按 5% 门限回调）。
+    /// `@unchecked Sendable` 的依据：唯一可变状态是 `received` / `lastReported`，
+    /// 两者只在 `NSLock` 内读写；`report` 是 `@Sendable` 闭包。
+    private final class DownloadProgressAggregator: @unchecked Sendable {
+        private let lock = NSLock()
+        private var received: Int64 = 0
+        private var lastReported = 0.0
+        private let total: Int64
+        private let report: @Sendable (Double) -> Void
+
+        init(total: Int64, report: @escaping @Sendable (Double) -> Void) {
+            self.total = max(1, total)
+            self.report = report
+        }
+
+        func add(_ delta: Int64) {
+            lock.lock()
+            received += delta
+            let fraction = min(1.0, Double(received) / Double(total))
+            let fire = fraction - lastReported >= 0.05
+            if fire { lastReported = fraction }
+            lock.unlock()
+            if fire { report(fraction) }
+        }
     }
 
     private enum UpdateDownloadError: LocalizedError {

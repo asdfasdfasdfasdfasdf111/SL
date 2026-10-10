@@ -29,7 +29,9 @@ final class AppUpdateCoordinator {
         defer { isWorking = false }
 
         let current = AppUpdateService.currentVersion()
+        log("[Update] 开始检查更新：当前版本 \(current)")
         guard let release = await AppUpdateService.latestRelease() else {
+            err("[Update] 检查更新失败：无法连接更新服务器（不打扰用户）")
             if force {
                 NoticeCenter.shared.post(Notice(level: .warning, title: "检查更新失败",
                                                 message: "无法连接更新服务器，请检查网络后重试"))
@@ -37,16 +39,22 @@ final class AppUpdateCoordinator {
             return
         }
         guard AppUpdateService.isNewer(release.tagName, than: current) else {
+            log("[Update] 已是最新：服务器 \(release.tagName)")
             if force {
                 NoticeCenter.shared.post(Notice(level: .success, title: "已是最新版本",
                                                 message: "当前版本 \(current) 已是最新"))
             }
             return
         }
+        log("[Update] 发现新版本 \(release.tagName)（当前 \(current)），等待用户选择")
 
         let notice = AppUpdateCoordinator.makeUpdateNotice(release: release, current: current)
         let choice = await NoticeCenter.shared.presentAndWait(notice)
-        guard choice == 0 else { return }
+        guard choice == 0 else {
+            log("[Update] 用户选择稍后（下标 \(choice)），本次不更新")
+            return
+        }
+        log("[Update] 用户选择立即更新")
         await performUpdate(release)
     }
 
@@ -88,20 +96,29 @@ final class AppUpdateCoordinator {
         let extractDir = work.appendingPathComponent("extracted", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+            log("[Update] 开始下载 \(release.downloadURL.absoluteString)")
             postProgress(release, fraction: 0)
             try await AppUpdateService.download(release.downloadURL, to: packageURL) { [weak self] fraction in
                 Task { @MainActor in self?.postProgress(release, fraction: fraction) }
             }
+            // 记字节数：为 0 说明服务端回的是空响应（历史上踩过「探测 Range 后整包拿到 304」
+            // 与「挂载空 dmg 失败」，只靠 UI 通知查不出是哪一种）。
+            let attrs = try? FileManager.default.attributesOfItem(atPath: packageURL.path)
+            let downloaded = (attrs?[.size] as? NSNumber)?.int64Value ?? -1
+            log("[Update] 下载结束：\(downloaded) 字节 → \(packageURL.lastPathComponent)")
             let stagedApp: URL
             if packageURL.pathExtension.lowercased() == "dmg" {
                 stagedApp = try mountAndExtract(dmg: packageURL)
             } else {
                 stagedApp = try unzip(packageURL, to: extractDir)
             }
+            log("[Update] 解包完成：\(stagedApp.path)")
             NoticeCenter.shared.post(Notice(level: .warning, title: "更新下载完成",
                                             message: "正在退出并安装新版本…", buttons: []))
+            log("[Update] 启动换装脚本并退出（旧包备份为 .old，脚本见 swapAndRelaunch）")
             try swapAndRelaunch(stagedApp: stagedApp, work: work)
         } catch {
+            err("[Update] 自动更新失败：\(error.localizedDescription)")
             NoticeCenter.shared.post(Notice(level: .error, title: "自动更新失败",
                                             message: "\(error.localizedDescription)。当前版本未受影响，可稍后重试或到 GitHub 手动下载。"))
         }
