@@ -15,6 +15,11 @@ import SwiftUI
 final class AppSettingsStore: ObservableObject {
     static let shared = AppSettingsStore()
 
+    /// 设置数据的落盘偏好域。生产恒为 `.standard`；测试可整体重定向到独立域
+    /// （见文件末尾的 `redirectPersistenceForTesting(to:)`），使用例读写设置时
+    /// **碰不到用户真实偏好**。新增字段的持久化一律经本属性，不要再直接写 `UserDefaults.standard`。
+    private var store: UserDefaults = .standard
+
     /// 强调色的**唯一存储点与唯一写入口**。
     /// `ThemeManager.accentColor` 已收敛为对本属性的转发，不再自行写 `UserDefaults[UDK.accentColor]`；
     /// 读取方（`@ObservedObject var theme = ThemeManager.shared` 的视图、`ThemeRepository`）
@@ -24,22 +29,22 @@ final class AppSettingsStore: ObservableObject {
     }
 
     @Published var selectedMinecraftVersion: String {
-        didSet { UserDefaults.standard.set(selectedMinecraftVersion, forKey: UDK.selectedMinecraftVersion) }
+        didSet { store.set(selectedMinecraftVersion, forKey: UDK.selectedMinecraftVersion) }
     }
 
     @Published var selectedGameRoot: String {
-        didSet { UserDefaults.standard.set(selectedGameRoot, forKey: UDK.selectedGameRoot) }
+        didSet { store.set(selectedGameRoot, forKey: UDK.selectedGameRoot) }
     }
 
     @Published var offlineUsername: String {
-        didSet { UserDefaults.standard.set(offlineUsername, forKey: UDK.offlineUsername) }
+        didSet { store.set(offlineUsername, forKey: UDK.offlineUsername) }
     }
 
     /// 当前账号模式：`"offline"`（离线账号，默认）或 `"microsoft"`（微软正版账号）。
     /// 启动页点头像弹出的账号面板切换时写入；SLLaunchBridge 的账号选择分支据此决定
     /// 用离线身份还是微软身份（与 PCL.Mac 的「点头像切换账号」交互对齐）。
     @Published var accountMode: String {
-        didSet { UserDefaults.standard.set(accountMode, forKey: UDK.accountMode) }
+        didSet { store.set(accountMode, forKey: UDK.accountMode) }
     }
 
     /// 自定义微软登录 client id（空串 = 用 `MicrosoftAuthConstants.fallbackClientID`）。
@@ -47,19 +52,19 @@ final class AppSettingsStore: ObservableObject {
     /// 它直接读 `UserDefaults[UDK.microsoftClientID]` 而不是本对象 —— 两者键相同，
     /// 因此这里写入后登录立刻生效，无需重启。
     @Published var microsoftClientID: String {
-        didSet { UserDefaults.standard.set(microsoftClientID, forKey: UDK.microsoftClientID) }
+        didSet { store.set(microsoftClientID, forKey: UDK.microsoftClientID) }
     }
 
     @Published var cachedJavaPath: String? {
-        didSet { UserDefaults.standard.set(cachedJavaPath, forKey: UDK.cachedJavaPath) }
+        didSet { store.set(cachedJavaPath, forKey: UDK.cachedJavaPath) }
     }
 
     @Published var avatarImageURL: URL? {
         didSet {
             if let url = avatarImageURL {
-                UserDefaults.standard.set(url.path, forKey: UDK.avatarImagePath)
+                store.set(url.path, forKey: UDK.avatarImagePath)
             } else {
-                UserDefaults.standard.removeObject(forKey: UDK.avatarImagePath)
+                store.removeObject(forKey: UDK.avatarImagePath)
             }
         }
     }
@@ -67,51 +72,51 @@ final class AppSettingsStore: ObservableObject {
     @Published var skinImageURL: URL? {
         didSet {
             if let url = skinImageURL {
-                UserDefaults.standard.set(url.path, forKey: UDK.skinImagePath)
+                store.set(url.path, forKey: UDK.skinImagePath)
             } else {
-                UserDefaults.standard.removeObject(forKey: UDK.skinImagePath)
+                store.removeObject(forKey: UDK.skinImagePath)
             }
         }
     }
 
     @Published var appliedSkinHash: String? {
-        didSet { UserDefaults.standard.set(appliedSkinHash, forKey: UDK.appliedSkinHash) }
+        didSet { store.set(appliedSkinHash, forKey: UDK.appliedSkinHash) }
     }
 
     @Published var fixedOfflineUUID: String {
-        didSet { UserDefaults.standard.set(fixedOfflineUUID, forKey: UDK.fixedOfflineUUID) }
+        didSet { store.set(fixedOfflineUUID, forKey: UDK.fixedOfflineUUID) }
     }
 
     @Published var selectedJavaPath: String? {
-        didSet { UserDefaults.standard.set(selectedJavaPath, forKey: UDK.selectedJavaPath) }
+        didSet { store.set(selectedJavaPath, forKey: UDK.selectedJavaPath) }
     }
 
     private init() {
-        self.accentColor = Self.loadStoredColor(forKey: UDK.accentColor) ?? .blue
-        self.selectedMinecraftVersion = UserDefaults.standard.string(forKey: UDK.selectedMinecraftVersion) ?? ""
-        self.selectedGameRoot = UserDefaults.standard.string(forKey: UDK.selectedGameRoot) ?? ""
-        self.offlineUsername = UserDefaults.standard.string(forKey: UDK.offlineUsername) ?? "Player"
-        self.accountMode = UserDefaults.standard.string(forKey: UDK.accountMode) ?? "offline"
-        self.microsoftClientID = UserDefaults.standard.string(forKey: UDK.microsoftClientID) ?? ""
-        self.cachedJavaPath = UserDefaults.standard.string(forKey: UDK.cachedJavaPath)
-        self.appliedSkinHash = UserDefaults.standard.string(forKey: UDK.appliedSkinHash)
-        self.selectedJavaPath = UserDefaults.standard.string(forKey: UDK.selectedJavaPath)
+        self.accentColor = Self.loadStoredColor(forKey: UDK.accentColor, store: store) ?? .blue
+        self.selectedMinecraftVersion = store.string(forKey: UDK.selectedMinecraftVersion) ?? ""
+        self.selectedGameRoot = store.string(forKey: UDK.selectedGameRoot) ?? ""
+        self.offlineUsername = store.string(forKey: UDK.offlineUsername) ?? "Player"
+        self.accountMode = store.string(forKey: UDK.accountMode) ?? "offline"
+        self.microsoftClientID = store.string(forKey: UDK.microsoftClientID) ?? ""
+        self.cachedJavaPath = store.string(forKey: UDK.cachedJavaPath)
+        self.appliedSkinHash = store.string(forKey: UDK.appliedSkinHash)
+        self.selectedJavaPath = store.string(forKey: UDK.selectedJavaPath)
 
-        if let saved = UserDefaults.standard.string(forKey: UDK.fixedOfflineUUID) {
+        if let saved = store.string(forKey: UDK.fixedOfflineUUID) {
             self.fixedOfflineUUID = saved
         } else {
             let uuid = fixedOfflineUUIDValue()
             self.fixedOfflineUUID = uuid
-            UserDefaults.standard.set(uuid, forKey: UDK.fixedOfflineUUID)
+            store.set(uuid, forKey: UDK.fixedOfflineUUID)
         }
 
-        if let path = UserDefaults.standard.string(forKey: UDK.avatarImagePath) {
+        if let path = store.string(forKey: UDK.avatarImagePath) {
             self.avatarImageURL = URL(fileURLWithPath: path)
         } else {
             self.avatarImageURL = Bundle.main.url(forResource: "avatar", withExtension: "png")
         }
 
-        if let path = UserDefaults.standard.string(forKey: UDK.skinImagePath) {
+        if let path = store.string(forKey: UDK.skinImagePath) {
             self.skinImageURL = URL(fileURLWithPath: path)
         } else {
             self.skinImageURL = nil
@@ -136,7 +141,7 @@ final class AppSettingsStore: ObservableObject {
         let legacyPlaceholder = "SL启动器（最好使用英文及下划线）"
         if self.offlineUsername == legacyPlaceholder {
             self.offlineUsername = "Player"
-            UserDefaults.standard.set(self.offlineUsername, forKey: UDK.offlineUsername)
+            store.set(self.offlineUsername, forKey: UDK.offlineUsername)
         }
     }
 
@@ -148,15 +153,34 @@ final class AppSettingsStore: ObservableObject {
         // NSSecureCoding），不会命中「归档不符合 NSSecureCoding 的类时抛异常」这条路径。
         // https://developer.apple.com/documentation/foundation/nskeyedarchiver/requiressecurecoding
         if let data = try? NSKeyedArchiver.archivedData(withRootObject: NSColor(color), requiringSecureCoding: true) {
-            UserDefaults.standard.set(data, forKey: key)
+            store.set(data, forKey: key)
         }
     }
 
-    private static func loadStoredColor(forKey key: String) -> Color? {
-        guard let data = UserDefaults.standard.data(forKey: key),
+    private static func loadStoredColor(forKey key: String, store: UserDefaults) -> Color? {
+        guard let data = store.data(forKey: key),
               let nsColor = try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSColor.self, from: data) else {
             return nil
         }
         return Color(nsColor)
     }
+
+    #if DEBUG
+    /// 测试专用：把本进程的设置持久化**整体重定向**到独立偏好域。
+    ///
+    /// 为什么需要它：测试宿主的宿主 App 就是 qwq.app 本体，测试进程里的
+    /// `UserDefaults.standard` **就是用户真实偏好域**。而设置项（已选版本、游戏根目录、
+    /// 皮肤哈希……）被多个套件直接驱动，过去只能靠「哨兵值 + `defer` 还原」隔离 ——
+    /// 一旦宿主 abort（Xcode 26.2 隔离析构缺陷，见 `qwqTests/TESTING.md` §五），
+    /// `defer` 不执行，哨兵值就留在用户真实设置里。重定向后写入在物理上落不到真实域，
+    /// 不再依赖任何还原动作。
+    ///
+    /// ⚠️ 生产代码不得调用；Release 构建里此方法不存在
+    /// （与 `MemoryCacheReclaimer.resetForTesting()`、`AccountManager.makeForTesting(store:)` 同一约定）。
+    /// 还原由调用方负责（测试用 `addTeardownBlock`）；即便没还原也无害：
+    /// 写入只会落到那个一次性域，用户真实设置不受影响。
+    static func redirectPersistenceForTesting(to store: UserDefaults) {
+        shared.store = store
+    }
+    #endif
 }

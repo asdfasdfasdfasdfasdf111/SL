@@ -179,12 +179,34 @@ public enum AnyAccount: Account, Identifiable, Equatable {
 /// `MinecraftInstanceLaunchService`（启动前刷新）与 `MicrosoftLoginViewModel`（登录/登出）写入。
 /// （历史审计曾将其记为「全代码库无任何引用」，本次普查已核实为误判。）
 public class AccountManager: ObservableObject {
-    public static let shared = AccountManager()
+    public static let shared = AccountManager(store: .standard)
     /// 唯一写入方：本类型自身的 `upsert(_:)` / `remove(accountID:)`。
     /// 唯一读取路径：`getAccount()` → `SLLaunchBridge` / 启动用例层 / UI。
+    /// ⚠️ 下面两个包装器**必须由同一个 `store` 构造**，否则「读账号」与「读已选 id」会落在不同偏好域。
+    /// 声明处的 `= []` / `= nil` 只用于满足属性包装器的声明形态，真正生效的是 `init` 里的显式构造。
     @CodableAppStorage("accounts") public var accounts: [AnyAccount] = []
     @CodableAppStorage("accountId") public var accountId: UUID? = nil
-    private init() {}
+
+    private init(store: UserDefaults) {
+        _accounts = CodableAppStorage(wrappedValue: [], "accounts", store: store)
+        _accountId = CodableAppStorage(wrappedValue: nil, "accountId", store: store)
+    }
+
+    #if DEBUG
+    /// 测试专用：把账号持久化**整体指向独立偏好域**，用例因此无需读写用户真实账号数据。
+    ///
+    /// 为什么必须有这个入口：测试宿主的宿主 App 就是 qwq.app 本体，测试进程里的
+    /// `UserDefaults.standard` **就是用户真实偏好域**（见 `HANDOFF`/测试文件头说明）。
+    /// 在此之前用例只能靠「临时删掉真实 `accounts` / `accountId` 键、`defer` 再还原」来隔离，
+    /// 而宿主 abort（Xcode 26.2 隔离析构缺陷，见 `qwqTests/TESTING.md` §五）会直接杀掉进程、
+    /// **`defer` 不执行** —— 等于一次测试运行可能抹掉用户的已保存账号。
+    /// 注入独立域后，用例的读写**在物理上**落不到真实域，不再依赖任何还原动作。
+    ///
+    /// ⚠️ 生产代码不得调用；Release 构建里此方法不存在（与 `MemoryCacheReclaimer.resetForTesting()` 同一约定）。
+    static func makeForTesting(store: UserDefaults) -> AccountManager {
+        AccountManager(store: store)
+    }
+    #endif
 
     /// 使用方：`SLCore/SLLaunchBridge.swift`（账号选择分支）、启动用例层、UI。
     public func getAccount() -> AnyAccount? {

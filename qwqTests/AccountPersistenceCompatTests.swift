@@ -24,17 +24,20 @@
 //  键序是 `id,uuid,name`，单值形态下是 `uuid,name,id`）。写死字符串会得到一个
 //  「今天绿、明天红」的用例。
 //
-//  ⚠️ 本文件**默认不驱动 `AccountManager.shared`**：测试 bundle 的宿主就是 qwq.app 本体
+//  ⚠️ 本文件**不读写用户真实账号数据**（2026-10-10 起）：测试 bundle 的宿主就是 qwq.app 本体
 //  （`TEST_HOST = qwq.app/Contents/MacOS/qwq`，bundle id 与正式 App 同为
 //  `io.github.asdfasdfasdfasdfasdf111.SL`），因此测试进程里的 `UserDefaults.standard`
 //  就是**用户真实启动器的偏好域**。而 `getAccount()` 在 `accountId == nil` 时会**回写** `accountId`
 //  —— 一旦直接调用它，就等于改用户的真实账号数据。
-//    · 文件末尾的 `getAccount()` 用例用「备份 → 改 → 断言 → 无条件还原」的
-//      `withScrubbedAccountKeys` 帮助器**临时隔离**真实键（2026-10-02 起，分支持
-//      `getAccount()` 四个分支语义——回填/空列表/匹配/不匹配，约束见 F 节说明）；
-//    · 其余用例只对两个真实键做**只读**访问，并用
-//      `testWrapperMechanismLeavesRealAccountKeysUntouched` 把「本套用例不碰真实键」
-//      变成可执行断言。
+//    · 需要读写账号的用例一律经 `makeScratchStore()` 拿一个 `UserDefaults(suiteName:)`
+//      独立偏好域，再用 `AccountManager.makeForTesting(store:)` 驱动 —— 隔离由**存储位置**
+//      保证，真实域全程连删除都不做；
+//    · 历史做法（2026-10-02 起）是 `withScrubbedAccountKeys`：删掉真实键、断言、`defer` 还原。
+//      它有个测试自身堵不住的洞：宿主 abort 会直接杀进程、**`defer` 不执行**
+//      （Xcode 26.2 隔离析构缺陷，见 `qwqTests/TESTING.md` §五），于是「跑一次测试」
+//      可能真的抹掉用户已保存的账号。2026-10-10 已按上述注入点替换掉。
+//    · 仅有的真实偏好域访问都是**只读**的：护栏用例前后的 `snapshotRealAccountKeys()` 快照，
+//      以及 `testRealStoredAccountsStillDecodeWhenPresent` 的活体校验。
 //
 //  被测：SLCore/Account/AnyAccount.swift、SLCore/Account/OfflineAccount.swift、
 //        SLCore/Storage/CodableAppStorage.swift
@@ -67,19 +70,59 @@ final class AccountPersistenceCompatTests: XCTestCase {
     /// `OfflineAccount.uuid`（由用户名按 PCL2 算法确定，这里显式传入以固定值）；`nonisolated` 理由同上。
     private nonisolated static let fixedUuid = "11111111-2222-3333-4444-555555555555"
 
-    /// 本套用例专用的一次性键，与真实键严格区分；`tearDown` 负责删除。
-    /// 用一个不可能与真实键碰撞的名字，即使用例中途 abort 也只会留下一个无害的孤儿键。
+    /// 本套用例专用的一次性键，与真实键严格区分。
+    /// 现在它只在一个**一次性偏好域**内使用（见 `makeScratchStore()`），
+    /// 因此即使用例中途 abort，留下的也只是一个待清理的独立域，不触及真实键。
     private var scratchKey = ""
+
+    /// 一次性偏好域的固定前缀。`sweepStaleScratchDomains()` 只认这个前缀，
+    /// 绝不触碰其它偏好域文件。
+    private static let scratchDomainPrefix = "__qwqTests_AccountPersistence_"
 
     override func setUp() {
         super.setUp()
         scratchKey = "__qwqTests_CodableAppStorage_\(UUID().uuidString)"
+        Self.sweepStaleScratchDomains()
     }
 
-    override func tearDown() {
-        UserDefaults.standard.removeObject(forKey: scratchKey)
-        scratchKey = ""
-        super.tearDown()
+    /// 一个**独立偏好域**：本套用例对账号/包装器的所有读写都落在这里。
+    ///
+    /// 为什么不是「读真实域 + 还原」：宿主 abort 会直接杀进程，`defer` 不执行，
+    /// 还原动作不存在 → 真实数据被留在被改过的状态。改成独立域后，
+    /// **真实域从头到尾没有被写过**，不依赖任何收尾动作。
+    ///
+    /// 清理分两处，**缺一不可**（实测过，不要删其中任何一处）：
+    ///  · 下面注册的收尾块负责清内容（`removePersistentDomain`）并删掉 cfprefsd 留下的
+    ///    **0 键空壳 plist**（42 B）；
+    ///  · 但 cfprefsd 可能在 unlink **之后**把空壳重新落盘（收尾块里 `store` 此时仍存活），
+    ///    所以收尾只能算「尽力而为」—— 真正的兜底是 `setUp` 里的
+    ///    `sweepStaleScratchDomains()`，它在**下一次运行开始时**扫掉上一轮的空壳。
+    private func makeScratchStore() throws -> UserDefaults {
+        let name = "\(Self.scratchDomainPrefix)\(UUID().uuidString)"
+        let store = try XCTUnwrap(UserDefaults(suiteName: name), "无法创建独立偏好域 \(name)")
+        addTeardownBlock {
+            store.removePersistentDomain(forName: name)
+            let shell = Self.preferencesDirectory.appendingPathComponent("\(name).plist")
+            try? FileManager.default.removeItem(at: shell)
+        }
+        return store
+    }
+
+    /// `~/Library/Preferences`（本工程未沙箱化，偏好域就在此处）。
+    private static var preferencesDirectory: URL {
+        FileManager.default
+            .urls(for: .libraryDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Preferences")
+    }
+
+    /// 扫掉上一轮遗留的一次性域空壳。**必须放在运行开始时做**：此刻测试进程对这些旧域名
+    /// 没有活跃实例，删除不会被 cfprefsd 写回；放到运行结束后做则会与 cfprefsd 抢同一个文件。
+    private static func sweepStaleScratchDomains() {
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: preferencesDirectory, includingPropertiesForKeys: nil) else { return }
+        for url in entries where url.lastPathComponent.hasPrefix(scratchDomainPrefix) {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     // MARK: - 夹具
@@ -268,12 +311,13 @@ final class AccountPersistenceCompatTests: XCTestCase {
     /// 同时钉住「包装器写出的字节 == 历史字面量的形状」—— 把读方向与写方向的用例接成同一条链。
     func testCodableAppStorageWritesLegacyShapeReadableByJSONDecoder() async throws {
         XCTAssertNotEqual(scratchKey, Self.accountsKey, "用例键绝不能等于真实键")
+        let store = try makeScratchStore()
 
-        let storage = CodableAppStorage<[AnyAccount]>(wrappedValue: [], scratchKey)
+        let storage = CodableAppStorage<[AnyAccount]>(wrappedValue: [], scratchKey, store: store)
         storage.wrappedValue = [makeOffline()]
 
-        let raw = try XCTUnwrap(UserDefaults.standard.data(forKey: scratchKey),
-                                "包装器必须把 JSON 写进 UserDefaults")
+        let raw = try XCTUnwrap(store.data(forKey: scratchKey),
+                                "包装器必须把 JSON 写进注入的偏好域")
 
         // 用「读方向」的解析器去读「写方向」的产物：两边形状必须一致
         let viaJSONDecoder = try JSONDecoder().decode([AnyAccount].self, from: raw)
@@ -288,8 +332,9 @@ final class AccountPersistenceCompatTests: XCTestCase {
     /// 包装器机制：键不存在时必须返回声明处的默认值（`AccountManager` 依赖它给出空账号列表），
     /// 而不是崩溃或返回上一次的值。
     func testCodableAppStorageFallsBackToDeclaredDefaultAndReadsThrough() async throws {
-        UserDefaults.standard.removeObject(forKey: scratchKey)
-        let storage = CodableAppStorage<[AnyAccount]>(wrappedValue: [], scratchKey)
+        let store = try makeScratchStore()
+        store.removeObject(forKey: scratchKey)
+        let storage = CodableAppStorage<[AnyAccount]>(wrappedValue: [], scratchKey, store: store)
         XCTAssertTrue(storage.wrappedValue.isEmpty, "无数据时必须回落到默认值")
 
         // 写入后再看：`nonmutating set` 直接落 `UserDefaults`，因此读回必须立刻可见
@@ -298,7 +343,7 @@ final class AccountPersistenceCompatTests: XCTestCase {
                        "包装器读数必须走存储本身，不得缓存（否则外部改动看不见）")
 
         // 删掉存储 → 必须回到默认值（证明它真的每读一次都问存储）
-        UserDefaults.standard.removeObject(forKey: scratchKey)
+        store.removeObject(forKey: scratchKey)
         XCTAssertTrue(storage.wrappedValue.isEmpty)
     }
 
@@ -307,17 +352,18 @@ final class AccountPersistenceCompatTests: XCTestCase {
     /// 所以这条钉的就是「已选账号」的磁盘形状。
     func testAccountIdPersistsAsBareUUIDStringAndNull() async throws {
         let id = UUID(uuidString: Self.fixedUuid)!
+        let store = try makeScratchStore()
         // `let` 足够：`CodableAppStorage.wrappedValue` 是 `nonmutating set`，写入直接落 `UserDefaults`
-        let storage = CodableAppStorage<UUID?>(wrappedValue: nil, scratchKey)
+        let storage = CodableAppStorage<UUID?>(wrappedValue: nil, scratchKey, store: store)
 
         storage.wrappedValue = id
-        let raw = try XCTUnwrap(UserDefaults.standard.data(forKey: scratchKey))
+        let raw = try XCTUnwrap(store.data(forKey: scratchKey))
         XCTAssertEqual(String(data: raw, encoding: .utf8), "\"\(id.uuidString)\"",
                        "已选账号 id 必须是裸 UUID 字符串")
         XCTAssertEqual(try JSONDecoder().decode(UUID?.self, from: raw), id)
 
         storage.wrappedValue = nil
-        let rawNil = try XCTUnwrap(UserDefaults.standard.data(forKey: scratchKey))
+        let rawNil = try XCTUnwrap(store.data(forKey: scratchKey))
         XCTAssertEqual(String(data: rawNil, encoding: .utf8), "null",
                        "未选账号必须落成 null，而不是缺键")
     }
@@ -366,14 +412,23 @@ final class AccountPersistenceCompatTests: XCTestCase {
 
     /// 本套用例**不得改动用户真实账号数据**。
     /// 之所以要有这条断言，是因为测试 bundle 的宿主就是 qwq.app 本体，测试进程里的
-    /// `UserDefaults.standard` 就是用户真实偏好域（见文件头）。这里做一轮「写—读—删」
-    /// 的包装器操作，然后断言 `accounts` / `accountId` 两个真实键**逐字节未变**。
+    /// `UserDefaults.standard` 就是用户真实偏好域（见文件头）。
+    /// 这里做一轮「写—读」的包装器操作，然后断言：① 产物落在**注入的域**里；
+    /// ② `accounts` / `accountId` 两个真实键**逐字节未变**。
     func testWrapperMechanismLeavesRealAccountKeysUntouched() async throws {
         let before = Self.snapshotRealAccountKeys()
+        let store = try makeScratchStore()
+        XCTAssertFalse(store === UserDefaults.standard,
+                       "用例必须跑在独立偏好域上；一旦等于 .standard，本用例后续断言就失去意义")
 
-        let storage = CodableAppStorage<[AnyAccount]>(wrappedValue: [], scratchKey)
+        let storage = CodableAppStorage<[AnyAccount]>(wrappedValue: [], scratchKey, store: store)
         storage.wrappedValue = [makeOffline()]
         _ = storage.wrappedValue
+
+        XCTAssertNotNil(store.data(forKey: scratchKey),
+                        "写入必须落在注入的域里（否则隔离根本没生效）")
+        XCTAssertNil(UserDefaults.standard.data(forKey: scratchKey),
+                     "注入域之外不得出现用例键")
 
         let after = Self.snapshotRealAccountKeys()
         XCTAssertEqual(before.accounts, after.accounts,
@@ -394,77 +449,78 @@ final class AccountPersistenceCompatTests: XCTestCase {
     }
 
     // MARK: - F. getAccount() 分支语义（2026-10-02 补覆盖）
+    //
+    // 这四个分支都要驱动一个 `AccountManager` 实例。2026-10-10 之前用的是
+    // `AccountManager.shared` + `withScrubbedAccountKeys`（删真实键、`defer` 还原），
+    // 现改为 `AccountManager.makeForTesting(store:)` + 独立偏好域：真实键**全程不被写**，
+    // 因此不再存在「abort 导致还原没跑、用户账号被删」这条路径。
+    // 断言口径不变：分支 1 回填 first.id / 分支 2 无账号返回 nil / 分支 3 命中 accountId / 分支 4 无匹配返回 nil。
 
-    /// 帮助器：`getAccount()` 的用例会**临时读写真实键**（`AccountManager` 单例直接驱动
-    /// `CodableAppStorage("accounts")` / `("accountId")`，无注入点），因此必须
-    /// 「备份 → 改 → 断言 → 无条件还原」。这是文件头「刻意不驱动 AccountManager.shared」
-    /// 约束的**唯一例外**——受限范围：单用例内、defer 无条件还原、与
-    /// `testWrapperMechanismLeavesRealAccountKeysUntouched` 的护栏互补。
-    private func withScrubbedAccountKeys(_ body: () async throws -> Void) async throws {
-        let before = Self.snapshotRealAccountKeys()
-        UserDefaults.standard.removeObject(forKey: Self.accountsKey)
-        UserDefaults.standard.removeObject(forKey: Self.accountIdKey)
-        defer {
-            if let accounts = before.accounts {
-                UserDefaults.standard.set(accounts, forKey: Self.accountsKey)
-            } else {
-                UserDefaults.standard.removeObject(forKey: Self.accountsKey)
-            }
-            if let accountId = before.accountId {
-                UserDefaults.standard.set(accountId, forKey: Self.accountIdKey)
-            } else {
-                UserDefaults.standard.removeObject(forKey: Self.accountIdKey)
-            }
-        }
-        try await body()
+    /// 管道护栏：`AccountManager` 的**两个**包装器都必须落在注入的域里。
+    ///
+    /// 为什么单靠上面那些语义断言不够：如果将来有人删掉 `AccountManager.init` 里
+    /// `_accounts` / `_accountId` 的任一行显式构造，那个包装器会**静默回落到
+    /// `UserDefaults.standard`**（= 用户真实偏好域）。而四个分支用例**照样会全绿** ——
+    /// 写和读都走同一个域，自洽；`store` 那边只是空着，没有任何断言在看它。
+    /// 于是「隔离失效」这件事只有在真实账号数据被改写之后才会暴露。
+    /// 这条断言把「落盘位置」本身钉住：写完之后，**注入域里必须真的有那两个键**。
+    private func assertBothWrappersStoredInInjectedDomain(_ store: UserDefaults) {
+        XCTAssertNotNil(store.data(forKey: Self.accountsKey),
+                        "accounts 没落在注入域 → 说明它回落到真实偏好域了，会写用户的账号数据")
+        XCTAssertNotNil(store.data(forKey: Self.accountIdKey),
+                        "accountId 没落在注入域 → 说明它回落到真实偏好域了，会写用户的已选账号")
     }
 
     /// 分支 1：accountId 为空 + accounts 非空 ⇒ 回写 first.id 并返回 first。
     func testGetAccountBackfillsAccountIdWhenMissing() async throws {
-        try await withScrubbedAccountKeys {
-            let account = self.makeOffline()
-            AccountManager.shared.accounts = [account]
-            AccountManager.shared.accountId = nil
+        let store = try makeScratchStore()
+        let manager = AccountManager.makeForTesting(store: store)
+        let account = makeOffline()
+        manager.accounts = [account]
+        manager.accountId = nil
 
-            let result = AccountManager.shared.getAccount()
-            XCTAssertEqual(result?.id, account.id, "accountId 缺失时必须回填 first 的 id 并返回它")
-            XCTAssertEqual(AccountManager.shared.accountId, account.id,
-                           "getAccount() 必须把缺失的 accountId 回写成 first.id")
-        }
+        let result = manager.getAccount()
+        XCTAssertEqual(result?.id, account.id, "accountId 缺失时必须回填 first 的 id 并返回它")
+        XCTAssertEqual(manager.accountId, account.id,
+                       "getAccount() 必须把缺失的 accountId 回写成 first.id")
+        assertBothWrappersStoredInInjectedDomain(store)
     }
 
     /// 分支 2：accountId 为空 + accounts 也空 ⇒ 返回 nil（不回写）。
     func testGetAccountReturnsNilWhenNoAccounts() async throws {
-        try await withScrubbedAccountKeys {
-            AccountManager.shared.accounts = []
-            AccountManager.shared.accountId = nil
-            let result = AccountManager.shared.getAccount()
-            XCTAssertNil(result, "无账号时必须返回 nil")
-            XCTAssertNil(AccountManager.shared.accountId, "无账号时不得回写 accountId")
-        }
+        let store = try makeScratchStore()
+        let manager = AccountManager.makeForTesting(store: store)
+        manager.accounts = []
+        manager.accountId = nil
+        let result = manager.getAccount()
+        XCTAssertNil(result, "无账号时必须返回 nil")
+        XCTAssertNil(manager.accountId, "无账号时不得回写 accountId")
+        assertBothWrappersStoredInInjectedDomain(store)
     }
 
     /// 分支 3：accountId 非空且匹配 accounts 之一 ⇒ 返回对应账号。
     func testGetAccountReturnsMatchingStoredAccount() async throws {
-        try await withScrubbedAccountKeys {
-            let first = self.makeOffline(name: "First")
-            let second = self.makeOffline(name: "Second")
-            AccountManager.shared.accounts = [first, second]
-            AccountManager.shared.accountId = second.id
+        let store = try makeScratchStore()
+        let manager = AccountManager.makeForTesting(store: store)
+        let first = makeOffline(name: "First")
+        let second = makeOffline(name: "Second")
+        manager.accounts = [first, second]
+        manager.accountId = second.id
 
-            let result = AccountManager.shared.getAccount()
-            XCTAssertEqual(result?.id, second.id, "必须返回 accountId 指向的账号")
-        }
+        let result = manager.getAccount()
+        XCTAssertEqual(result?.id, second.id, "必须返回 accountId 指向的账号")
+        assertBothWrappersStoredInInjectedDomain(store)
     }
 
     /// 分支 4：accountId 非空但不匹配任何账号 ⇒ 返回 nil（不因残留 id 崩）。
     func testGetAccountReturnsNilWhenStoredIDDoesNotMatch() async throws {
-        try await withScrubbedAccountKeys {
-            AccountManager.shared.accounts = [self.makeOffline()]
-            AccountManager.shared.accountId = UUID()
+        let store = try makeScratchStore()
+        let manager = AccountManager.makeForTesting(store: store)
+        manager.accounts = [makeOffline()]
+        manager.accountId = UUID()
 
-            let result = AccountManager.shared.getAccount()
-            XCTAssertNil(result, "accountId 无匹配时必须返回 nil")
-        }
+        let result = manager.getAccount()
+        XCTAssertNil(result, "accountId 无匹配时必须返回 nil")
+        assertBothWrappersStoredInInjectedDomain(store)
     }
 }

@@ -204,54 +204,58 @@ final class LaunchPanelStateTests: XCTestCase {
     /// `store.objectWillChange` 上发一次，但那是**另一个对象**的通知，不会串到本对象；
     /// 本对象只收到桥接转发来的那一次。
     ///
-    /// 值转发用**哨兵值 + defer 还原**（同「读进程级状态 → 断言差值并还原」的既有做法）：
-    /// 写回同值的话，兼容层即使各自持副本，两份值也永远相等，断言恒真、抓不到分叉。
-    /// 哨兵取一个正常不会出现的串，测完无条件还原到原值。
-    func testPersistedFieldWriteIsForwardedToStore() async {
-        let settings = LauncherSettings.shared
-        let store = AppSettingsStore.shared
-        let current = settings.selectedMinecraftVersion
+    /// 值转发用**哨兵值**：写回同值的话，兼容层即使各自持副本，两份值也永远相等，
+    /// 断言恒真、抓不到分叉。
+    ///
+    /// ⚠️ 本用例会写持久化字段，因此整段跑在**一次性偏好域**里（见
+    /// `qwqTests/ScratchPreferenceDomain.swift`）：过去用「哨兵 + `defer` 还原」，
+    /// 而宿主 abort 会让 `defer` 不执行、把哨兵留在用户真实设置里（当时为此刻意挑
+    /// `appliedSkinHash` 这种「弄脏了也自愈」的字段）。重定向后不再依赖还原动作，
+    /// 也就不必再迁就字段无害性。
+    func testPersistedFieldWriteIsForwardedToStore() async throws {
+        try await withScratchSettingsPersistence { scratch in
+            let settings = LauncherSettings.shared
+            let store = AppSettingsStore.shared
+            let current = settings.selectedMinecraftVersion
 
-        // —— 第一段：桥接订阅 `AppSettingsStore.objectWillChange` → `LauncherSettings.objectWillChange`
-        var relayEmissions = 0
-        let relayCancellable = settings.objectWillChange.sink { _ in relayEmissions += 1 }
-        defer { relayCancellable.cancel() }
+            // —— 第一段：桥接订阅 `AppSettingsStore.objectWillChange` → `LauncherSettings.objectWillChange`
+            var relayEmissions = 0
+            let relayCancellable = settings.objectWillChange.sink { _ in relayEmissions += 1 }
+            defer { relayCancellable.cancel() }
 
-        // 绕过兼容层，直接写唯一存储点：兼容层自身不参与这次写入。
-        store.selectedMinecraftVersion = current
+            // 绕过兼容层，直接写唯一存储点：兼容层自身不参与这次写入。
+            store.selectedMinecraftVersion = current
 
-        XCTAssertEqual(relayEmissions, 1,
-                       "存储点变更未冒泡到兼容层：桥接订阅断了，订阅设置的视图会静默停止重绘")
+            XCTAssertEqual(relayEmissions, 1,
+                           "存储点变更未冒泡到兼容层：桥接订阅断了，订阅设置的视图会静默停止重绘")
+            XCTAssertEqual(scratch.string(forKey: UDK.selectedMinecraftVersion), current,
+                           "存储点写入没有落到偏好域")
 
-        // —— 第二段：兼容层的写入要发出通知（视图刷新依赖它）
-        var forwardEmissions = 0
-        let forwardCancellable = settings.objectWillChange.sink { _ in forwardEmissions += 1 }
-        defer { forwardCancellable.cancel() }
+            // —— 第二段：兼容层的写入要发出通知（视图刷新依赖它）
+            var forwardEmissions = 0
+            let forwardCancellable = settings.objectWillChange.sink { _ in forwardEmissions += 1 }
+            defer { forwardCancellable.cancel() }
 
-        settings.selectedMinecraftVersion = current
+            settings.selectedMinecraftVersion = current
 
-        XCTAssertEqual(forwardEmissions, 1,
-                       "写兼容层未触发通知：setter 没有转发到存储点（转发断掉时视图不重绘）")
+            XCTAssertEqual(forwardEmissions, 1,
+                           "写兼容层未触发通知：setter 没有转发到存储点（转发断掉时视图不重绘）")
 
-        // —— 第三段：值必须真的落到存储点（兼容层不再自持副本）。
-        // 用哨兵值区分「转发」与「各存一份」；无论断言结果如何都还原原值。
-        //
-        // ⚠️ 刻意选 `appliedSkinHash` 而不是 `selectedMinecraftVersion` 之类：
-        // 哨兵会写进**真实** `UserDefaults`（测试宿主就是用户偏好域），而本套件已知有约 1/4 概率
-        // 在别处 abort；万一 aborts 发生在 `defer` 之前，被弄脏的键要尽量无害。
-        // 弄脏 `appliedSkinHash` 的最坏后果只是多打一次皮肤资源包（幂等、自愈），
-        // 弄脏「已选版本」则会让用户下次启动选不到版本。
-        // 还原写在最靠近写入处，缩小窗口。
-        let originalHash = store.appliedSkinHash
-        let sentinel = originalHash == "__SL_FORWARD_PROBE__" ? "SLPROBE0" : "__SL_FORWARD_PROBE__"
-        defer { store.appliedSkinHash = originalHash }
+            // —— 第三段：值必须真的落到存储点（兼容层不再自持副本）。
+            // 用哨兵值区分「转发」与「各存一份」：写回同值的话两种实现永远相等、断言恒真。
+            // 哨兵只落进这块一次性偏好域，所以不需要还原，也不必再迁就字段无害性。
+            let sentinel = store.appliedSkinHash == "__SL_FORWARD_PROBE__"
+                ? "SLPROBE0" : "__SL_FORWARD_PROBE__"
 
-        settings.appliedSkinHash = sentinel
+            settings.appliedSkinHash = sentinel
 
-        XCTAssertEqual(store.appliedSkinHash, sentinel,
-                       "写兼容层没有落到存储点：兼容层又自持了一份副本，两处会分叉")
-        XCTAssertEqual(settings.appliedSkinHash, sentinel,
-                       "兼容层读到的不是存储点的值")
+            XCTAssertEqual(store.appliedSkinHash, sentinel,
+                           "写兼容层没有落到存储点：兼容层又自持了一份副本，两处会分叉")
+            XCTAssertEqual(settings.appliedSkinHash, sentinel,
+                           "兼容层读到的不是存储点的值")
+            XCTAssertEqual(scratch.string(forKey: UDK.appliedSkinHash), sentinel,
+                           "哨兵必须落进注入的偏好域（否则隔离没生效，写的是用户真实设置）")
+        }
     }
 }
 

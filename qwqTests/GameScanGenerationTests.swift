@@ -47,29 +47,30 @@ final class GameScanGenerationTests: XCTestCase {
     }
 
     /// 迟到结果落地后，展示状态必须从「无版本」翻回来（界面据此显示版本清单）
-    func testLateResultIsAppliedAfterTimeout() async {
-        let viewModel = GameCategoryViewModel()
-        let savedRoot = LauncherSettings.shared.selectedGameRoot
-        let savedVersion = LauncherSettings.shared.selectedMinecraftVersion
-        defer {
-            LauncherSettings.shared.selectedGameRoot = savedRoot
-            LauncherSettings.shared.selectedMinecraftVersion = savedVersion
+    ///
+    /// ⚠️ `applyScanResult` 会经 `LauncherSettings` → `AppSettingsStore` **写持久化设置**
+    /// （已选游戏根目录 / 已选版本）。这里整段跑在一次性偏好域里（见
+    /// `qwqTests/ScratchPreferenceDomain.swift`），因此不再需要「存原值 → `defer` 还原」——
+    /// 那套写法在宿主 abort 时 `defer` 不执行，会把哨兵值留在用户真实设置里。
+    func testLateResultIsAppliedAfterTimeout() async throws {
+        try await withScratchSettingsPersistence { _ in
+            let viewModel = GameCategoryViewModel()
+
+            let generation = viewModel.resetScanState()
+            _ = viewModel.shouldApplyScanTimeout()
+            viewModel.applyScanTimeoutPresentation()
+            XCTAssertFalse(viewModel.hasVersions)
+
+            guard viewModel.isCurrentScan(generation) else {
+                XCTFail("超时后当前代际不应失效")
+                return
+            }
+            let list = ["1.20.1-forge", "1.21-fabric"]
+            viewModel.applyScanResult((root: NSTemporaryDirectory() + "SL-scan-gen-test", versions: list))
+
+            XCTAssertTrue(viewModel.hasVersions, "迟到结果必须落地，界面不能停在「未找到游戏版本」")
+            XCTAssertEqual(viewModel.versions, list)
+            XCTAssertTrue(viewModel.showBottomButtons)
         }
-
-        let generation = viewModel.resetScanState()
-        _ = viewModel.shouldApplyScanTimeout()
-        viewModel.applyScanTimeoutPresentation()
-        XCTAssertFalse(viewModel.hasVersions)
-
-        guard viewModel.isCurrentScan(generation) else {
-            XCTFail("超时后当前代际不应失效")
-            return
-        }
-        let list = ["1.20.1-forge", "1.21-fabric"]
-        viewModel.applyScanResult((root: NSTemporaryDirectory() + "SL-scan-gen-test", versions: list))
-
-        XCTAssertTrue(viewModel.hasVersions, "迟到结果必须落地，界面不能停在「未找到游戏版本」")
-        XCTAssertEqual(viewModel.versions, list)
-        XCTAssertTrue(viewModel.showBottomButtons)
     }
 }
