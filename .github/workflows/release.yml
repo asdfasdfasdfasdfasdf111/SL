@@ -58,8 +58,7 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" "qwq-${GITHUB_REF_NAME}.dmg" \
             --title "$GITHUB_REF_NAME (Beta)" \
-            --notes "Beta 版本，自动构建于 commit ${GITHUB_SHA::7}。
-发布后本站（apple.ct.ws）自动同步，App 内「检查更新」即可获得。" \
+            --notes "Beta 版本，自动构建于 commit ${GITHUB_SHA::7}；发布后本站 apple.ct.ws 自动同步，App 内「检查更新」即可获得。" \
             --verify-tag
 
   # 发布后同步到 apple.ct.ws：解 slowAES 挑战 → 调 publish.php → 服务器拉最新包
