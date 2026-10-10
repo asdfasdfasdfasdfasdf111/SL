@@ -46,10 +46,46 @@ jobs:
           sudo xcode-select -s "$latest"
           xcodebuild -version
 
+      # ⚠️ 这里**绝不能**再写成 `xcodebuild … | tail -5`：管道的退出码是 `tail` 的，
+      # 构建失败也会被当成成功。2026-10-10 实测的后果：Release 在 Xcode 26.6 下编译失败，
+      # 步骤显示 success → 继续把**半成品 bundle**（资源拷完、主程序还没生成）打成 dmg 发布，
+      # 于是 v1.7.0/v1.7.1/v1.7.2 三个线上包都是「没有可执行文件的空壳 App」，
+      # 任何用户自动更新后都打不开（旧包还被换装脚本删掉了）。失败必须失败。
       - name: Release 编译
         run: |
+          set -o pipefail
           xcodebuild -project qwq.xcodeproj -scheme qwq -configuration Release build \
-            -derivedDataPath build CODE_SIGNING_ALLOWED=NO 2>&1 | tail -5
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=YES CODE_SIGNING_ALLOWED=YES \
+            > /tmp/build.log 2>&1 || {
+              echo "===== 构建失败：错误摘要（完整日志见 job 输出） ====="
+              grep -aE '\.swift:[0-9]+:[0-9]+: error:|error: |BUILD FAILED' /tmp/build.log | head -40
+              exit 1
+            }
+          tail -3 /tmp/build.log
+
+      # 打包前先证明这个 bundle 是**能运行的**：主程序在、签名在、版本号与 tag 一致。
+      # 这三条各自对应一次真实事故：主程序缺失（空壳包）、未签名（arm64 起不来）、
+      # 版本落后于 tag（App 会反复提示同一个更新，装完还是旧版）。
+      - name: 校验 bundle（主程序 / 签名 / 版本号）
+        run: |
+          APP=build/Build/Products/Release/qwq.app
+          EXEC=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")
+          VER=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")
+          echo "CFBundleExecutable=$EXEC  CFBundleShortVersionString=$VER  tag=$GITHUB_REF_NAME"
+          if [ ! -x "$APP/Contents/MacOS/$EXEC" ]; then
+            echo "::error::bundle 里没有可执行文件（$APP/Contents/MacOS/$EXEC）—— 拒绝发版"
+            ls -la "$APP/Contents/MacOS" || true
+            exit 1
+          fi
+          if ! codesign --verify --deep --strict "$APP"; then
+            echo "::error::签名校验失败 —— 未签名的 App 在 Apple Silicon 上根本起不来，拒绝发版"
+            exit 1
+          fi
+          if [ "v$VER" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag（$GITHUB_REF_NAME）与 App 版本（$VER）不一致 —— 会让用户反复收到同一个更新，拒绝发版"
+            exit 1
+          fi
 
       - name: 打包 dmg
         run: |
