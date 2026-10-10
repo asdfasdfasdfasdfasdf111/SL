@@ -9,9 +9,10 @@
 //     顺序不得错乱（超限后「最近 20 条」必须仍是这 20 条）；
 //  3. 级别映射与文案：`PopupType` / `HintType` → `NoticeLevel` 的映射、默认标题、
 //     由 `PopupModel` 转换时的按钮与「导出错误报告」判定，全部是用户可见文案，改一处即回归；
-//  4. 应答语义：无 UI 承载者（overlay 未挂载）时 `presentAndWait` 必须立即按默认按钮（下标 0）
-//     返回且不留 current，绝不阻塞调用方；有承载者时真正挂起，`choose` / `dismiss`
-//     分别按点选下标与默认按钮（0）应答；
+//  4. 应答语义：无 UI 承载者（overlay 未挂载）时 `presentAndWait` 必须立即按提示声明的
+//     隐式按钮返回且不留 current，绝不阻塞调用方；有承载者时真正挂起，`choose` / `dismiss`
+//     分别按点选下标与该提示的隐式按钮应答。隐式按钮由 `Notice.fallbackChoiceIndex` 指定
+//     （默认 0，即历史行为），三条隐式路径——无承载者 / 点 × / 兜底超时——都走同一个下标；
 //  5. 非当前提示的点选不得关掉当前提示。
 //
 //  注意：`NoticeCenter` 只有私有 init，测试只能使用 `shared` 单例，
@@ -419,6 +420,81 @@ final class NoticeCenterTests: XCTestCase {
 
         XCTAssertEqual(chosen, 0, "超时后必须按默认按钮（下标 0）应答，调用方不得永久挂起")
         XCTAssertNil(center.current, "超时应答后应关闭当前提示")
+    }
+
+    // MARK: - 隐式应答：由提示自己指定下标（fallbackChoiceIndex）
+
+    /// 无承载者时必须按**该提示自己声明的**隐式按钮应答，而不是硬编码的 0。
+    /// 反例（真实存在）：更新提示的首按钮是「立即更新」，硬编码 0 会把
+    /// 「用户没看见弹窗」变成「自动开始下载并替换 App」。
+    func testWithoutPresenterUsesNoticesOwnFallbackIndex() async {
+        center.setPresenter(false)
+        let notice = Notice(level: .warning,
+                            title: "有新版本",
+                            message: "请选择",
+                            buttons: [NoticeButton(label: "立即更新", style: .accent),
+                                      NoticeButton(label: "下次再说")],
+                            fallbackChoiceIndex: 1)
+
+        let index = await center.presentAndWait(notice)
+
+        XCTAssertEqual(index, 1, "无承载者路径必须按提示声明的隐式按钮应答")
+    }
+
+    /// 点右上角 × 同样按该提示声明的隐式按钮应答 —— 「关掉弹窗」不得等于「执行首个按钮」。
+    func testDismissUsesNoticesOwnFallbackIndex() async {
+        center.setPresenter(true)
+        let notice = Notice(level: .warning,
+                            title: "有新版本",
+                            message: "请选择",
+                            buttons: [NoticeButton(label: "立即更新", style: .accent),
+                                      NoticeButton(label: "下次再说")],
+                            fallbackChoiceIndex: 1)
+
+        async let pending = center.presentAndWait(notice)
+        await waitUntilCurrent(notice.id)
+        center.dismiss()
+
+        let chosen = await pending
+        XCTAssertEqual(chosen, 1, "点 × 必须按隐式按钮应答，不得触发「立即更新」")
+    }
+
+    /// 兜底超时同样按该提示声明的隐式按钮应答。
+    func testTimeoutUsesNoticesOwnFallbackIndex() async {
+        let original = NoticeCenter.responseTimeoutNanos
+        NoticeCenter.responseTimeoutNanos = 50_000_000 // 0.05s
+        defer { NoticeCenter.responseTimeoutNanos = original }
+
+        center.setPresenter(true)
+        let notice = Notice(level: .warning,
+                            title: "有新版本",
+                            message: "无人应答",
+                            buttons: [NoticeButton(label: "立即更新", style: .accent),
+                                      NoticeButton(label: "下次再说")],
+                            fallbackChoiceIndex: 1)
+
+        async let pending = center.presentAndWait(notice)
+        await waitUntilCurrent(notice.id)
+
+        let chosen = await pending
+        XCTAssertEqual(chosen, 1, "超时后必须按提示声明的隐式按钮应答")
+    }
+
+    /// 越界/无按钮时的夹取：隐式应答下标必须始终落在 `buttons` 合法范围内，
+    /// 否则 `choose(index:)` 的语义没有定义（调用方会读到错误分支）。
+    func testFallbackIndexIsClampedIntoButtonRange() async {
+        let two = Notice(level: .info, title: "t", message: "m",
+                         buttons: [NoticeButton(label: "a"), NoticeButton(label: "b")],
+                         fallbackChoiceIndex: 99)
+        XCTAssertEqual(two.safeFallbackChoiceIndex, 1, "越界必须夹到最后一个按钮")
+
+        let negative = Notice(level: .info, title: "t", message: "m",
+                              buttons: [NoticeButton(label: "a")],
+                              fallbackChoiceIndex: -5)
+        XCTAssertEqual(negative.safeFallbackChoiceIndex, 0, "负数必须夹到 0")
+
+        let empty = Notice(level: .info, title: "t", message: "m", buttons: [])
+        XCTAssertEqual(empty.safeFallbackChoiceIndex, 0, "没有按钮时固定为 0，不得越界读取")
     }
 }
 

@@ -19,10 +19,10 @@ final class AppUpdateCoordinator {
     private var isWorking = false
     private init() {}
 
-    /// 检查入口（帮助菜单「检查更新」手动触发）。
-    /// `force`：手动检查时即使已是最新/检查失败也给反馈。
-    /// 不再在启动时自动调用 —— 服务器版本由发布流程（GitHub Actions）自动同步，
-    /// App 无需频繁轮询；用户需要时手动检查即可。
+    /// 检查入口（App 启动自动检查 / 帮助菜单「检查更新…」手动检查共用）。
+    /// `force`：手动检查时即使已是最新/检查失败也给反馈；自动检查静默（失败不打扰）。
+    ///
+    /// 排他：`isWorking` 保证启动自动检查与手动检查并发时只跑一次。
     func checkAndPromptIfNeeded(force: Bool = false) async {
         guard !isWorking else { return }
         isWorking = true
@@ -44,16 +44,40 @@ final class AppUpdateCoordinator {
             return
         }
 
+        let notice = AppUpdateCoordinator.makeUpdateNotice(release: release, current: current)
+        let choice = await NoticeCenter.shared.presentAndWait(notice)
+        guard choice == 0 else { return }
+        await performUpdate(release)
+    }
+
+    /// 构造「发现新版本」提示（纯函数，便于单测钉住下面这条安全属性）。
+    ///
+    /// ⚠️ **安全属性（不可改）**：`fallbackChoiceIndex` 必须指向「下次再说」。
+    /// 更新提示是**启动时自动弹**的，用户完全可能在忙别的、或直接点右上角 ×。
+    /// 若隐式应答落在下标 0（=「立即更新」），那么「没理会弹窗」就等于
+    /// 「自动下载、替换 App 并重启」——无人值守时会真的把 App 换掉。
+    /// 只有真人点「立即更新」才允许进入下载换装。
+    static func makeUpdateNotice(release: AppUpdateService.AppRelease, current: String) -> Notice {
         let notes = release.notes.isEmpty ? "可到 Release 页查看更新内容" : String(release.notes.prefix(300))
-        let notice = Notice(
+        return Notice(
             level: .warning,
             title: "发现新版本 \(release.tagName)（当前 \(current)）",
             message: notes,
             buttons: [NoticeButton(label: "立即更新", style: .accent),
-                      NoticeButton(label: "下次再说")])
-        let choice = await NoticeCenter.shared.presentAndWait(notice)
-        guard choice == 0 else { return }
-        await performUpdate(release)
+                      NoticeButton(label: "下次再说")],
+            fallbackChoiceIndex: 1)
+    }
+
+    /// 启动后的自动检查（冷启动各调一次）。**必须由调用方在 UI 起来之后再延迟触发**，
+    /// 原因见 `AppDelegate` 的延迟说明：太早会与首帧 / 目录预热抢资源。
+    ///
+    /// 测试宿主拦截：`xcodebuild test` 会把 App 真启动起来（`applicationDidFinishLaunching`
+    /// 照跑），若不拦，跑一次用例就会去访问更新服务器 —— 而本工程测试套件的既定约束是
+    /// **不碰网络**。判据用 XCTest 注入的环境变量（hosted test 必带），比「有没有链接 XCTest」
+    /// 准确：后者在生产包里也可能为真。
+    static func checkOnLaunch() async {
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
+        await shared.checkAndPromptIfNeeded()
     }
 
     /// 下载 → 解包 → 换装重启。任一步失败都以 error 提示收场，旧 App 原地不动。

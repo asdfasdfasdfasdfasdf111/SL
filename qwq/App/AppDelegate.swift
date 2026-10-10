@@ -43,9 +43,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // 开发期 UI 自拍（仅 SL_SNAPSHOT_DIR 环境变量存在时生效，产品运行不参与）。
         SnapshotHarness.runIfRequested()
-        // 自动更新检查已移除：不再在打开 App 时主动检查。
-        // 检查改由用户手动触发（帮助菜单「检查更新…」，force: true 给反馈）；
-        // 服务器版本在每次发布新版本时由 GitHub Actions 自动同步（publish.php），
-        // App 检查时读到的是已就位的最新版本与安装包。
+        // 启动自动检查更新：延迟 5 秒（首帧 / 目录预热 / 快照优先）。
+        // 5 秒的依据：快照 harness 首帧等待 3s，再晚用户已经开点了，再早抢首屏资源。
+        //
+        // 历史：本调用由 9d8c6cc 加上，随后被 3d03872（更新服务器那次）删掉，理由是
+        // 「App 无需频繁轮询」；但那样一来 App 里就再没有任何**看得见**的更新入口
+        //（只剩「帮助」菜单里一项），所以 2026-10-10 恢复 —— 现在有更新会主动弹窗。
+        //
+        // ⚠️ 这段注释原先写着「下载与换装只在用户点了『立即更新』后才发生」，那是**错的**：
+        // 弹窗有 5 分钟兜底超时，而超时原先硬编码按下标 0 应答 = 自动开始换装。
+        // 现已让更新提示显式把隐式应答指向「下次再说」（见 AppUpdateCoordinator 的
+        // fallbackChoiceIndex），「用户不理」不再等于「自动替换 App」。
+        // 手动入口仍在「帮助」菜单（force: true，会给「已是最新」反馈）。
+        Task.detached(priority: .utility) {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            await AppUpdateCoordinator.checkOnLaunch()
+        }
     }
 }

@@ -47,19 +47,36 @@ public struct Notice: Identifiable, Equatable {
     public let allowsReportExport: Bool
     /// 需要展示的按钮。默认单个「确定」。
     public let buttons: [NoticeButton]
+    /// **没有真人点选时**按哪个按钮应答（兜底超时 / 点右上角 × / 被新提示顶替 / 同一 id 重复等待）。
+    /// 默认 `0` —— 即首个按钮，与历史行为逐字一致。
+    ///
+    /// 为什么需要它：调用方不能假设「隐式应答」等于「用户想执行第一个按钮」。
+    /// 反例（2026-10-10 实测存在）：更新提示的按钮是「立即更新 / 下次再说」，此前所有隐式
+    /// 应答都硬编码下标 0，于是**用户没看见弹窗（或点了 ×、或晾着不管 5 分钟）＝ 自动开始
+    /// 下载并替换 App**。凡是「首个按钮不是安全选项」的提示，都必须显式指定本字段。
+    public let fallbackChoiceIndex: Int
 
     public init(id: UUID = UUID(),
                 level: NoticeLevel,
                 title: String,
                 message: String,
                 allowsReportExport: Bool = false,
-                buttons: [NoticeButton] = [.ok]) {
+                buttons: [NoticeButton] = [.ok],
+                fallbackChoiceIndex: Int = 0) {
         self.id = id
         self.level = level
         self.title = title
         self.message = message
         self.allowsReportExport = allowsReportExport
         self.buttons = buttons
+        self.fallbackChoiceIndex = fallbackChoiceIndex
+    }
+
+    /// 隐式应答实际使用的下标：把 `fallbackChoiceIndex` 夹进 `buttons` 的合法范围。
+    /// （提示可能没有按钮，或调用方给了越界值 —— 越界会让 `choose` 的语义变得没有定义。）
+    public var safeFallbackChoiceIndex: Int {
+        guard !buttons.isEmpty else { return 0 }
+        return min(max(0, fallbackChoiceIndex), buttons.count - 1)
     }
 
     public static func == (lhs: Notice, rhs: Notice) -> Bool { lhs.id == rhs.id }
@@ -176,10 +193,10 @@ public final class NoticeCenter: ObservableObject {
             history.removeFirst(history.count - Self.historyLimit)
         }
         // `current` 是单槽：新提示会顶替旧的，被顶替那条在 UI 上已不复存在，
-        // 若它仍在等待点选，用户永远点不到它 —— 必须**立刻**按默认按钮应答，
+        // 若它仍在等待点选，用户永远点不到它 —— 必须**立刻**按该提示自己的隐式按钮应答，
         // 否则调用方只能等满 `responseTimeoutNanos` 兜底（崩溃弹窗的「导出报告」因此挂 5 分钟）。
         if let displaced = current, displaced.id != notice.id {
-            answer(displaced.id, index: 0)
+            answer(displaced.id, index: displaced.safeFallbackChoiceIndex)
         }
         current = notice
     }
@@ -189,28 +206,29 @@ public final class NoticeCenter: ObservableObject {
     /// 展示提示并等待用户点选，返回被点按钮在 `notice.buttons` 中的下标。
     ///
     /// - 有 UI 承载者时：真正挂起，直到用户点击 / 关闭 / 被新提示顶替 / 兜底超时。
-    /// - 无 UI 承载者（overlay 未挂载）时：不挂起，直接返回 `0`（默认按钮），
-    ///   语义与旧桩实现一致，保证不会把调用方卡死。
+    /// - 无 UI 承载者（overlay 未挂载）时：不挂起，直接返回 `notice.safeFallbackChoiceIndex`，
+    ///   保证不会把调用方卡死（对默认提示即历史行为的下标 0）。
     @MainActor
     public func presentAndWait(_ notice: Notice) async -> Int {
         guard hasPresenter else {
             deliver(notice)
             current = nil
-            return 0
+            return notice.safeFallbackChoiceIndex
         }
 
         // 兜底：极端情况下（窗口关闭、用户始终不点）不能让调用方永久挂起。
         // 该任务不随用户点选而取消，但「迟到触发」是安全的：`answer` 摘不到条目即无操作，
         // 见其「恰好一次」说明。
+        // 应答下标取提示自己的 `fallbackChoiceIndex`：**不得**硬编码 0（见该字段说明）。
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: Self.responseTimeoutNanos)
-            self?.choose(notice, index: 0)
+            self?.choose(notice, index: notice.safeFallbackChoiceIndex)
         }
 
         return await withCheckedContinuation { (continuation: CheckedContinuation<Int, Never>) in
             // 同一 `notice.id` 若已有未应答的等待（同一个 `Notice` 值被等待两次），
             // 先按默认按钮应答旧的：否则下面的字典赋值会覆盖旧 continuation，使它永不 resume。
-            answer(notice.id, index: 0)
+            answer(notice.id, index: notice.safeFallbackChoiceIndex)
             pending[notice.id] = continuation
             deliver(notice)
         }
@@ -240,11 +258,13 @@ public final class NoticeCenter: ObservableObject {
         continuation.resume(returning: index)
     }
 
-    /// 用户关闭当前提示（点右上角 ×）。若该提示正在等待选择，则按默认按钮（下标 0）应答。
+    /// 用户关闭当前提示（点右上角 ×）。若该提示正在等待选择，则按该提示的隐式按钮
+    /// （`fallbackChoiceIndex`，默认下标 0）应答 —— 「关掉弹窗」绝不能等于「执行首个按钮」，
+    /// 除非提示自己就是这么声明的。
     @MainActor
     public func dismiss() {
         guard let notice = current else { return }
-        choose(notice, index: 0)
+        choose(notice, index: notice.safeFallbackChoiceIndex)
     }
 
     // MARK: 承载者注册

@@ -79,4 +79,29 @@ final class AppUpdateServiceTests: XCTestCase {
     func testReturnsNilOnMalformedJSON() async {
         XCTAssertNil(AppUpdateService.parseLatestRelease(Data("not json".utf8)))
     }
+
+    // MARK: - 更新提示的安全属性
+
+    /// 更新提示的**隐式应答**（兜底超时 / 点右上角 × / 被新提示顶替 / 无 UI 承载）必须落在
+    /// 「下次再说」上，绝不能落在「立即更新」。
+    ///
+    /// 为什么这是硬约束：这条提示是**启动时自动弹**的，用户完全可能在忙别的（或直接点 ×）。
+    /// 隐式应答一旦是「立即更新」，就等于「没理会弹窗 → 自动下载、替换 App 并重启」，
+    /// 无人值守时会真的把 App 换掉。所以这里把「首按钮是主操作、隐式按钮是安全项」钉死。
+    @MainActor
+    func testUpdateNoticeImplicitChoiceNeverInstalls() async throws {
+        let release = AppUpdateService.AppRelease(
+            tagName: "v9.9.9",
+            notes: "",
+            downloadURL: try XCTUnwrap(URL(string: "https://example.com/qwq.dmg")))
+        let notice = AppUpdateCoordinator.makeUpdateNotice(release: release, current: "1.7.0")
+
+        XCTAssertEqual(notice.buttons.first?.label, "立即更新", "首个按钮仍是主操作（视觉强调）")
+        XCTAssertEqual(notice.safeFallbackChoiceIndex, 1,
+                       "隐式应答必须是下标 1；一旦回到 0，「不理会弹窗」＝「自动换装」")
+        XCTAssertEqual(notice.buttons[notice.safeFallbackChoiceIndex].label, "下次再说",
+                       "隐式应答指向的按钮必须确实是「下次再说」")
+        XCTAssertTrue(notice.title.contains("v9.9.9"), "标题必须写明新版本号")
+        XCTAssertTrue(notice.title.contains("1.7.0"), "标题必须写明当前版本号")
+    }
 }
