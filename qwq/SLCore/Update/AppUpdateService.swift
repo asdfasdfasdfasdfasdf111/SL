@@ -111,6 +111,11 @@ nonisolated enum AppUpdateService {
                           downloadURL: downloadURL)
     }
 
+    /// 进度回调的最小步长（1%）。提示卡用同一个 id **就地刷新**（见 `NoticeCenter.update`），
+    /// 所以刷新频率高也不会重建卡片、不会抽搐；1% 粒度配合 0.18s 线性动画才是连续的进度条。
+    /// （早期是 5%，在 40 秒的下载里约 2 秒跳一格，观感是「一格一格蹦」。）
+    static let progressStep = 0.01
+
     /// 多线程 Range 分块下载：先取 Content-Length 与 Accept-Ranges，若服务器支持
     /// Range 就并发拉取若干分段再按偏移拼装（免费静态主机下载慢，多连接可成倍提速）；
     /// 不支持 Range（返回整份 200）则退化为单流下载。每 ≥5% 回调一次进度。
@@ -199,7 +204,7 @@ nonisolated enum AppUpdateService {
                 // 未夹取的 fraction 会一路上涨，5% 门限每字节都成立 → 通知风暴打满主线程。
                 // 夹取后即使 total 错得离谱，也最多多发一次通知，不会失控。
                 let fraction = min(1.0, Double(received) / Double(total))
-                if fraction - lastReported >= 0.05 {
+                if fraction - lastReported >= Self.progressStep {
                     lastReported = fraction
                     progress(fraction)
                 }
@@ -330,7 +335,7 @@ nonisolated enum AppUpdateService {
             lock.lock()
             received += delta
             let fraction = min(1.0, Double(received) / Double(total))
-            let fire = fraction - lastReported >= 0.05
+            let fire = fraction - lastReported >= Self.progressStep
             if fire { lastReported = fraction }
             lock.unlock()
             if fire { report(fraction) }

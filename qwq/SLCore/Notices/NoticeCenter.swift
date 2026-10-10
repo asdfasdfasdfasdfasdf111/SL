@@ -55,6 +55,12 @@ public struct Notice: Identifiable, Equatable {
     /// 应答都硬编码下标 0，于是**用户没看见弹窗（或点了 ×、或晾着不管 5 分钟）＝ 自动开始
     /// 下载并替换 App**。凡是「首个按钮不是安全选项」的提示，都必须显式指定本字段。
     public let fallbackChoiceIndex: Int
+    /// 进度类提示的完成度（`0...1`）。`nil` = 不显示进度条。
+    ///
+    /// 必须配合 `NoticeCenter.update(_:)` 用**同一个 `id`** 就地刷新：`post` 一条新 id
+    /// 的提示会让 overlay 按 `.id(notice.id)` 把卡片拆掉重建、重放出现动画，
+    /// 表现成「进度条每刷新一次就抽搐一下」（用户 2026-10-10 实测反馈）。
+    public let progress: Double?
 
     public init(id: UUID = UUID(),
                 level: NoticeLevel,
@@ -62,7 +68,8 @@ public struct Notice: Identifiable, Equatable {
                 message: String,
                 allowsReportExport: Bool = false,
                 buttons: [NoticeButton] = [.ok],
-                fallbackChoiceIndex: Int = 0) {
+                fallbackChoiceIndex: Int = 0,
+                progress: Double? = nil) {
         self.id = id
         self.level = level
         self.title = title
@@ -70,6 +77,7 @@ public struct Notice: Identifiable, Equatable {
         self.allowsReportExport = allowsReportExport
         self.buttons = buttons
         self.fallbackChoiceIndex = fallbackChoiceIndex
+        self.progress = progress
     }
 
     /// 隐式应答实际使用的下标：把 `fallbackChoiceIndex` 夹进 `buttons` 的合法范围。
@@ -199,6 +207,25 @@ public final class NoticeCenter: ObservableObject {
             answer(displaced.id, index: displaced.safeFallbackChoiceIndex)
         }
         current = notice
+    }
+
+    /// **就地更新**正在展示的那条提示（同一个 `id`）：只换内容，不重放出现动画。
+    ///
+    /// 为什么必须存在这个方法：overlay 用 `.id(notice.id)` 作卡片身份，`post` 一条新 id
+    /// 的提示等于「旧卡拆掉、新卡建起」，出现动画（opacity + scale + punchySpring）
+    /// 会重放一次 —— 表现为进度条一刷新就抽搐。下载/安装进度这类高频更新走这里。
+    ///
+    /// 边界：
+    ///  - 只更新**正在展示**的那条（`current?.id == notice.id`）；提示已被用户关闭或被别的
+    ///    提示顶替时**静默忽略** —— 否则会把用户已经关掉的卡片重新拉回屏幕上；
+    ///  - 同步替换 `history` 里同 id 的那条，让事后排查看到的是最终内容而不是中间态。
+    @MainActor
+    public func update(_ notice: Notice) {
+        guard current?.id == notice.id else { return }
+        current = notice
+        if let index = history.lastIndex(where: { $0.id == notice.id }) {
+            history[index] = notice
+        }
     }
 
     // MARK: 展示 + 等待点选

@@ -90,6 +90,7 @@ final class AppUpdateCoordinator {
 
     /// 下载 → 解包 → 换装重启。任一步失败都以 error 提示收场，旧 App 原地不动。
     private func performUpdate(_ release: AppUpdateService.AppRelease) async {
+        progressNoticeID = nil   // 新一轮下载用新卡片（重试时不会续用上一张已关闭的）
         let work = FileManager.default.temporaryDirectory
             .appendingPathComponent("SLUpdate-\(UUID().uuidString)", isDirectory: true)
         let packageURL = work.appendingPathComponent("update" + (release.downloadURL.pathExtension.isEmpty ? ".dmg" : "." + release.downloadURL.pathExtension))
@@ -186,11 +187,27 @@ final class AppUpdateCoordinator {
         return stagedApp
     }
 
+    /// 下载进度提示的固定 id：整段下载只对应**一张**卡片。
+    /// 每次 `post` 一条新 id 的提示会让 overlay 按 `.id(notice.id)` 重建卡片、重放出现动画
+    /// （用户反馈的「进度条抽搐」），所以首次 `post`、之后一律走 `update` 就地刷新。
+    private var progressNoticeID: UUID?
+
     private func postProgress(_ release: AppUpdateService.AppRelease, fraction: Double) {
-        NoticeCenter.shared.post(Notice(level: .warning,
-                                        title: "正在下载更新 \(release.tagName)",
-                                        message: "\(Int(fraction * 100))%",
-                                        buttons: []))
+        let clamped = max(0, min(1, fraction))
+        let percent = Int((clamped * 100).rounded())
+        let id = progressNoticeID ?? UUID()
+        progressNoticeID = id
+        let notice = Notice(id: id,
+                            level: .warning,
+                            title: "正在下载更新 \(release.tagName)",
+                            message: "\(percent)%",
+                            buttons: [],
+                            progress: clamped)
+        if NoticeCenter.shared.current?.id == id {
+            NoticeCenter.shared.update(notice)   // 就地刷新：动画只作用在进度条上
+        } else {
+            NoticeCenter.shared.post(notice)     // 首次出现（或上一张已被顶替）
+        }
     }
 
     /// 换装脚本（脱离本进程执行）：等本进程退出 → 旧版挪走 → 新版就位 → 重启 → 清理。

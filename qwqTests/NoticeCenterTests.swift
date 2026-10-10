@@ -480,6 +480,8 @@ final class NoticeCenterTests: XCTestCase {
         XCTAssertEqual(chosen, 1, "超时后必须按提示声明的隐式按钮应答")
     }
 
+    // MARK: - 就地更新（进度条类提示）
+
     /// 越界/无按钮时的夹取：隐式应答下标必须始终落在 `buttons` 合法范围内，
     /// 否则 `choose(index:)` 的语义没有定义（调用方会读到错误分支）。
     func testFallbackIndexIsClampedIntoButtonRange() async {
@@ -495,6 +497,52 @@ final class NoticeCenterTests: XCTestCase {
 
         let empty = Notice(level: .info, title: "t", message: "m", buttons: [])
         XCTAssertEqual(empty.safeFallbackChoiceIndex, 0, "没有按钮时固定为 0，不得越界读取")
+    }
+
+    /// `update` 必须**原地**替换同一 id 的提示：内容更新、id 不变。
+    /// id 不变是硬要求 —— overlay 用 `.id(notice.id)` 作卡片身份，id 一变卡片就重建、
+    /// 出现动画重放，用户看到的就是「进度条每刷新一次抽搐一下」。
+    func testUpdateReplacesContentInPlaceKeepingIdentity() async {
+        center.setPresenter(true)
+        let id = UUID()
+        let first = Notice(id: id, level: .warning, title: "正在下载更新 v9", message: "0%",
+                           buttons: [], progress: 0)
+        center.post(first)
+        await waitUntilCurrent(id)
+
+        let second = Notice(id: id, level: .warning, title: "正在下载更新 v9", message: "45%",
+                            buttons: [], progress: 0.45)
+        center.update(second)
+
+        XCTAssertEqual(center.current?.id, id, "就地更新必须保持同一个 id（否则卡片会重建）")
+        XCTAssertEqual(center.current?.message, "45%", "内容必须换成新值")
+        XCTAssertEqual(center.current?.progress, 0.45)
+    }
+
+    /// `update` 不得把**已经不在展示**的提示拉回屏幕（用户已点 × 或已被顶替）。
+    func testUpdateIgnoresNoticeThatIsNotCurrent() async {
+        center.setPresenter(true)
+        let other = Notice(level: .info, title: "别的提示", message: "占位")
+        center.post(other)
+        await waitUntilCurrent(other.id)
+
+        let stale = Notice(id: UUID(), level: .warning, title: "下载", message: "50%", buttons: [], progress: 0.5)
+        center.update(stale)
+
+        XCTAssertEqual(center.current?.id, other.id, "不在展示中的提示不得被 update 拉回来")
+    }
+
+    /// `update` 同步替换 history 里同 id 的那条：事后排查看到的是最终内容而不是中间态。
+    func testUpdateRewritesHistoryEntry() async {
+        center.setPresenter(true)
+        let id = UUID()
+        center.post(Notice(id: id, level: .warning, title: "下载", message: "10%", buttons: [], progress: 0.1))
+        await waitUntilCurrent(id)
+        center.update(Notice(id: id, level: .warning, title: "下载", message: "100%", buttons: [], progress: 1.0))
+
+        let entry = center.history.last(where: { $0.id == id })
+        XCTAssertEqual(entry?.message, "100%", "history 里同 id 的条目必须被替换成最新内容")
+        XCTAssertEqual(center.history.filter { $0.id == id }.count, 1, "不得为同一 id 堆积多条历史")
     }
 }
 

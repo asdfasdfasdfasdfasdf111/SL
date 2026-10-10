@@ -128,6 +128,13 @@ private struct NoticeCard: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.primary)
 
+                // 进度条：真实比例 + 线性动画。进度靠 `NoticeCenter.update(_:)` 就地刷新
+                // （同 id），卡片身份不变，所以不会重放出现动画（用户反馈的「抽搐」）。
+                if let progress = notice.progress {
+                    NoticeProgressBar(progress: progress, tint: accent)
+                        .padding(.top, 1)
+                }
+
                 if !notice.message.isEmpty {
                     let parts = Self.splitMessage(notice.message)
                     // 第一段：一句话结论，常显
@@ -237,6 +244,29 @@ private struct NoticeCard: View {
                 withAnimation(.punchySpring) { appeared = true }
             }
         }
+    }
+}
+
+/// 提示卡里的进度条：细胶囊 + 真实比例 + 线性动画。
+/// 动画作用在 `progress` 上，所以刷新时是**同一条**在平滑增长，而不是重建一条。
+private struct NoticeProgressBar: View {
+    let progress: Double
+    let tint: Color
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.secondary.opacity(0.22))
+                Capsule()
+                    .fill(tint)
+                    .frame(width: max(0, min(1, progress)) * geo.size.width)
+            }
+        }
+        .frame(height: 5)
+        .animation(.linear(duration: 0.18), value: progress)
+        .accessibilityElement()
+        .accessibilityLabel("下载进度")
+        .accessibilityValue("\(Int((max(0, min(1, progress)) * 100).rounded()))%")
     }
 }
 
