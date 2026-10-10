@@ -29,6 +29,24 @@ if (is_file($DATA_DIR . '/releases.json')) {
 }
 $latest = $releases[0] ?? null;
 
+/**
+ * 下载地址：**同源镜像优先**。
+ *
+ * GitHub 的 browser_download_url 是跨域地址，而带 Range 头的跨域 fetch 会触发 CORS 预检；
+ * QQ 内置浏览器（X5/WKWebView 套壳）会直接掐掉这类跨站请求，前端只能拿到
+ * "Failed to fetch"（用户实测；Safari / Chrome 放行）。同步任务已把安装包落到 updates/，
+ * 所以优先给同源地址：同源无预检、Range 也照常工作。
+ */
+function dl_url(array $asset): string
+{
+    $name = basename((string) ($asset['name'] ?? ''));
+    if ($name !== '' && is_file(__DIR__ . '/updates/' . $name)) {
+        return 'updates/' . rawurlencode($name);
+    }
+    return (string) $asset['browser_download_url'];
+}
+
+
 /** 取某条记录的第一个安装包资产（dmg 优先，zip 回退）；没有则 null。 */
 function first_package(array $release): ?array
 {
@@ -175,10 +193,13 @@ $base = $scheme . '://' . $host;
             <?php endif; ?>
             <?php if ($asset !== null): ?>
                 <div class="btnrow">
-                    <a class="btn" href="<?= htmlspecialchars((string) $asset['browser_download_url'], ENT_QUOTES) ?>">
+                    <a class="btn" href="<?= htmlspecialchars(dl_url($asset), ENT_QUOTES) ?>">
                         下载 <?= htmlspecialchars((string) ($asset['name'] ?? '安装包'), ENT_QUOTES) ?><?= human_size($asset['size'] ?? null) !== '' ? '（' . human_size($asset['size']) . '）' : '' ?>
                     </a>
-                    <button class="btn turbo" type="button" data-url="<?= htmlspecialchars((string) $asset['browser_download_url'], ENT_QUOTES) ?>" data-name="<?= htmlspecialchars((string) ($asset['name'] ?? '安装包'), ENT_QUOTES) ?>">
+                    <button class="btn turbo" type="button"
+                            data-url="<?= htmlspecialchars(dl_url($asset), ENT_QUOTES) ?>"
+                            data-fallback="<?= htmlspecialchars((string) $asset['browser_download_url'], ENT_QUOTES) ?>"
+                            data-name="<?= htmlspecialchars((string) ($asset['name'] ?? '安装包'), ENT_QUOTES) ?>">
                         ⚡ 多线程下载（推荐）
                     </button>
                     <div class="prog"><i></i><em>0%</em></div>
@@ -198,7 +219,7 @@ $base = $scheme . '://' . $host;
                         <td><?= htmlspecialchars(nice_date($release['published_at'] ?? null), ENT_QUOTES) ?></td>
                         <td>
                             <?php if ($asset !== null): ?>
-                                <a href="<?= htmlspecialchars((string) $asset['browser_download_url'], ENT_QUOTES) ?>">下载</a>
+                                <a href="<?= htmlspecialchars(dl_url($asset), ENT_QUOTES) ?>">下载</a>
                             <?php endif; ?>
                         </td>
                     </tr>
@@ -215,9 +236,13 @@ $base = $scheme . '://' . $host;
 </div>
 
 <script>
-// ⚡ 多线程下载：服务器静态文件支持 HTTP Range（Accept-Ranges: bytes），
-// 并发拉取若干分段再拼装。每段用流式读取逐块累计字节数，
-// 进度条是「真实字节数 / 总字节数」，并显示实时速度（MB/s）。
+// ⚡ 多线程下载：同源静态文件支持 HTTP Range（Accept-Ranges: bytes），并发分段再拼装。
+//
+// 兼容策略（关键：任何一步失败都不能让用户拿不到文件）：
+//   ① 并行 Range 分块（需要 Streams/ArrayBuffer；**同源**请求不触发 CORS 预检）
+//   ② 单连接整份拉取（不支持 Range，或分块路径出错）
+//   ③ 交还浏览器自己的下载器（连 fetch 都不行时——QQ 内置浏览器会拦跨站 fetch，
+//      这正是之前报 "Failed to fetch" 的场景）
 (function () {
     'use strict';
 
@@ -229,149 +254,231 @@ $base = $scheme . '://' . $host;
         return (n / 1073741824).toFixed(2) + ' GB';
     }
 
-    // 流式读取整段响应，每收到一块就回调累计字节数
-    async function readStream(resp, onChunk) {
-        const reader = resp.body.getReader();
-        let got = 0;
-        for (;;) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            got += value.byteLength;
-            onChunk(got);
-        }
-        return got;
+    // 探测运行环境：老内核（X5/WKWebView 套壳）可能没有 Streams
+    var streamSupport = null;
+    function hasStreams() {
+        if (streamSupport !== null) return streamSupport;
+        try {
+            streamSupport = !!(window.fetch && window.Blob && window.URL && URL.createObjectURL
+                && typeof Response !== 'undefined' && !!Response.prototype.arrayBuffer
+                && !!(new Response('')).body
+                && typeof (new Response('')).body.getReader === 'function');
+        } catch (e) { streamSupport = false; }
+        return streamSupport;
     }
 
-    // 取总大小 + 确认支持 Range
-    async function probe(url) {
-        const resp = await fetch(url, { headers: { Range: 'bytes=0-0' }, credentials: 'same-origin' });
-        if (!resp.ok && resp.status !== 206) throw new Error('HTTP ' + resp.status);
-        let total = 0, supported = false;
-        if (resp.status === 206) {
-            const m = (resp.headers.get('Content-Range') || '').match(/\/(\d+)$/);
-            total = m ? parseInt(m[1], 10) : 0;
-            supported = total > 0;
-        }
-        return { total: total, supported: supported };
+    // ③ 兜底：把下载交还浏览器（QQ 内置浏览器会转到它自己的下载器）
+    function handOff(url) {
+        var a = document.createElement('a');
+        a.href = url;
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () { a.remove(); }, 1500);
     }
 
-    async function start(btn) {
-        const url = btn.dataset.url, name = btn.dataset.name;
-        const box = btn.parentElement;
-        const prog = box.querySelector('.prog');
-        const bar = prog.querySelector('i'), label = prog.querySelector('em');
-        const orig = btn.textContent;
+    function probe(url) {
+        // 先 HEAD：同源简单请求，省流量，直接拿总大小与 Range 支持
+        return fetch(url, { method: 'HEAD', credentials: 'same-origin' }).then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            var total = parseInt(r.headers.get('Content-Length') || '0', 10);
+            var ar = (r.headers.get('Accept-Ranges') || '').toLowerCase();
+            if (total > 0) return { total: total, supported: ar === 'bytes' };
+            throw new Error('无 Content-Length');
+        }).catch(function () {
+            // 个别主机 HEAD 405：退回 Range 探测
+            return fetch(url, { headers: { Range: 'bytes=0-0' }, credentials: 'same-origin' })
+                .then(function (resp) {
+                    if (!resp.ok && resp.status !== 206) throw new Error('HTTP ' + resp.status);
+                    var total = 0, supported = false;
+                    if (resp.status === 206) {
+                        var m = (resp.headers.get('Content-Range') || '').match(/\/(\d+)$/);
+                        total = m ? parseInt(m[1], 10) : 0;
+                        supported = total > 0;
+                    }
+                    return { total: total, supported: supported };
+                });
+        });
+    }
+
+    // 读一段响应为 ArrayBuffer（有 Streams 就边读边报进度）
+    function readBody(resp, onBytes) {
+        if (!hasStreams()) return resp.arrayBuffer();
+        var reader = resp.body.getReader(), parts = [], got = 0;
+        function pump() {
+            return reader.read().then(function (r) {
+                if (r.done) {
+                    var buf = new Uint8Array(got), off = 0;
+                    for (var i = 0; i < parts.length; i++) { buf.set(parts[i], off); off += parts[i].byteLength; }
+                    return buf.buffer;
+                }
+                parts.push(r.value);
+                got += r.value.byteLength;
+                if (onBytes) onBytes(r.value.byteLength);
+                return pump();
+            });
+        }
+        return pump();
+    }
+
+    // ② 单连接整份拉取（只请求一次——旧版这里会重复下载一遍）
+    function fetchWhole(url, knownTotal, onBytes) {
+        return fetch(url, { credentials: 'same-origin' }).then(function (resp) {
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            var size = knownTotal || Number(resp.headers.get('Content-Length')) || 0;
+            if (!hasStreams()) return resp.arrayBuffer();
+            var reader = resp.body.getReader(), parts = [], got = 0;
+            function pump() {
+                return reader.read().then(function (r) {
+                    if (r.done) {
+                        var buf = new Uint8Array(got), off = 0;
+                        for (var i = 0; i < parts.length; i++) { buf.set(parts[i], off); off += parts[i].byteLength; }
+                        return buf.buffer;
+                    }
+                    parts.push(r.value);
+                    got += r.value.byteLength;
+                    if (onBytes) onBytes(r.value.byteLength);
+                    return pump();
+                });
+            }
+            return pump();
+        });
+    }
+
+    function fetchChunk(url, from, to, onBytes) {
+        return fetch(url, { headers: { Range: 'bytes=' + from + '-' + to }, credentials: 'same-origin' })
+            .then(function (resp) {
+                if (resp.status !== 206) throw new Error('Range 被拒绝 HTTP ' + resp.status);
+                return readBody(resp, onBytes);
+            });
+    }
+
+    function saveBlob(parts, name) {
+        var blob = new Blob(parts, { type: 'application/octet-stream' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 60000);
+        return blob.size;
+    }
+
+    function start(btn) {
+        var url = btn.dataset.url;
+        var fallback = btn.dataset.fallback || url;
+        var name = btn.dataset.name || '安装包';
+        var box = btn.parentElement;
+        var prog = box.querySelector('.prog');
+        var bar = prog.querySelector('i'), label = prog.querySelector('em');
+        var orig = btn.textContent;
 
         btn.disabled = true;
         prog.classList.add('on');
         bar.style.background = '';
         bar.style.width = '0%';
         label.textContent = '连接中…';
-        let last = performance.now(), lastBytes = 0, speed = 0;
-        const speedTimer = setInterval(function () {
-            const now = performance.now();
-            const dt = (now - last) / 1000;
-            if (dt > 0) {
-                speed = (now > 0 && lastBytes > 0) ? (lastBytes / 1048576 / dt) : 0;
-                last = now; lastBytes = 0;
-            }
-        }, 800);
 
-        try {
-            const info = await probe(url);
-            let buffers;
-            if (!info.supported || info.total <= 0) {
-                // 不支持 Range：单连接整份拉取
-                const resp = await fetch(url, { credentials: 'same-origin' });
-                if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                const total = info.total || Number(resp.headers.get('Content-Length')) || 0;
-                const got = await readStream(resp, function (c) {
-                    if (total > 0) {
-                        lastBytes = c;
-                        const f = c / total;
-                        bar.style.width = Math.min(100, f * 100) + '%';
-                        label.textContent = Math.round(f * 100) + '% · ' + humanSize(c) + ' / ' + humanSize(total);
-                    }
-                });
-                buffers = [resp]; // 占位，下面用原始 buffer
-                // 因为 readStream 已读完，重新取 buffer：
-                buffers = [await (await fetch(url, { credentials: 'same-origin' })).arrayBuffer()];
-            } else {
-                const MB = info.total / 1048576;
-                const n = MB < 8 ? 1 : MB < 16 ? 4 : MB < 32 ? 6 : 8;
-                if (n === 1) {
-                    const resp = await fetch(url, { credentials: 'same-origin' });
-                    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-                    const got = await readStream(resp, function (c) {
-                        lastBytes = c;
-                        const f = c / info.total;
-                        bar.style.width = Math.min(100, f * 100) + '%';
-                        label.textContent = Math.round(f * 100) + '% · ' + humanSize(c) + ' / ' + humanSize(info.total);
-                    });
-                    buffers = [await (await fetch(url, { credentials: 'same-origin' })).arrayBuffer()];
-                } else {
-                    // 并发分段：每段独立流式读取，全局进度 = 累计字节 / 总字节
-                    const chunk = Math.ceil(info.total / n);
-                    const done = new Array(n);
-                    let received = 0;
-                    const tasks = [];
-                    for (let i = 0; i < n; i++) {
-                        const s = i * chunk, e = Math.min(s + chunk, info.total) - 1;
-                        tasks.push((async () => {
-                            const resp = await fetch(url, { headers: { Range: 'bytes=' + s + '-' + e }, credentials: 'same-origin' });
-                            if (resp.status !== 206) throw new Error('Range 被拒绝 HTTP ' + resp.status);
-                            const parts = [];
-                            let segGot = 0;
-                            const reader = resp.body.getReader();
-                            for (;;) {
-                                const r = await reader.read();
-                                if (r.done) break;
-                                parts.push(r.value);
-                                segGot += r.value.byteLength;
-                                received += r.value.byteLength;
-                                lastBytes += r.value.byteLength;
-                                const f = received / info.total;
-                                bar.style.width = Math.min(100, f * 100) + '%';
-                                label.textContent = Math.round(f * 100) + '% · ' + humanSize(received) + ' / ' + humanSize(info.total);
-                            }
-                            const buf = new Uint8Array(segGot);
-                            let off = 0;
-                            for (const p of parts) { buf.set(p, off); off += p.byteLength; }
-                            done[i] = buf.buffer;
-                        })());
-                    }
-                    await Promise.all(tasks);
-                    buffers = done;
-                }
+        var total = 0, received = 0, lastBytes = 0, speed = 0;
+        var t0 = Date.now(), lastT = t0;
+        var timer = setInterval(function () {
+            var now = Date.now(), dt = (now - lastT) / 1000;
+            if (dt <= 0) return;
+            speed = lastBytes / 1048576 / dt;
+            lastBytes = 0; lastT = now;
+            if (total > 0) {
+                label.textContent = Math.round(received / total * 100) + '% · '
+                    + humanSize(received) + ' / ' + humanSize(total)
+                    + (speed > 0.01 ? ' · ' + speed.toFixed(1) + ' MB/s' : '');
             }
-            const blob = new Blob(buffers, { type: 'application/octet-stream' });
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = name;
-            document.body.appendChild(a);
-            a.click();
-            setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
-            clearInterval(speedTimer);
-            bar.style.width = '100%';
-            label.textContent = '完成 ✓ · ' + humanSize(blob.size);
-        } catch (e) {
-            clearInterval(speedTimer);
-            label.textContent = '失败：' + (e && e.message ? e.message : '未知错误');
-            bar.style.background = 'linear-gradient(90deg, #c0392b, #e05d4e)';
-        } finally {
+        }, 600);
+
+        function tick(bytes) {
+            received += bytes;
+            lastBytes += bytes;
+            if (total > 0) {
+                bar.style.width = Math.min(100, received / total * 100) + '%';
+                label.textContent = Math.round(received / total * 100) + '% · '
+                    + humanSize(received) + ' / ' + humanSize(total)
+                    + (speed > 0.01 ? ' · ' + speed.toFixed(1) + ' MB/s' : '');
+            } else {
+                label.textContent = '已下载 ' + humanSize(received);
+            }
+        }
+
+        // 收尾：恢复按钮、延迟收起进度条（下载中不恢复，避免重复点击）
+        function reset() {
             btn.disabled = false;
             btn.textContent = orig;
-            // 完成/失败信息停留 6 秒再收起
-            setTimeout(function () { prog.classList.remove('on'); }, 6000);
+            setTimeout(function () { prog.classList.remove('on'); }, 12000);
         }
+
+        function finish() {
+            clearInterval(timer);
+            bar.style.width = '100%';
+            label.textContent = '完成 ✓ · ' + humanSize(received)
+                + ' · 用时 ' + ((Date.now() - t0) / 1000).toFixed(1) + 's';
+            reset();
+        }
+
+        // ③ 最终兜底：直接交给浏览器下载（不再抛 "Failed to fetch"）
+        function degrade(reason) {
+            clearInterval(timer);
+            bar.style.background = '';
+            bar.style.width = '100%';
+            label.textContent = '已切换为浏览器直接下载（' + reason + '）';
+            handOff(fallback);
+            reset();
+        }
+
+        function run() {
+            if (!window.fetch || typeof Blob === 'undefined' || !(window.URL && URL.createObjectURL)) {
+                degrade('浏览器不支持分块下载');
+                return;
+            }
+            probe(url).then(function (info) {
+                total = info.total || 0;
+                var mb = total / 1048576;
+                var n = (!info.supported || total <= 0) ? 1
+                    : (mb < 8 ? 1 : mb < 16 ? 4 : mb < 32 ? 6 : 8);
+                if (n <= 1) {
+                    return fetchWhole(url, total, tick).then(function (buf) {
+                        received = buf.byteLength;
+                        saveBlob([buf], name);
+                        finish();
+                    });
+                }
+                var chunk = Math.ceil(total / n);
+                var parts = new Array(n);
+                var tasks = [];
+                for (var i = 0; i < n; i++) {
+                    (function (idx) {
+                        var from = idx * chunk;
+                        var to = Math.min(from + chunk, total) - 1;
+                        tasks.push(fetchChunk(url, from, to, tick).then(function (buf) { parts[idx] = buf; }));
+                    })(i);
+                }
+                return Promise.all(tasks).then(function () {
+                    saveBlob(parts, name);
+                    finish();
+                });
+            }).catch(function () {
+                // ① / ② 都失败 → 退到 ③：清掉半截进度，改由浏览器下载
+                degrade('分块不可用');
+            });
+        }
+
+        try { run(); } catch (e) { degrade('脚本异常'); }
     }
 
-    document.querySelectorAll('.btn.turbo').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
+    var btns = document.querySelectorAll('.btn.turbo');
+    for (var i = 0; i < btns.length; i++) {
+        btns[i].addEventListener('click', function (e) {
             e.preventDefault();
-            start(btn);
+            start(this);
         });
-    });
+    }
 })();
 </script>
 </body>
