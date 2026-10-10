@@ -335,7 +335,7 @@ nonisolated enum AppUpdateService {
             lock.lock()
             received += delta
             let fraction = min(1.0, Double(received) / Double(total))
-            let fire = fraction - lastReported >= Self.progressStep
+            let fire = fraction - lastReported >= AppUpdateService.progressStep
             if fire { lastReported = fraction }
             lock.unlock()
             if fire { report(fraction) }
