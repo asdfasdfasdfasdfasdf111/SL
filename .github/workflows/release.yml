@@ -37,13 +37,27 @@ jobs:
 
       - name: 选择 Xcode
         run: |
-          latest=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$latest" ]; then
+          # ⚠️ 不能无脑取最新：runner 上最新的 Xcode 26.6 在本工程的 Release 配置下
+          # 会让 swift-frontend 崩溃（先是整模块 SwiftCompile、改逐文件编译后挪到
+          # SwiftEmitModule，日志里只有 "Please submit a bug report" + Stack dump），
+          # 而构建步骤失败会被当成成功 → 曾经连发三个「没有主程序的空壳 App」。
+          # 26.2 在本机实测 arm64 与 x86_64 的 Release 都能编译通过且产物可运行，
+          # 故固定到它；找不到时退回最新版并给出警告（此时构建失败会被上面的
+          # pipefail 拦下，不会再产出发不出去的包）。
+          pick=""
+          for v in 26.2.0 26.2; do
+            if [ -d "/Applications/Xcode_$v.app" ]; then pick="/Applications/Xcode_$v.app"; break; fi
+          done
+          if [ -z "$pick" ]; then
+            echo "::warning::runner 上没有固定的 Xcode 26.2，退回最新版（可能触发 swift-frontend 崩溃）"
+            pick=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          fi
+          if [ -z "$pick" ]; then
             echo "runner 上没有找到 Xcode"
             exit 1
           fi
-          echo "使用 $latest"
-          sudo xcode-select -s "$latest"
+          echo "使用 $pick"
+          sudo xcode-select -s "$pick"
           xcodebuild -version
 
       # ⚠️ 这里**绝不能**再写成 `xcodebuild … | tail -5`：管道的退出码是 `tail` 的，
@@ -54,16 +68,11 @@ jobs:
       - name: Release 编译
         run: |
           set -o pipefail
-          # `SWIFT_COMPILATION_MODE=singlefile` 不是优化偏好，是**绕开编译器崩溃**：
-          # runner 的 Xcode 26.6 在 arm64 整模块（whole-module）Release 编译时
-          # swift-frontend 被信号打死（日志里只有 "Please submit a bug report" +
-          # Stack dump + RunSignalHandlers/SignalHandler），失败任务正是
-          # 「SwiftCompile normal arm64 Compiling <整个模块 200+ 文件>」。
-          # 本地 Xcode 26.2 整模块能过，所以这个问题只在 CI 复现。
-          # 逐文件编译把一次巨型调用拆成多次小调用，峰值内存也低得多。
+          # 这里**绝不能**再写成 `xcodebuild … | tail -5`：管道的退出码是 tail 的，
+          # 构建失败也会返回 0。2026-10-10 的后果是 v1.7.0/v1.7.1/v1.7.2 三个线上包
+          # 都是「资源拷完、主程序还没生成的半成品 bundle」。失败必须失败。
           xcodebuild -project qwq.xcodeproj -scheme qwq -configuration Release build \
             -derivedDataPath build \
-            SWIFT_COMPILATION_MODE=singlefile \
             CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=YES CODE_SIGNING_ALLOWED=YES \
             > /tmp/build.log 2>&1 || {
               echo "===== 构建失败：错误摘要 ====="
