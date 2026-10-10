@@ -58,8 +58,10 @@ jobs:
             -derivedDataPath build \
             CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=YES CODE_SIGNING_ALLOWED=YES \
             > /tmp/build.log 2>&1 || {
-              echo "===== 构建失败：错误摘要（完整日志见 job 输出） ====="
-              grep -aE '\.swift:[0-9]+:[0-9]+: error:|error: |BUILD FAILED' /tmp/build.log | head -40
+              echo "===== 构建失败：错误摘要 ====="
+              grep -aE '\.swift:[0-9]+:[0-9]+: (error|warning):|error: |failed|FAILED' /tmp/build.log | head -60
+              echo "===== 日志末尾 120 行（失败汇总总在最后） ====="
+              tail -120 /tmp/build.log
               exit 1
             }
           tail -3 /tmp/build.log
