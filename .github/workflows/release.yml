@@ -54,8 +54,16 @@ jobs:
       - name: Release 编译
         run: |
           set -o pipefail
+          # `SWIFT_COMPILATION_MODE=singlefile` 不是优化偏好，是**绕开编译器崩溃**：
+          # runner 的 Xcode 26.6 在 arm64 整模块（whole-module）Release 编译时
+          # swift-frontend 被信号打死（日志里只有 "Please submit a bug report" +
+          # Stack dump + RunSignalHandlers/SignalHandler），失败任务正是
+          # 「SwiftCompile normal arm64 Compiling <整个模块 200+ 文件>」。
+          # 本地 Xcode 26.2 整模块能过，所以这个问题只在 CI 复现。
+          # 逐文件编译把一次巨型调用拆成多次小调用，峰值内存也低得多。
           xcodebuild -project qwq.xcodeproj -scheme qwq -configuration Release build \
             -derivedDataPath build \
+            SWIFT_COMPILATION_MODE=singlefile \
             CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=YES CODE_SIGNING_ALLOWED=YES \
             > /tmp/build.log 2>&1 || {
               echo "===== 构建失败：错误摘要 ====="
