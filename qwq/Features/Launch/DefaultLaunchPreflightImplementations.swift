@@ -20,7 +20,9 @@ import Foundation
 
 /// 客户端 JAR 存在性 + 非空校验（minSize 1）。
 /// 判据与桥接层 `slLaunchInternal` 开头的 FileChecker(minSize: 1) 一致：
-/// 作为 preflight 的二道防线，正常启动时必过（同判据、同文件、同时间点）。
+/// 作为 preflight 的二道防线，正常启动时必过。
+/// ⚠️ 这里校验的是 `context.clientJAR`，它必须由 `LaunchPreflightBridge` 用
+/// `ClientJARResolver` 解析后填入（加载器实例本体在父版本目录里）。
 public struct DefaultClientFileVerifier: ClientFileVerifier {
 
     public init() {}

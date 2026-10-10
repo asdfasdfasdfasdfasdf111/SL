@@ -2,7 +2,7 @@
 //  JavaPickerView.swift
 //  Java 环境选择下拉（`JavaPickerView` / `JavaPickerRow`）。
 //
-//  原先本文件顶部还有一个 `JavaSelectionPopup`（消息药丸）。它已上移到 `qwq/UI/TaskPill.swift`
+//  原先本文件顶部还有一个 `JavaSelectionPopup`（消息药丸）。它已上移到 `qwq/UI/Components/TaskPill.swift`
 //  并更名为 `TaskPill`：启动失败提示也要用同一个形状，把药丸做成唯一实现后，
 //  「任务状态气泡」与「失败提示」渲染的是同一个类型，样式与动画由代码保证一致，不会各改一半。
 //  调用点在 `qwq/UI/Shell/RootOverlays.swift`，位置与停留时长也在那里。

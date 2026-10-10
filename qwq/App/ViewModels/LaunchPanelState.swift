@@ -8,7 +8,7 @@
 //  根视图收不到，界面行为会变。
 //
 //  与 NoticeCenter 的关系：NoticeCenter 由 NoticeOverlay 渲染为窗口顶部横幅；
-//  本组状态对应的是窗口内的浮动药丸（`UI/TaskPill.swift`，两套状态共用同一个组件、
+//  本组状态对应的是窗口内的浮动药丸（`UI/Components/TaskPill.swift`，两套状态共用同一个组件、
 //  同一锚点、同一套动画），呈现位置、样式与消失时机均不同，复用会改变可见行为，故不迁移。
 //
 

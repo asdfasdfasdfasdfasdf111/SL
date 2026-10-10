@@ -47,7 +47,7 @@
 | 16 | 一批确认缺陷修复 | `6d0541f` `ade90b3` `ab02506` `2364ea4` `3c028fb` | 下载核心 3 条、加载器 4 条、清单 2 条、UI 2 条；弹入动画接线 | 中 |
 | 17 | **全量扫描 + 30 条缺陷修复** | `9a2ea40` `6623247` `819904e` `9ef8032` | 按下载/安装、Mod 与清单、UI 与服务、启动四条链路逐文件通读，修 8+8+6+8 条已确认缺陷（含 `NetSliceFetcher` 分片计数泄漏、`createCompleteTask` 资源补全假成功、Forge 处理器非零退出码被吞、`mods.toml` 依赖块永不匹配、`NoticeCenter` 单槽覆盖、natives 架构取证等）。每条均真实编译 0 error | 中 |
 | 18 | **D1 落地 + 真机启动验证** | `708b3f9` `af9c1ed` | 客户端 JAR 校验前移到补全之前（缺文件秒级拦截）；**真机跑通 `26.2-Fabric`（LWJGL 3.4.1 加载成功、窗口出现、无 `UnsatisfiedLinkError`）**，并构造缺 JAR 目录复现拦截 | 中 |
-| 19 | **失败提示与任务气泡合并为同一组件** | 本文档下一次提交 | 新增 `qwq/UI/TaskPill.swift`：原先「照抄一份样式」的 `LaunchErrorPopup` 删掉，两个入口改为渲染**同一个类型**（同锚点、同动画，唯一差异是停留时长 1.5s / 6s）。`JavaSelectionPopup` 随之并入 | 低 |
+| 19 | **失败提示与任务气泡合并为同一组件** | 本文档下一次提交 | 新增 `qwq/UI/Components/TaskPill.swift`：原先「照抄一份样式」的 `LaunchErrorPopup` 删掉，两个入口改为渲染**同一个类型**（同锚点、同动画，唯一差异是停留时长 1.5s / 6s）。`JavaSelectionPopup` 随之并入 | 低 |
 
 ---
 
@@ -59,10 +59,10 @@
 | B | `qwqTests` 加入工程 target | 中 | ✅ **已完成**（`8172dbf`）：可编译；**运行**需在 Terminal（脱离沙箱）执行 `./scripts/verify-test.sh run`，沙箱内 testmanagerd 的 XPC 连接会被阻断 |
 | C | UI 剩余职责 | 中 | ✅ **已收口**（`6801bb6`）：抽出 `GameCategoryViewModel` / `DownloadCategoryViewModel+Orchestration` / `LaunchEntryViewModel`，`ModDetailViewModel` 补 `performDownload`。**窗口壳 / `searchText` / `isDropTargeted` / 画布手势与 spring 参数位于冻结的 `qwq/App`**，本轮不可动；`ModDetailView.settings` 订阅与 `CategoryContentView.searchText` 因无法静态证否而保留并记录 |
 | D | 启动缺陷 D1–D6 | 中 | ✅ **已全部收口**：D1 按你的决定落地——缺客户端文件 → 拦住不启动 + 弹窗（样式对齐「下载中」气泡），见 `708b3f9`；D2–D6 由 `cb93219` 修复（启动链路 5 处）。另 D7/D8 由 `03820d9` 修复。**§三 九条缺陷已全部关闭** |
-| E | 旧兼容层清理（`Stubs` / `SLLaunchBridge`） | 中-高 | **被 F 阻塞**：需先完成双流程合并，否则会断掉回退路径。`Stubs` 487 行，普查出 9 项无引用 |
-| F | 双启动流程合并 | **高** | 🟡 **验证门槛已过，合并本体未开始**：真机启动已由自动化会话跑通（见 §七 证据），且走的是 `LaunchCoordinator` → 用例层 → 桥接的**生产同一条路径**。合并本体的四个验证点（Java 扫描等待、日志 flush、进程退出回调时序、`skipResourceCheck` 语义）现在是可跑可测的，不再是「自动化会话无法代跑」 |
+| E | 旧兼容层清理（`Stubs` / `SLLaunchBridge`） | 中-高 | 🔄 **登记已过期（2026-10-10 核实）**：`Stubs.swift` 已随 `fc541af` 的七文件拆分删除；`SLLaunchBridge` **不是可删的兼容层，而是全库唯一的启动实现**（`ARCHITECTURE.md:144`）。剩余实义 = **拆 `SLLaunchBridge`**（507 行，`slLaunchInternal` 单函数约 368 行，混了账号选择 / 客户端 JAR 校验 / preflight 编排 / Java 选择 / 进程与日志五类职责） |
+| F | 双启动流程合并 | 高 → 中 | ✅ **合并本体已无对象**：`LaunchFix.swift` 已删（`6fda899`），四类校验拆到 `9338ea1` 并接线，旧流程经全库零调用方核实后整段删除，现只剩 `slLaunch` 一条链。**本轮另修掉接线引入的一条真回归**：`LaunchPreflightBridge` 里的 `clientJAR` 仍硬拼 `<实例目录>/<实例名>.jar`，与桥接层 `ClientJARResolver`（沿 `inheritsFrom` 解析）口径不一致，会让「自身无 jar、父版本有 jar」的加载器实例（如 `26.2-Forge`）被 preflight 的第二道校验误判拒绝启动 —— 已统一到 `ClientJARResolver`（真实编译验证；另修正 `DefaultClientFileVerifier` 的误导性注释） |
 | G | 配置回退遗留残留清理（`LockCompat` / `CompatModifiers`） | 低 | ✅ **已完成**（未提交）：根因是 `17cca21` 把部署目标由 12.0 回退到 13.0 时**只改 `project.pbxproj` 4 行、未清理为 12 写的兼容层**，两者从此成为孤儿。已删除 `SLCore/Utils/LockCompat.swift`、`UI/CompatModifiers.swift`（等 2 个文件），`withUnfairLock` → `OSAllocatedUnfairLock`、`withLockCompat` → 原生 `withLock`、`contentTransitionOpacityCompat` → 原生 `.contentTransition(.opacity)`，`semaphoreWait` 迁至 `SLCore/Utils/NoasyncBridge.swift`。判定依据是用户既定决定「macOS 12 支持单独隔离处理、主目标锁定 13.0」。**验证**：两口径 0 错误且告警集合与基线逐条一致（44/56），真实 `xcodebuild` 编译通过 |
-| H | 默认窗口尺寸 900×660 现无生效声明 | 低 | ⏸ **待你拍板，未动**：`e62d7f3`（降 12.0）删掉了 `qwqApp.swift` 的 `.defaultSize(width: 900, height: 660)`，改用 `AppDelegate` 里 `if #unavailable(macOS 13.0)` 的兜底；`17cca21` 回退到 13.0 后该分支**永不执行**（四处目标均为 13.0），而更晚的 `e624d33` 窗口尺寸审计只处理了 **minSize**、未发现 defaultSize 已丢。现状：全库无任何地方声明默认窗口尺寸（`ContentView.swift` 的 900×650 在 `PreviewProvider` 里，仅预览）。修法一行：在 `.windowStyle` 后恢复 `.defaultSize(width: 900, height: 660)`。属用户可见的行为改动，按规矩先问。**注**：曾尝试用 `CGWindowListCopyWindowInfo` 实测窗口尺寸，量得 81×102 且与 `.frame(minWidth: 800, minHeight: 590)` 下限矛盾，说明该环境下窗口未正常布局，**故不以实测为据**，仅采信代码事实 |
+| H | 默认窗口尺寸 | 低 | ✅ **已修，无需再拍板**：`.defaultSize` 已恢复于 `qwq/App/qwqApp.swift:73`，取值为 `windowWidth/Height = 800×560`（`:27-28`）；窗口另有 `.frame(width:height:)`(`:59`) + `.windowResizability(.contentSize)`(`:63`) 锁定尺寸。若仍要 900×660，改 `:27-28` 两个常量即可 |
 
 
 ---
@@ -187,7 +187,7 @@ SL_DEBUG_AUTO_LAUNCH=1 SL_DEBUG_AUTO_LAUNCH_DELAY=4 \
 ### 没能验证到的部分（如实记录）
 
 - **气泡的视觉效果在本机看不到**：本机没给屏幕录制权限，`screencapture` 只会吐出桌面壁纸。
-  因此不再试图「照着画一个像的」，而是把两个入口合并成**同一个组件** `UI/TaskPill.swift` ——
+  因此不再试图「照着画一个像的」，而是把两个入口合并成**同一个组件** `UI/Components/TaskPill.swift` ——
   任务状态气泡与失败提示渲染的是同一个类型、同一个锚点、同一套入场退场动画，
   样式**由代码保证相同**，不存在两边各改一半的余地。两个入口唯一的差异是停留时长
   （1.5s → 6s，失败提示是用户唯一能看到的失败原因，一闪而过等于没提示）。

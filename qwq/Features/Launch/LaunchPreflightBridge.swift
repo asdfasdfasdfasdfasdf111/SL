@@ -45,13 +45,27 @@ public enum LaunchPreflightBridge {
 
     // MARK: - instance → context 抽取
 
+    /// 实例真正可用的客户端 JAR。
+    ///
+    /// 加载器实例（Forge/Fabric/NeoForge…）版本目录里常常只有清单，
+    /// 客户端本体在 `inheritsFrom` 的父版本目录里（如 `26.2-Forge` 自身无 jar、`26.2` 有）。
+    /// 硬拼 `<实例目录>/<实例名>.jar` 会让 preflight 的第二道防线把这类实例误判为
+    /// 「客户端 JAR 缺失」而拒绝启动 —— 解析口径必须与 `slLaunchInternal` 开头一致。
+    private static func launchJAR(for instance: MinecraftInstance) -> URL {
+        ClientJARResolver.resolve(
+            runningDirectory: instance.runningDirectory,
+            name: instance.name,
+            versionsRoot: instance.minecraftDirectory.versionsURL
+        ) ?? instance.runningDirectory.appendingPathComponent("\(instance.name).jar")
+    }
+
     private static func makeContext(_ instance: MinecraftInstance) throws -> LaunchPreflightContext {
         guard let manifest = instance.manifest else {
             // 无 manifest 无法分析缺失项，跳过补全（启动流程自身会报错）——与 LaunchFix 原语义一致
             return LaunchPreflightContext(
                 version: instance.version?.displayName ?? instance.name,
                 runningDirectory: instance.runningDirectory,
-                clientJAR: instance.runningDirectory.appendingPathComponent("\(instance.name).jar"),
+                clientJAR: Self.launchJAR(for: instance),
                 clientSHA1: nil,
                 librariesRoot: instance.minecraftDirectory.librariesURL,
                 libraries: [],
@@ -94,7 +108,7 @@ public enum LaunchPreflightBridge {
         return LaunchPreflightContext(
             version: instance.version?.displayName ?? instance.name,
             runningDirectory: instance.runningDirectory,
-            clientJAR: instance.runningDirectory.appendingPathComponent("\(instance.name).jar"),
+            clientJAR: Self.launchJAR(for: instance),
             clientSHA1: nil,
             librariesRoot: dir.librariesURL,
             libraries: libraries,
