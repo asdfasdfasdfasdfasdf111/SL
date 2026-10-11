@@ -114,8 +114,10 @@ final class AppUpdateCoordinator {
                 stagedApp = try unzip(packageURL, to: extractDir)
             }
             log("[Update] 解包完成：\(stagedApp.path)")
-            NoticeCenter.shared.post(Notice(level: .warning, title: "更新下载完成",
-                                            message: "正在退出并安装新版本…", buttons: []))
+            // 复用下载卡片变成「正在安装」：不换 id 就不会重放出现动画（进度条停在 100%）
+            updateProgressCard(title: "更新下载完成",
+                               message: "正在退出并安装新版本…",
+                               progress: 1)
             log("[Update] 启动换装脚本并退出（旧包备份为 .old，脚本见 swapAndRelaunch）")
             try swapAndRelaunch(stagedApp: stagedApp, work: work)
         } catch {
@@ -192,22 +194,31 @@ final class AppUpdateCoordinator {
     /// （用户反馈的「进度条抽搐」），所以首次 `post`、之后一律走 `update` 就地刷新。
     private var progressNoticeID: UUID?
 
-    private func postProgress(_ release: AppUpdateService.AppRelease, fraction: Double) {
-        let clamped = max(0, min(1, fraction))
-        let percent = Int((clamped * 100).rounded())
+    /// 下载/安装共用同一张卡片：**同 id 就地更新**。
+    /// 换 id 会让 overlay 按 `.id(notice.id)` 重建卡片、重放出现动画
+    /// （用户反馈的「进度条抽搐」），所以首次调用生成 id 并 `post`，之后一律 `update`。
+    private func updateProgressCard(title: String, message: String, progress: Double?) {
         let id = progressNoticeID ?? UUID()
         progressNoticeID = id
         let notice = Notice(id: id,
                             level: .warning,
-                            title: "正在下载更新 \(release.tagName)",
-                            message: "\(percent)%",
+                            title: title,
+                            message: message,
                             buttons: [],
-                            progress: clamped)
+                            progress: progress)
         if NoticeCenter.shared.current?.id == id {
             NoticeCenter.shared.update(notice)   // 就地刷新：动画只作用在进度条上
         } else {
             NoticeCenter.shared.post(notice)     // 首次出现（或上一张已被顶替）
         }
+    }
+
+    private func postProgress(_ release: AppUpdateService.AppRelease, fraction: Double) {
+        let clamped = max(0, min(1, fraction))
+        let percent = Int((clamped * 100).rounded())
+        updateProgressCard(title: "正在下载更新 \(release.tagName)",
+                           message: "\(percent)%",
+                           progress: clamped)
     }
 
     /// 换装脚本（脱离本进程执行）：等本进程退出 → 旧版挪走 → 新版就位 → 重启 → 清理。
