@@ -43,8 +43,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // 开发期 UI 自拍（仅 SL_SNAPSHOT_DIR 环境变量存在时生效，产品运行不参与）。
         SnapshotHarness.runIfRequested()
-        // 启动自动检查更新：延迟 5 秒（首帧 / 目录预热 / 快照优先）。
-        // 5 秒的依据：快照 harness 首帧等待 3s，再晚用户已经开点了，再早抢首屏资源。
+        // 启动自动检查更新：延迟 1.5 秒。用户实测 5s 弹窗「太慢」——首帧就绪后
+        // 检查是纯异步网络调用，不与入场动画抢主线程，1.5s 足够避开首帧忙碌；
+        // 快照模式（SL_SNAPSHOT_DIR）直接跳过：UI 自拍里不该出现更新弹窗。
         //
         // 历史：本调用由 9d8c6cc 加上，随后被 3d03872（更新服务器那次）删掉，理由是
         // 「App 无需频繁轮询」；但那样一来 App 里就再没有任何**看得见**的更新入口
@@ -55,9 +56,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 现已让更新提示显式把隐式应答指向「下次再说」（见 AppUpdateCoordinator 的
         // fallbackChoiceIndex），「用户不理」不再等于「自动替换 App」。
         // 手动入口仍在「帮助」菜单（force: true，会给「已是最新」反馈）。
-        Task.detached(priority: .utility) {
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            await AppUpdateCoordinator.checkOnLaunch()
+        if ProcessInfo.processInfo.environment["SL_SNAPSHOT_DIR"] == nil {
+            Task.detached(priority: .utility) {
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                await AppUpdateCoordinator.checkOnLaunch()
+            }
         }
     }
 }

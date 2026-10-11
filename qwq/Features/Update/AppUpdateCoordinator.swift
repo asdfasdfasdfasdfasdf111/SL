@@ -105,6 +105,9 @@ final class AppUpdateCoordinator {
                                message: "正在连接更新服务器…",
                                progress: nil)
             postProgress(release, fraction: 0)
+            // 单源下载（2026-10-11 用户定稿）：只走自建服务器，**不设 GitHub 兜底**——
+            // 国内环境连 GitHub 本身就不可达，切过去等于让用户对着一个永远下不完的包。
+            // 服务器侧的可用性由发布流程与主机运维保证，客户端不做多源猜谜。
             try await AppUpdateService.download(release.downloadURL, to: packageURL) { [weak self] fraction in
                 Task { @MainActor in self?.postProgress(release, fraction: fraction) }
             }

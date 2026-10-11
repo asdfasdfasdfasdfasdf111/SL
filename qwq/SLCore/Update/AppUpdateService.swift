@@ -66,24 +66,15 @@ nonisolated enum AppUpdateService {
     /// 拉取最新版本信息（服务器 apple.ct.ws 已由发布流程同步好）。
     /// 找不到 dmg/zip 资产视为「没有可用更新」——发版必须带上打包好的安装包。
     ///
-    /// 双源兜底（2026-10-10）：主源自建服务器（国内可达、本地毫秒级返回），
-    /// 失败/超时回退 GitHub releases/latest —— 服务器端响应刻意保持 GitHub 同形
-    /// （api/latest.php 头注释），同一解析器零改动双吃。依据：免费虚拟主机不保证
-    /// 在线（2026-10-10 实测整站空响应），主机挂了更新检查不能跟着全灭。
-    /// 主源超时压到 10s：健康的本地返回是毫秒级，挂着 45s 才走兜底等于把
-    /// 「检查更新」卡成半分钟。
+    /// ⚠️ 单源，**不设 GitHub 兜底**（2026-10-11 用户定稿）：国内环境连 GitHub
+    /// 本身就不可达，检查切过去只会让用户对着一个永远下不完的包——服务器挂了
+    /// 就如实报「检查更新失败」，由自建服务器的可用性兜底。超时 10s：健康的
+    /// 本地返回是毫秒级，挂着 45s 才报错等于把「检查更新」卡成半分钟。
     static func latestRelease() async -> AppRelease? {
-        if let release = await fetchRelease(from: latestReleaseAPI, timeout: 10) {
-            return release
-        }
-        return await fetchRelease(from: fallbackReleaseAPI, timeout: 30)
-    }
-
-    private static func fetchRelease(from api: String, timeout: TimeInterval) async -> AppRelease? {
-        guard let url = URL(string: api) else { return nil }
+        guard let url = URL(string: latestReleaseAPI) else { return nil }
         var request = URLRequest(url: url)
         request.setLaunchUserAgent()
-        request.timeoutInterval = timeout
+        request.timeoutInterval = 10
         do {
             try await request.attachChallengeCookie()
             let (data, _) = try await AppContext.shared.apiSession.data(for: request)
