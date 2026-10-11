@@ -25,14 +25,7 @@ extension DownloadCategoryViewModel {
             try? await Task.sleep(nanoseconds: 400_000_000)
             if Task.isCancelled { return }
             let normalized = searchText.replacingOccurrences(of: "。", with: ".")
-            // 类目词即「浏览」：在光影页搜「光影」、模组页搜「模组」，用户要的是这一类
-            // 的全部内容（MakeUp Ultra Fast 等著名条目按目录热度自然在列），而不是拿类目词
-            // 去匹配英文条目名 —— mcmod 对类目词返回的全是加载器页面（OptiFine/Iris/
-            // Oculus），过滤目录必然空手而归（2026-10-11 用户实测：光影页搜「光影」
-            // 找不到 MakeUp - Ultra Fast）。游戏页的「正式版」按副标题本就能命中，不在此列。
-            let trimmed = normalized.trimmingCharacters(in: .whitespaces)
-            let isCategoryWord = trimmed == displayTitle && selectedSection != .game
-            if trimmed.isEmpty || isCategoryWord {
+            if normalized.trimmingCharacters(in: .whitespaces).isEmpty {
                 await MainActor.run {
                     debouncedSearchText = searchText
                     activeSearchQuery = ""
