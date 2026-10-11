@@ -98,6 +98,12 @@ final class AppUpdateCoordinator {
         do {
             try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
             log("[Update] 开始下载 \(release.downloadURL.absoluteString)")
+            // 探路阶段（发 `Range: bytes=0-0` 探测 + 解 slowAES 挑战 + 建并发连接）**一个字节都还没下**。
+            // 这一两秒里若继续显示「0%」，用户看到的就是「卡住不动的假进度条」（2026-10-11 实测反馈）；
+            // 所以先给一条明确的状态文案（不带进度条），等第一个字节到了再切成百分比。
+            updateProgressCard(title: "正在准备下载 \(release.tagName)",
+                               message: "正在连接更新服务器…",
+                               progress: nil)
             postProgress(release, fraction: 0)
             try await AppUpdateService.download(release.downloadURL, to: packageURL) { [weak self] fraction in
                 Task { @MainActor in self?.postProgress(release, fraction: fraction) }

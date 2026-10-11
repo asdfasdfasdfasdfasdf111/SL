@@ -111,10 +111,10 @@ nonisolated enum AppUpdateService {
                           downloadURL: downloadURL)
     }
 
-    /// 进度回调的最小步长（1%）。提示卡用同一个 id **就地刷新**（见 `NoticeCenter.update`），
-    /// 所以刷新频率高也不会重建卡片、不会抽搐；1% 粒度配合 0.18s 线性动画才是连续的进度条。
-    /// （早期是 5%，在 40 秒的下载里约 2 秒跳一格，观感是「一格一格蹦」。）
-    static let progressStep = 0.01
+    /// 每攒多少字节落盘一次并汇报一次进度（64KB）。**它决定进度条的粒度**：
+    /// 攒太大（曾用 1MB → 18MB 的包每跳 5.5%）就是「一小段一小段跳」的伪进度条；
+    /// 而提示卡按同 id 就地刷新（见 `NoticeCenter.update`），汇报密也不会重建卡片。
+    static let reportChunkBytes = 64 * 1024
 
     /// 多线程 Range 分块下载：先取 Content-Length 与 Accept-Ranges，若服务器支持
     /// Range 就并发拉取若干分段再按偏移拼装（免费静态主机下载慢，多连接可成倍提速）；
@@ -173,7 +173,7 @@ nonisolated enum AppUpdateService {
         return value
     }
 
-    /// 单流下载（不支持 Range / 小文件）：缓冲写盘，每 ≥5% 回调进度。
+    /// 单流下载（不支持 Range / 小文件）：每 `reportChunkBytes` 落盘并汇报一次进度。
     private static func downloadSingle(_ source: URL,
                                        to destination: URL,
                                        knownTotal: Int64?,
@@ -189,28 +189,39 @@ nonisolated enum AppUpdateService {
         defer { try? handle.close() }
 
         var buffer = Data()
-        buffer.reserveCapacity(1 << 20)
+        buffer.reserveCapacity(Self.reportChunkBytes)
         var received: Int64 = 0
         var lastReported = 0.0
         for try await byte in bytes {
             buffer.append(byte)
-            received += 1
-            if buffer.count >= 1 << 20 {
+            // 每 `reportChunkBytes`（64KB）落盘一次并**按字节里程碑汇报**进度。
+            // 不用「涨够 1% 才报」：那在慢速链路上就是「憋一会儿蹦一格」的伪进度条观感。
+            // 64KB 对 18MB 的包是 0.35% 一格，即使 1 秒才收到一格，肉眼也是连续爬动。
+            if buffer.count >= Self.reportChunkBytes {
+                let written = Int64(buffer.count)
                 try handle.write(contentsOf: buffer)
                 buffer.removeAll(keepingCapacity: true)
-            }
-            if total > 0 {
-                // `min(1,…)` 是**防御**：只要 `total` 被低估（历史上就发生过——见 download 的说明），
-                // 未夹取的 fraction 会一路上涨，5% 门限每字节都成立 → 通知风暴打满主线程。
-                // 夹取后即使 total 错得离谱，也最多多发一次通知，不会失控。
-                let fraction = min(1.0, Double(received) / Double(total))
-                if fraction - lastReported >= Self.progressStep {
-                    lastReported = fraction
-                    progress(fraction)
+                received += written
+                if total > 0 {
+                    // `min(1,…)` 是**防御**：只要 `total` 被低估（历史上就发生过——见 download 的说明），
+                    // 未夹取的 fraction 会一路上涨，逐字节发通知会打满主线程。
+                    let fraction = min(1.0, Double(received) / Double(total))
+                    if fraction > lastReported {
+                        lastReported = fraction
+                        progress(fraction)
+                    }
                 }
             }
         }
-        if !buffer.isEmpty { try handle.write(contentsOf: buffer) }
+        if !buffer.isEmpty {
+            let written = Int64(buffer.count)
+            try handle.write(contentsOf: buffer)
+            received += written
+            if total > 0 {
+                let fraction = min(1.0, Double(received) / Double(total))
+                if fraction > lastReported { progress(fraction) }
+            }
+        }
         progress(1)
     }
 
@@ -299,10 +310,14 @@ nonisolated enum AppUpdateService {
         let handle = try FileHandle(forWritingTo: chunkFile)
         defer { try? handle.close() }
         var buffer = Data()
-        buffer.reserveCapacity(1 << 20)
+        buffer.reserveCapacity(Self.reportChunkBytes)
         for try await byte in bytes {
             buffer.append(byte)
-            if buffer.count >= 1 << 20 {
+            // ⚠️ 这里决定进度条的**粒度**，不是写盘性能参数：每汇报一次就推进一次进度，
+            // 攒 1MB 才汇报的话，18MB 的包每次跳 ~5.5%，1% 的门限形同虚设
+            // —— 用户看到的就是「一小段一小段跳」的伪进度条（2026-10-11 实测反馈）。
+            // 64KB 一报：18MB ≈ 280 次汇报，配合 1% 门限与 0.18s 线性动画即连续。
+            if buffer.count >= Self.reportChunkBytes {
                 let written = Int64(buffer.count)
                 try handle.write(contentsOf: buffer)
                 buffer.removeAll(keepingCapacity: true)
@@ -316,7 +331,8 @@ nonisolated enum AppUpdateService {
         }
     }
 
-    /// 分块下载的进度汇总（跨任务累加，按 5% 门限回调）。
+    /// 分块下载的进度汇总：跨任务累加，**按字节里程碑**回调（每个分片每 64KB 调一次 `add`）。
+    /// 不用「涨够 1% 才报」—— 那在慢速链路上就是憋一会儿蹦一格的伪进度条观感。
     /// `@unchecked Sendable` 的依据：唯一可变状态是 `received` / `lastReported`，
     /// 两者只在 `NSLock` 内读写；`report` 是 `@Sendable` 闭包。
     private final class DownloadProgressAggregator: @unchecked Sendable {
@@ -335,10 +351,10 @@ nonisolated enum AppUpdateService {
             lock.lock()
             received += delta
             let fraction = min(1.0, Double(received) / Double(total))
-            let fire = fraction - lastReported >= AppUpdateService.progressStep
-            if fire { lastReported = fraction }
+            let advanced = fraction > lastReported          // 值没变就不必回报（防重复/防请求风暴）
+            if advanced { lastReported = fraction }
             lock.unlock()
-            if fire { report(fraction) }
+            if advanced { report(fraction) }
         }
     }
 
