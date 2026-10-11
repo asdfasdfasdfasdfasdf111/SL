@@ -52,13 +52,13 @@ enum CategoryKind: Hashable {
     case download
     /// 「联机」：空态占位页（联机功能建设中，见 CategoryContentView.OnlineComingSoonView）。
     case online
-    /// 「赞助」：静态赞助卡页。
-    case sponsor
+    /// 「设置」：应用内设置页（账号 client id / 关于+检查更新 / 赞助入口）。
+    case settings
 }
 
 extension Category {
     /// 全部分类，**顺序即侧边栏顺序，也是 ⌘1…⌘5 的归属**：
-    /// 启动=⌘1、游戏=⌘2、下载=⌘3、联机=⌘4、赞助=⌘5。
+    /// 启动=⌘1、游戏=⌘2、下载=⌘3、联机=⌘4、设置=⌘5。
     ///
     /// 这里是 `static let`，不是计算属性：`id` 是每实例化的 UUID，
     /// 若写成 `static var { [...] }` 每次访问都会造出新实例，
@@ -68,6 +68,6 @@ extension Category {
         Category(name: "游戏", kind: .game, systemImage: "gamecontroller", filter: "游戏"),
         Category(name: "下载", kind: .download, systemImage: "arrow.down.circle", filter: nil),
         Category(name: "联机", kind: .online, systemImage: "wifi", filter: nil),
-        Category(name: "赞助", kind: .sponsor, systemImage: "heart", filter: nil)
+        Category(name: "设置", kind: .settings, systemImage: "gearshape", filter: nil)
     ]
 }

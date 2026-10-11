@@ -537,19 +537,9 @@ struct CategoryContentView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color.clear)
-            // 赞助页：两张赞助方式卡 + 一张感谢卡，纯静态内容。
-            case .sponsor:
-                ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 180))], spacing: 20) {
-                        SponsorCard(imageName: "sponsor1", title: "赞助方式一")
-                        SponsorCard(imageName: "sponsor2", title: "赞助方式二")
-                        ThanksCard()
-                    }
-                    .padding(.horizontal, 32)
-                    .padding(.top, 32)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.clear)
+            // 赞助内容并入设置页（2026-10-11 用户要求：添加设置页并包含赞助）
+            case .settings:
+                SettingsPageView(theme: theme)
             }
         }
         .id(category.id)
