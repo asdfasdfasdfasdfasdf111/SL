@@ -143,24 +143,34 @@ function save_pkg_marker(string $dataDir, string $assetId, string $pkgName, stri
  */
 function cleanup_old_packages(string $updDir, string $keepName): int
 {
+    // 策略（用户定稿 2026-10-11）：旧包 = 「历史版本下载」功能本身，**不按版本删**。
+    // 只在总量逼近免费主机 4.9GB 配额时，才从**最旧**的安装包开始删，留出余量。
+    // 本次发布正在提供的包（$keepName）永不删；.part 残留照旧无条件立即清理。
+    $TRIGGER = 4.2 * 1024 * 1024 * 1024;   // 安装包总量超过 4.2GB 才开始删（配额 4.9GB）
+
     $removed = 0;
-    $candidates = array_merge(
-        (array) glob($updDir . '/qwq-*.dmg'),
-        (array) glob($updDir . '/qwq-*.zip'),
-        (array) glob($updDir . '/qwq*.part')
-    );
-    foreach ($candidates as $path) {
-        $name = basename((string) $path);
-        if ($name === $keepName) {
-            continue;   // 本次发布正在对外提供的包
-        }
-        if (!preg_match('/^qwq-[A-Za-z0-9._-]+\.(dmg|zip)$/i', $name)
-            && !preg_match('/^qwq\.dmg\.part$/', $name)) {
-            continue;   // 严格白名单，拒绝一切意料之外的文件名
-        }
-        if (is_file($path) && @unlink($path)) {
-            $removed++;
-        }
+
+    foreach ((array) glob($updDir . '/qwq*.part') as $path) {
+        if (is_file($path) && @unlink($path)) $removed++;
+    }
+
+    $files = [];
+    $total = 0;
+    foreach ((array) glob($updDir . '/*') as $path) {
+        if (!is_file($path)) continue;
+        $name = basename($path);
+        if (!preg_match('/\.(dmg|zip)$/i', $name)) continue;   // 只统计安装包
+        if ($name === $keepName) continue;                       // 本次发布的包永不删
+        $size = filesize($path);
+        $files[] = ['path' => $path, 'size' => $size, 'mtime' => filemtime($path)];
+        $total += $size;
+    }
+    if ($total <= $TRIGGER) return $removed;   // 远没到配额：一个都不删
+
+    usort($files, function ($a, $b) { return $a['mtime'] <=> $b['mtime']; });
+    foreach ($files as $f) {
+        if ($total <= $TRIGGER) break;
+        if (@unlink($f['path'])) { $total -= $f['size']; $removed++; }
     }
     return $removed;
 }
