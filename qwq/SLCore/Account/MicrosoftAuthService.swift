@@ -436,15 +436,7 @@ public enum MicrosoftAuthService {
 
     /// XBL user token：POST user.auth.xboxlive.com/user/authenticate
     private static func authenticateXboxLive(msaToken: String) async throws -> XboxTokenResponse {
-        let payload: [String: Any] = [
-            "Properties": [
-                "AuthMethod": "RPS",
-                "SiteName": "user.auth.xboxlive.com",
-                "RpsTicket": msaToken
-            ],
-            "RelyingParty": "http://auth.xboxlive.com",
-            "TokenType": "JWT"
-        ]
+        let payload = xblPayload(msaToken: msaToken)
         let (data, response) = try await postJSON(MicrosoftAuthConstants.xblAuthenticateURL, json: payload)
         guard let http = response as? HTTPURLResponse else {
             throw MicrosoftAuthError.badResponse("非 HTTP 响应")
@@ -552,6 +544,24 @@ public enum MicrosoftAuthService {
             return nil
         }
         return xErr
+    }
+
+    /// XBL user.authenticate 的请求体（抽出为纯函数供单测）。
+    ///
+    /// ⚠️ `RpsTicket` **必须带 `d=` 前缀**：`user.authenticate` 对 MSA（消费者账号）
+    /// 令牌要求 `d=<access_token>` 形态的 RPS 票据，裸令牌一律返回 **401 + 空 body**
+    /// ——网页授权明明成功、却在 XBL 第一步被拒（2026-10-11 用户实测；Xbox Live
+    /// 文档：RPS ticket 的 `d=`/`t=` 前缀区分 MSA 设备票据与标题票据，缺前缀即票据无效）。
+    static func xblPayload(msaToken: String) -> [String: Any] {
+        [
+            "Properties": [
+                "AuthMethod": "RPS",
+                "SiteName": "user.auth.xboxlive.com",
+                "RpsTicket": "d=\(msaToken)"
+            ],
+            "RelyingParty": "http://auth.xboxlive.com",
+            "TokenType": "JWT"
+        ]
     }
 
     // MARK: - HTTP 工具（私有）

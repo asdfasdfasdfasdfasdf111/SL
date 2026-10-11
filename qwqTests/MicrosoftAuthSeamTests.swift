@@ -210,6 +210,31 @@ final class MicrosoftAuthSeamTests: XCTestCase {
         }
     }
 
+    /// ⚠️ XBL 请求形状：`RpsTicket` 必须是 **`d=<MSA 令牌>`**。
+    /// 裸令牌在 user.authenticate 上返回 401 + 空 body —— 网页授权明明成功、
+    /// 链路却在 XBL 第一步死掉（2026-10-11 用户实测，日志里就是
+    /// 「认证请求失败（HTTP 401）：xbl」）。这条用例钉死 d= 前缀防回归。
+    func testXBLRequestPrefixesRpsTicketWithD() async {
+        stub([
+            xblURL: xblOK(),
+            xstsURL: xstsOK(),
+            mcLoginURL: mcLoginOK(),
+            profileURL: profileOK(),
+        ])
+
+        _ = try? await MicrosoftAuthService.completeLogin(
+            msaAccessToken: "msa-token",
+            msaRefreshToken: "refresh-token"
+        )
+
+        let xblRequest = MockAuthURLProtocol.captured.first { $0.url.hasPrefix(xblURL) }
+        XCTAssertNotNil(xblRequest, "XBL 请求应已发出")
+        XCTAssertTrue(
+            xblRequest?.body.contains(#""RpsTicket":"d=msa-token""#) ?? false,
+            "RpsTicket 必须是 d= 前缀的 MSA 令牌，实际 body: \(xblRequest?.body.prefix(200) ?? "")"
+        )
+    }
+
     /// MC login 401/403（无 Minecraft 许可）→ .noMinecraftLicense
     func testMCLogin401MapsToNoMinecraftLicense() async {
         stub([
