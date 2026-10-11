@@ -21,30 +21,25 @@ import SwiftUI
 
 /// 启动器主窗口的流动氛围光背景。
 /// 用法：`ZStack { LaunchBackground(); 内容 }`。
-/// `animated: false`：静态副本（供 FloatingGlass 的磨砂底层复用）——不跑 15s
-/// 循环动画，SwiftUI 对静止视图只渲染一次；副本与真实背景的相位差在 220pt
-/// 模糊下不可见。
+/// 调色板收口在 `palette`（FloatingGlass 的浮层底垫也用它，保证两边同色）。
 struct LaunchBackground: View {
     /// 渐变的起点 / 终点，动画实现"背景在缓慢流动"。
     @State private var start = UnitPoint(x: 0, y: -2)
     @State private var end = UnitPoint(x: 4, y: 0)
 
-    /// 是否驱动流动动画（窗口主背景 true；FloatingGlass 的磨砂副本 false）
-    var animated = true
-
     /// Reduce Motion：背景静止（省 GPU + 可访问性）。
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// 暖色系配色（日落 / 朝霞的调子）。只在这段里取色，天然和谐。
-    private let colors: [Color] = [.orange, .pink, .purple, .orange, .red, .orange, .red]
+    static let palette: [Color] = [.orange, .pink, .purple, .orange, .red, .orange, .red]
 
     var body: some View {
-        LinearGradient(colors: colors, startPoint: start, endPoint: end)
+        LinearGradient(colors: Self.palette, startPoint: start, endPoint: end)
             // 超大模糊把渐变"糊"成氛围光：色带边界消失，只剩颜色在场内的缓慢过渡。
             .blur(radius: 220)
             .ignoresSafeArea()
             .onAppear {
-                guard animated, !reduceMotion else { return }
+                guard !reduceMotion else { return }
                 withAnimation(.easeInOut(duration: 15).repeatForever(autoreverses: true)) {
                     start = UnitPoint(x: 4, y: 0)
                     end = UnitPoint(x: 0, y: 2)

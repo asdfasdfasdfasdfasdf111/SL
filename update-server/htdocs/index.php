@@ -215,7 +215,7 @@ $base = $scheme . '://' . $host;
                 <?php foreach (array_slice($releases, 1) as $release): ?>
                     <?php $asset = first_package($release); ?>
                     <tr>
-                        <td><strong><?= htmlspecialchars((string) ($release['tag_name'] ?? '?'), ENT_QUOTES) ?></strong></td>
+                        <td><strong><a href="version.php?tag=<?= htmlspecialchars((string) ($release['tag_name'] ?? '?'), ENT_QUOTES) ?>" style="color:inherit;text-decoration:none"><?= htmlspecialchars((string) ($release['tag_name'] ?? '?'), ENT_QUOTES) ?></a></strong></td>
                         <td><?= htmlspecialchars(nice_date($release['published_at'] ?? null), ENT_QUOTES) ?></td>
                         <td>
                             <?php if ($asset !== null): ?>

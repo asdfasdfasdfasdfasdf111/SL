@@ -81,47 +81,33 @@ struct BlurView: NSViewRepresentable {
 
 /// 上层浮动的毛玻璃面（弹窗卡片 / 任务药丸 / 浮动按钮等**会压在别的玻璃面板上**的表面）。
 ///
-/// 规则（用户定稿 2026-10-08）：**毛玻璃永远只有一层** —— 上层玻璃要「删除」压在
+/// 规则（用户定稿 2026-10-08）：**毛玻璃永远只有一层** —— 上层玻璃要「盖住」压在
 /// 它下面的玻璃，不允许两层半透明白直接叠出更白的一块（叠白会糊视野）。
 ///
-/// 实现（纯 SwiftUI 挖洞，不用 NSVisualEffectView —— 实测 `.withinWindow` 的窗内
-/// 模糊会把卡片自己的文字/按钮一起磨白，见 2026-10-08 截图 A/B）：
-/// 1. 先用 `destinationOut` 在自己位置把**合成组内**已画的一切（下层玻璃的增白、
-///    边界、内容与阴影）整块擦掉 —— 即「删除后面的毛玻璃」；
-/// 2. 在洞里铺一层**磨砂渐变**（`LaunchBackground(animated: false)`——背景自带
-///    220pt 高斯模糊，本身就是磨砂；静态副本与真实背景的相位差在 220pt 模糊下
-///    不可见，且静态视图只渲染一次，不烧 GPU）。这一步是 2026-10-11 补的：
-///    之前只挖洞 + tint，「玻璃」没有任何磨砂质感，用户实测「单层毛玻璃依旧没做」；
-/// 3. 最后画自己这一层定稿 tint。
+/// 实现 v3（2026-10-11 用户定稿：**把背景直接垫在窗口底部**）：
+/// ① 底层铺**不透明**的同款渐变（与窗口主背景同一调色板）——下层玻璃/内容被
+///    整块盖住，视觉上等于把下面的部分抠掉了；
+/// ② 上面叠调用方定稿的 tint，读作玻璃面。
 ///
-/// ⚠️ 前提（耦合约定）：本组件只在 `ContentView` 根部的「挖洞合成组」内生效 ——
-/// 那个 ZStack 打了 `.compositingGroup()`，且 `LaunchBackground` 在组**外**。
-/// 把浮层移出该组（或把渐变挪进组内）都会让挖洞失效/漏底，改动前先读 ContentView。
+/// 演进教训（勿回退到旧机制）：挖洞方案（destinationOut）实测挖不出正确结果；
+/// 「模糊渐变副本」方案被 LaunchBackground 内部的 ignoresSafeArea 布局逃逸
+/// 打散（副本锚到窗口而不是卡片）——两次都渲染成灰色透底（用户实测）。
+/// 不透明铺底是唯一零机制依赖、必然成立的形态。
 struct FloatingGlass<Shape: SwiftUI.Shape>: View {
     let shape: Shape
-    /// 半透明白 tint：由调用方按各面板定稿数值传入（如 `Color.white.opacity(0.09)`），
-    /// 本组件不替任何面板决定颜色。
+    /// 玻璃面提亮 tint：由调用方按各面板定稿数值传入（如 `Color.white.opacity(0.14)`）。
     let tint: Color
+
+    /// 浮层底部的背景副本：与窗口主背景同一调色板、固定方向（不参与流动动画）。
+    /// **不透明** —— 这正是「抠掉下层」的实现手段。（计算属性：泛型类型不允许静态存储属性）
+    static var backdrop: LinearGradient {
+        LinearGradient(colors: LaunchBackground.palette,
+                       startPoint: .top, endPoint: .bottom)
+    }
 
     var body: some View {
         ZStack {
-            // 挖洞：白块不透明 → 洞内全擦；圆角抗锯齿由同一 shape 保证与 tint 边缘重合。
-            shape.fill(Color.white)
-                .blendMode(.destinationOut)
-            // 磨砂：模糊渐变副本铺满洞底。
-            // ⚠️ 副本必须**比卡片大一圈再居中**：直接在卡片尺寸上做高斯模糊，
-            // 采样会大量取到视图外的透明像素，整层被稀释成近透明 —— 小卡片
-            //（如 460×120 的通知卡）看起来就是灰色 + 透底（2026-10-11 用户实测）。
-            // 外扩 300pt 后，稀释带落在 mask 之外，可视区内颜色完整。
-            GeometryReader { geo in
-                let pad: CGFloat = 300
-                LaunchBackground(animated: false)
-                    .blur(radius: 100)
-                    .frame(width: geo.size.width + pad * 2, height: geo.size.height + pad * 2)
-                    .offset(x: -pad, y: -pad)
-            }
-            .mask(shape)
-            // 自己这一层玻璃。
+            shape.fill(Self.backdrop)
             shape.fill(tint)
         }
     }
