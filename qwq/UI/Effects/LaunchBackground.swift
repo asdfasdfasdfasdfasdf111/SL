@@ -21,10 +21,16 @@ import SwiftUI
 
 /// 启动器主窗口的流动氛围光背景。
 /// 用法：`ZStack { LaunchBackground(); 内容 }`。
+/// `animated: false`：静态副本（供 FloatingGlass 的磨砂底层复用）——不跑 15s
+/// 循环动画，SwiftUI 对静止视图只渲染一次；副本与真实背景的相位差在 220pt
+/// 模糊下不可见。
 struct LaunchBackground: View {
     /// 渐变的起点 / 终点，动画实现"背景在缓慢流动"。
     @State private var start = UnitPoint(x: 0, y: -2)
     @State private var end = UnitPoint(x: 4, y: 0)
+
+    /// 是否驱动流动动画（窗口主背景 true；FloatingGlass 的磨砂副本 false）
+    var animated = true
 
     /// Reduce Motion：背景静止（省 GPU + 可访问性）。
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -38,7 +44,7 @@ struct LaunchBackground: View {
             .blur(radius: 220)
             .ignoresSafeArea()
             .onAppear {
-                guard !reduceMotion else { return }
+                guard animated, !reduceMotion else { return }
                 withAnimation(.easeInOut(duration: 15).repeatForever(autoreverses: true)) {
                     start = UnitPoint(x: 4, y: 0)
                     end = UnitPoint(x: 0, y: 2)

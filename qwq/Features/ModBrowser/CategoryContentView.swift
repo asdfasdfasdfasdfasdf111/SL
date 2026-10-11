@@ -190,7 +190,7 @@ struct CategoryContentView: View {
                         ))
                 } else {
                     VStack(spacing: 16) {
-                        usernameField
+                        accountNameField
                         skinButton
                     }
                     .transition(.opacity)
@@ -246,15 +246,39 @@ struct CategoryContentView: View {
             withAnimation(.bouncySpring) { showAccountPanel.toggle() }
         }
         .onAppear {
-            // 首帧裁剪兜底与皮肤 URL 准备（含渲染事务外延迟）均在 ViewModel 内完成
-            skinViewModel.handleAvatarAppear()
+            // 按当前账号决定皮肤来源（正版 → Mojang 档案皮肤；离线 → 既有本地管线）
+            skinViewModel.handleAccountChanged()
         }
         .onChange(of: settings.skinImageURL) { _ in
             skinViewModel.reloadSkinDataFromFile()
         }
+        .onChange(of: settings.accountMode) { _ in
+            // 切换账号模式：昵称与皮肤跟随账号（正版 = 档案名 + 档案皮肤）
+            skinViewModel.handleAccountChanged()
+        }
         .onChange(of: skinViewModel.avatarSkinData) { _ in
             skinViewModel.refreshSkinData()
         }
+    }
+
+    /// 头像下方的名称区（按账号模式二选一）：
+    /// - 正版模式：Mojang 档案名，只读展示（改名是离线模式才有的概念）
+    /// - 离线模式：可编辑的离线昵称输入框（含 PCL2 风格提示）
+    private var accountNameField: some View {
+        Group {
+            if settings.accountMode == "microsoft",
+               case .signedIn(let account) = microsoftLogin.phase {
+                Text(account.name)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.primary)
+                    .frame(maxWidth: 150)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            } else {
+                usernameField
+            }
+        }
+        .padding(.horizontal, 20)
     }
 
     /// 离线用户名输入框：聚焦时背景浮现 + 描边高亮 + 放大反馈，并附一行非阻塞提示文案。

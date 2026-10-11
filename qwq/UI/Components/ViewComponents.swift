@@ -88,8 +88,11 @@ struct BlurView: NSViewRepresentable {
 /// 模糊会把卡片自己的文字/按钮一起磨白，见 2026-10-08 截图 A/B）：
 /// 1. 先用 `destinationOut` 在自己位置把**合成组内**已画的一切（下层玻璃的增白、
 ///    边界、内容与阴影）整块擦掉 —— 即「删除后面的毛玻璃」；
-/// 2. 再画自己这一层定稿 tint。洞底露出的是合成组**之外**的裸 `LaunchBackground`
-///    渐变，于是上层玻璃底下永远只有一层玻璃。
+/// 2. 在洞里铺一层**磨砂渐变**（`LaunchBackground(animated: false)`——背景自带
+///    220pt 高斯模糊，本身就是磨砂；静态副本与真实背景的相位差在 220pt 模糊下
+///    不可见，且静态视图只渲染一次，不烧 GPU）。这一步是 2026-10-11 补的：
+///    之前只挖洞 + tint，「玻璃」没有任何磨砂质感，用户实测「单层毛玻璃依旧没做」；
+/// 3. 最后画自己这一层定稿 tint。
 ///
 /// ⚠️ 前提（耦合约定）：本组件只在 `ContentView` 根部的「挖洞合成组」内生效 ——
 /// 那个 ZStack 打了 `.compositingGroup()`，且 `LaunchBackground` 在组**外**。
@@ -105,6 +108,9 @@ struct FloatingGlass<Shape: SwiftUI.Shape>: View {
             // 挖洞：白块不透明 → 洞内全擦；圆角抗锯齿由同一 shape 保证与 tint 边缘重合。
             shape.fill(Color.white)
                 .blendMode(.destinationOut)
+            // 磨砂：模糊渐变副本铺满洞底（静态、按 shape 裁剪）
+            LaunchBackground(animated: false)
+                .mask(shape)
             // 自己这一层玻璃。
             shape.fill(tint)
         }

@@ -96,6 +96,61 @@ final class LaunchAvatarSkinViewModel: ObservableObject {
         }
     }
 
+    // MARK: - 账号感知的皮肤来源
+
+    /// 按当前账号决定皮肤来源（2026-10-11 用户报告：切正版账号后头像/昵称不跟随）：
+    /// - 正版模式 → Mojang sessionserver 拉档案皮肤（官方端点，无需凭据）；
+    /// - 离线/未登录 → 既有本地管线（handleAvatarAppear）。
+    /// 切换点：avatarView 的 onAppear 与 accountMode 的 onChange（见 CategoryContentView）。
+    func handleAccountChanged() {
+        DispatchQueue.main.async {
+            guard self.settings.accountMode == "microsoft",
+                  let account = AccountManager.shared.getAccount() else {
+                self.handleAvatarAppear()
+                return
+            }
+            let uuidNoDash = account.uuid.uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+            Task.detached(priority: .userInitiated) {
+                if let data = await Self.fetchMicrosoftSkinData(uuidNoDash: uuidNoDash) {
+                    await MainActor.run {
+                        self.avatarSkinData = data
+                        self.refreshSkinData()
+                    }
+                }
+            }
+        }
+    }
+
+    /// 正版皮肤两跳拉取（纯函数，后台线程）：
+    /// sessionserver 档案 → base64 textures → 皮肤 PNG。
+    /// textures CDN 的 URL 历史上是 http，这里强制升 https（ATS 不放行明文请求）。
+    /// 拉不到（离线/无档案/网络失败）返回 nil，调用方保持现状不闪变。
+    private nonisolated static func fetchMicrosoftSkinData(uuidNoDash: String) async -> Data? {
+        guard let profileURL = URL(string: "https://sessionserver.mojang.com/session/minecraft/profile/\(uuidNoDash)") else {
+            return nil
+        }
+        var request = URLRequest(url: profileURL)
+        request.timeoutInterval = 10
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let properties = json["properties"] as? [[String: Any]],
+              let texturesB64 = properties.first(where: { ($0["name"] as? String) == "textures" })?["value"] as? String,
+              let texturesData = Data(base64Encoded: texturesB64),
+              let textures = try? JSONSerialization.jsonObject(with: texturesData) as? [String: Any],
+              let skinTextures = textures["textures"] as? [String: Any],
+              let skin = skinTextures["SKIN"] as? [String: Any],
+              let skinURLString = skin["url"] as? String else {
+            return nil
+        }
+        guard let skinURL = URL(string: skinURLString.replacingOccurrences(of: "http://", with: "https://")) else {
+            return nil
+        }
+        var skinRequest = URLRequest(url: skinURL)
+        skinRequest.timeoutInterval = 10
+        guard let (skinData, _) = try? await URLSession.shared.data(for: skinRequest) else { return nil }
+        return skinData
+    }
+
     /// 后台裁剪头/帽成品，主线程只接收成品（渲染路径零 CoreImage）
     func refreshSkinData() {
         guard let data = avatarSkinData else { return }
