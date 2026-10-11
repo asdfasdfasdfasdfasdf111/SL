@@ -47,6 +47,29 @@ final class LaunchAvatarSkinViewModel: ObservableObject {
     @Published var headImage: NSImage?
     @Published var hatImage: NSImage?
 
+    /// 正版皮肤上传成功的广播（MicrosoftSkinUploader 发）：收到即用本地 PNG
+    /// 即时刷新头像 —— sessionserver 纹理缓存有分钟级延迟，重拉会闪回旧皮肤。
+    private var skinUploadedObserver: NSObjectProtocol?
+
+    init() {
+        skinUploadedObserver = NotificationCenter.default.addObserver(
+            forName: MicrosoftSkinUploader.skinUploadedNotification,
+            object: nil, queue: .main
+        ) { [weak self] note in
+            guard let data = note.object as? Data else { return }
+            Task { @MainActor in
+                self?.avatarSkinData = data
+                self?.refreshSkinData()
+            }
+        }
+    }
+
+    deinit {
+        if let skinUploadedObserver {
+            NotificationCenter.default.removeObserver(skinUploadedObserver)
+        }
+    }
+
     // MARK: - 依赖
 
     private var settings: LauncherSettings { LauncherSettings.shared }
@@ -121,31 +144,14 @@ final class LaunchAvatarSkinViewModel: ObservableObject {
         }
     }
 
-    /// 正版皮肤两跳拉取（纯函数，后台线程）：
-    /// sessionserver 档案 → base64 textures → 皮肤 PNG。
-    /// textures CDN 的 URL 历史上是 http，这里强制升 https（ATS 不放行明文请求）。
-    /// 拉不到（离线/无档案/网络失败）返回 nil，调用方保持现状不闪变。
+    /// 正版皮肤两跳拉取（后台线程）：sessionserver 档案纹理解析收口在
+    /// MicrosoftAuthService.profileTextureInfo（含 http→https 升级与模型元数据），
+    /// 这里只下载皮肤 PNG。拉不到（离线/无档案/网络失败）返回 nil，调用方保持现状不闪变。
     private nonisolated static func fetchMicrosoftSkinData(uuidNoDash: String) async -> Data? {
-        guard let profileURL = URL(string: "https://sessionserver.mojang.com/session/minecraft/profile/\(uuidNoDash)") else {
+        guard let info = await MicrosoftAuthService.profileTextureInfo(uuidNoDash: uuidNoDash) else {
             return nil
         }
-        var request = URLRequest(url: profileURL)
-        request.timeoutInterval = 10
-        guard let (data, _) = try? await URLSession.shared.data(for: request),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let properties = json["properties"] as? [[String: Any]],
-              let texturesB64 = properties.first(where: { ($0["name"] as? String) == "textures" })?["value"] as? String,
-              let texturesData = Data(base64Encoded: texturesB64),
-              let textures = try? JSONSerialization.jsonObject(with: texturesData) as? [String: Any],
-              let skinTextures = textures["textures"] as? [String: Any],
-              let skin = skinTextures["SKIN"] as? [String: Any],
-              let skinURLString = skin["url"] as? String else {
-            return nil
-        }
-        guard let skinURL = URL(string: skinURLString.replacingOccurrences(of: "http://", with: "https://")) else {
-            return nil
-        }
-        var skinRequest = URLRequest(url: skinURL)
+        var skinRequest = URLRequest(url: info.skinURL)
         skinRequest.timeoutInterval = 10
         guard let (skinData, _) = try? await URLSession.shared.data(for: skinRequest) else { return nil }
         return skinData

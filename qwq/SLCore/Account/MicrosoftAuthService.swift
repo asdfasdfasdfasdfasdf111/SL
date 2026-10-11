@@ -59,6 +59,10 @@ public enum MicrosoftAuthConstants {
     public static let xstsAuthorizeURL = URL(string: "https://xsts.auth.xboxlive.com/xsts/authorize")!
     public static let minecraftLoginURL = URL(string: "https://api.minecraftservices.com/authentication/login_with_xbox")!
     public static let minecraftProfileURL = URL(string: "https://api.minecraftservices.com/minecraft/profile")!
+    /// 正版皮肤上传（改档案皮肤）：multipart，Bearer MC 令牌
+    public static let minecraftSkinUploadURL = URL(string: "https://api.minecraftservices.com/minecraft/profile/skins")!
+    /// sessionserver 档案查询（公开端点，无需凭据）：textures 里的皮肤 URL 与模型
+    public static let sessionProfileBase = "https://sessionserver.mojang.com/session/minecraft/profile/"
 }
 
 // MARK: - 错误
@@ -544,6 +548,70 @@ public enum MicrosoftAuthService {
             return nil
         }
         return xErr
+    }
+
+    // MARK: - 正版皮肤（档案纹理查询 + 上传）
+
+    /// 档案纹理信息（sessionserver 公开端点，无需凭据）。
+    public nonisolated struct ProfileTextureInfo: Sendable {
+        let skinURL: URL
+        /// 皮肤模型：slim（Alex 型）/ classic（Steve 型）
+        let model: String
+    }
+
+    /// 查询档案当前皮肤 URL 与模型。查询失败返回 nil（调用方按默认模型兜底）。
+    public static func profileTextureInfo(uuidNoDash: String) async -> ProfileTextureInfo? {
+        guard let url = URL(string: MicrosoftAuthConstants.sessionProfileBase + uuidNoDash) else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let properties = json["properties"] as? [[String: Any]],
+              let texturesB64 = properties.first(where: { ($0["name"] as? String) == "textures" })?["value"] as? String,
+              let texturesData = Data(base64Encoded: texturesB64),
+              let textures = try? JSONSerialization.jsonObject(with: texturesData) as? [String: Any],
+              let skinTextures = textures["textures"] as? [String: Any],
+              let skin = skinTextures["SKIN"] as? [String: Any],
+              let skinURLString = skin["url"] as? String else {
+            return nil
+        }
+        // textures CDN 的 URL 历史上是 http，强制升 https（ATS 不放行明文请求）
+        guard let skinURL = URL(string: skinURLString.replacingOccurrences(of: "http://", with: "https://")) else {
+            return nil
+        }
+        let model = ((skin["metadata"] as? [String: Any])?["model"] as? String) ?? "classic"
+        return ProfileTextureInfo(skinURL: skinURL, model: model)
+    }
+
+    /// 上传皮肤到正版档案：`POST /minecraft/profile/skins`（multipart/form-data，
+    /// `variant` = classic|slim，Bearer MC 令牌）。成功为 2xx（204 No Content）；
+    /// 400 = 皮肤不合法（尺寸/格式），401 = 令牌失效（调用方先 refreshIfNeeded）。
+    public static func uploadProfileSkin(accessToken: String, pngData: Data, variant: String) async throws {
+        let boundary = "SLSkinUpload-\(UUID().uuidString)"
+        var request = URLRequest(url: MicrosoftAuthConstants.minecraftSkinUploadURL)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 30
+        var body = Data()
+        func append(_ string: String) { body.append(string.data(using: .utf8)!) }
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"variant\"\r\n\r\n")
+        append("\(variant)\r\n")
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"file\"; filename=\"skin.png\"\r\n")
+        append("Content-Type: image/png\r\n\r\n")
+        body.append(pngData)
+        append("\r\n--\(boundary)--\r\n")
+        request.httpBody = body
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw MicrosoftAuthError.badResponse("非 HTTP 响应")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let bodyText = String(data: data, encoding: .utf8) ?? ""
+            throw MicrosoftAuthError.unexpectedStatus(endpoint: "profile/skins", code: http.statusCode, body: bodyText)
+        }
     }
 
     /// XBL user.authenticate 的请求体（抽出为纯函数供单测）。

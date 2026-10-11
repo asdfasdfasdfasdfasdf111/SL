@@ -338,7 +338,14 @@ struct CategoryContentView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 withAnimation(.bouncySpring) { skinButtonScale = 1.0 }
             }
-            OfflineSkinService.selectSkinImage(settings: settings)
+            // 按账号模式分流：正版 = 上传到微软档案（官方接口，对所有服务器生效）；
+            // 离线 = 换本地皮肤文件（既有管线）
+            if settings.accountMode == "microsoft",
+               case .signedIn = microsoftLogin.phase {
+                MicrosoftSkinUploader.pickAndUpload()
+            } else {
+                OfflineSkinService.selectSkinImage(settings: settings)
+            }
         }) {
             Text("选择皮肤")
                 .font(.system(size: 12, weight: .medium))
