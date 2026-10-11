@@ -108,9 +108,19 @@ struct FloatingGlass<Shape: SwiftUI.Shape>: View {
             // 挖洞：白块不透明 → 洞内全擦；圆角抗锯齿由同一 shape 保证与 tint 边缘重合。
             shape.fill(Color.white)
                 .blendMode(.destinationOut)
-            // 磨砂：模糊渐变副本铺满洞底（静态、按 shape 裁剪）
-            LaunchBackground(animated: false)
-                .mask(shape)
+            // 磨砂：模糊渐变副本铺满洞底。
+            // ⚠️ 副本必须**比卡片大一圈再居中**：直接在卡片尺寸上做高斯模糊，
+            // 采样会大量取到视图外的透明像素，整层被稀释成近透明 —— 小卡片
+            //（如 460×120 的通知卡）看起来就是灰色 + 透底（2026-10-11 用户实测）。
+            // 外扩 300pt 后，稀释带落在 mask 之外，可视区内颜色完整。
+            GeometryReader { geo in
+                let pad: CGFloat = 300
+                LaunchBackground(animated: false)
+                    .blur(radius: 100)
+                    .frame(width: geo.size.width + pad * 2, height: geo.size.height + pad * 2)
+                    .offset(x: -pad, y: -pad)
+            }
+            .mask(shape)
             // 自己这一层玻璃。
             shape.fill(tint)
         }
