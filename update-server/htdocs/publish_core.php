@@ -144,9 +144,9 @@ function save_pkg_marker(string $dataDir, string $assetId, string $pkgName, stri
 function cleanup_old_packages(string $updDir, string $keepName): int
 {
     // 策略（用户定稿 2026-10-11）：旧包 = 「历史版本下载」功能本身，**不按版本删**。
-    // 只在总量逼近免费主机 4.9GB 配额时，才从**最旧**的安装包开始删，留出余量。
+    // 只在总量到 **4.9GB** 时，才从**最旧**的安装包开始删（实际配额 5.0GB）。
     // 本次发布正在提供的包（$keepName）永不删；.part 残留照旧无条件立即清理。
-    $TRIGGER = 4.2 * 1024 * 1024 * 1024;   // 安装包总量超过 4.2GB 才开始删（配额 4.9GB）
+    $TRIGGER = 4.9 * 1024 * 1024 * 1024;   // 安装包总量到 4.9GB 才开始删（配额 5.0GB）
 
     $removed = 0;
 
