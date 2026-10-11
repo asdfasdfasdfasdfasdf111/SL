@@ -149,10 +149,20 @@ nonisolated enum AppUpdateService {
             return
         }
 
-        // ② 分块：<8MB 单线程即可；越大并发越多（8MB→4 路，16MB→6 路，上限 8 路）
+        // ② 分块：<8MB 单连接即可；越大并发越多，但**收敛**（8MB→2 路，16MB→3 路，上限 4 路）。
+        //
+        // 为什么是「收敛」而不是「越多越快」—— 实测（2026-10-11，18.36MB 的包，同一进程内
+        // 交替跑，目标就是那台免费主机 apple.ct.ws）：
+        //   第①组：1 路 553 KB/s · 6 路 759 KB/s（≈1.4×）
+        //   第②组：1 路 1586/1984 · 2 路 1739/3787 · 3 路 2277/3648 · 6 路 2593/5271 KB/s
+        //   更早一次：1 路 1440 KB/s，而 **6 路只有 550 KB/s**（多连接比单连接还慢）
+        // 结论：这台主机在**两种状态之间跳** —— 放开时 6 路最快，限速时多连接只是把同一份
+        // 带宽切碎、还要多付建连/挑战解算/合并开销。没有单一最优值，故取**永不最差**的折中：
+        // 18MB → 3 路（两组里都接近最优，最坏也就是单连接的水平）。
+        // 参照 PCL：它对自家服务器/CDN/GitHub 干脆不开多线程（ModNet.vb 里直接 `Return Nothing`）。
         let chunkCount = total < 8 << 20 ? 1
-            : total < 16 << 20 ? 4
-            : total < 32 << 20 ? 6 : 8
+            : total < 16 << 20 ? 2
+            : total < 32 << 20 ? 3 : 4
         if chunkCount == 1 {
             try await downloadSingle(source, to: destination, knownTotal: total, progress: progress)
             return
