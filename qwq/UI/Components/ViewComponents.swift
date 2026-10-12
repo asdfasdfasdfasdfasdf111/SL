@@ -89,6 +89,12 @@ struct BlurView: NSViewRepresentable {
 ///    整块盖住，视觉上等于把下面的部分抠掉了；
 /// ② 上面叠调用方定稿的 tint，读作玻璃面。
 ///
+/// ⚠️ backdrop 必须与 `LaunchBackground` **逐参数一致**（同调色板、同模糊半径、同渐变
+/// 方向）——2026-10-12 抓拍实测：早期版本只抄了调色板没抄模糊，卡片底部一眼看出
+/// 橙→粉→紫的鲜艳色带，而窗口背景是 220pt 模糊后的柔和氛围光，两者不同源，
+/// 用户看到的就是「透出一块彩虹」。三组参数现在收口在 `LaunchBackground` 的共享常量里，
+/// 换背景只改那一处，所有浮层自动跟着变。
+///
 /// 演进教训（勿回退到旧机制）：挖洞方案（destinationOut）实测挖不出正确结果；
 /// 「模糊渐变副本」方案被 LaunchBackground 内部的 ignoresSafeArea 布局逃逸
 /// 打散（副本锚到窗口而不是卡片）——两次都渲染成灰色透底（用户实测）。
@@ -98,16 +104,20 @@ struct FloatingGlass<Shape: SwiftUI.Shape>: View {
     /// 玻璃面提亮 tint：由调用方按各面板定稿数值传入（如 `Color.white.opacity(0.14)`）。
     let tint: Color
 
-    /// 浮层底部的背景副本：与窗口主背景同一调色板、固定方向（不参与流动动画）。
+    /// 浮层底部的背景副本：与窗口主背景同一调色板、**同一模糊半径、同一渐变方向**。
     /// **不透明** —— 这正是「抠掉下层」的实现手段。（计算属性：泛型类型不允许静态存储属性）
     static var backdrop: LinearGradient {
         LinearGradient(colors: LaunchBackground.palette,
-                       startPoint: .top, endPoint: .bottom)
+                       startPoint: LaunchBackground.backdropStart,
+                       endPoint: LaunchBackground.backdropEnd)
     }
 
     var body: some View {
         ZStack {
+            // 模糊必须加在 fill **之前**（对渐变本身做高斯模糊），而不是对整个
+            // FloatingGlass 视图做 —— 后者会把 tint 与描边一起糊掉。
             shape.fill(Self.backdrop)
+                .blur(radius: LaunchBackground.blurRadius)
             shape.fill(tint)
         }
     }

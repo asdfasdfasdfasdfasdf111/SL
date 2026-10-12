@@ -114,9 +114,19 @@ struct MicrosoftLoginCardView: View {
         }
         .padding(20)
         .frame(width: 440)
-        // 登录卡片浮在启动页内容之上 → FloatingGlass（单层玻璃规则）
-        .background(FloatingGlass(shape: RoundedRectangle(cornerRadius: 16),
-                                  tint: Color.white.opacity(0.09)))
+        // 登录卡片浮在启动页内容之上。底材按用户定稿的规则**动态探测**（2026-10-12）：
+        // 卡片出现的瞬间检测背后有没有毛玻璃（HomeHeader，全 App 唯一的
+        // NSVisualEffectView），触碰面积 ≥5% 就垫 FloatingGlass 把下面整块盖住。
+        // 早期是**无条件**铺 FloatingGlass —— 用户实测「登录卡片会透出下面的内容」
+        // （因为它的 backdrop 与窗口背景不同源，见 FloatingGlass 的文档）。
+        // 现在 backdrop 已与 LaunchBackground 逐参数一致，且只在真的压到玻璃时才铺。
+        .modifier(GlassProbeModifier(
+            enabled: true,
+            backdrop: AnyView(
+                FloatingGlass(shape: RoundedRectangle(cornerRadius: 16),
+                              tint: Color.white.opacity(0.09))
+            )
+        ))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
                 .stroke(Color.primary.opacity(0.18), lineWidth: 1)

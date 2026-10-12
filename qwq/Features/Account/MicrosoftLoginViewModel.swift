@@ -64,6 +64,25 @@ final class MicrosoftLoginViewModel: ObservableObject {
     /// 在飞轮询任务的句柄：取消登录 / 重新登录时取消，防止旧结果回写覆盖新状态
     private var pollTask: Task<Void, Never>?
 
+    /// 调试专用：伪造「已拿到设备码」相位，只为 UI 验收（SnapshotHarness 抓拍登录卡片
+    /// 的玻璃底材）。不发起任何网络请求、不轮询 —— 卡片画出来后停住等抓拍。
+    /// 触发：环境变量 `SL_DEBUG_FORCE_LOGIN_CARD=1`（由 CategoryContentView 的 onAppear 调用）。
+    func debugShowDeviceCodeCard() {
+        guard ProcessInfo.processInfo.environment["SL_DEBUG_FORCE_LOGIN_CARD"] != nil else { return }
+        // ⚠️ 不守卫 `.idle`：本机可能存着真实账号，`loadStoredAccount()` 已把 phase 设成
+        // `.signedIn`，加了 idle 守卫调试钩子就永远不生效（2026-10-12 实测踩到）。
+        // 调试钩子的目的就是「把卡片画出来」，本就该无条件覆盖。
+        phase = .waitingForCode(MicrosoftDeviceCode(
+            deviceCode: "DEBUG-DEVICE-CODE",
+            userCode: "ABC12345",
+            verificationURI: "https://microsoft.com/link",
+            verificationURIComplete: "https://microsoft.com/link?otc=ABC12345",
+            expiresIn: 900,
+            interval: 5,
+            message: nil
+        ))
+    }
+
     /// 取消令牌：用户点「取消」时置位，轮询感知后以 `MicrosoftAuthError.cancelled` 中断。
     /// 单独持旗而非依赖 task 状态：`waitForAuthorization` 的 checkCancelled 闭包
     /// 从 nonisolated 上下文被调用，直接读 task 状态或 self 的隔离属性都会跨隔离域，

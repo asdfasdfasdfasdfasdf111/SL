@@ -88,6 +88,45 @@ final class AppUpdateCoordinator {
         await shared.checkAndPromptIfNeeded()
     }
 
+    /// 调试专用：强制弹一次「发现新版本」提示（不联网、不下载），供 UI 验收用。
+    /// 触发方式：环境变量 `SL_DEBUG_FORCE_UPDATE_PROMPT=1`（AppDelegate 里延迟 2s 调用）。
+    /// 伪装版本号由 `SL_DEBUG_FAKE_TAG` 指定，缺省 99.9.9（一定比当前版本新）。
+    /// 点「立即更新」会走真实下载链 —— 只想看卡片就点「下次再说」。
+    ///
+    /// `SL_DEBUG_FORCE_PROGRESS_CARD=1` 时改为弹**下载进度卡片**（50%，不联网不下下载），
+    /// 用于验收进度条的玻璃底材。
+    static func debugShowUpdatePrompt(fakeTag: String?) async {
+        // 空串/缺省都落到 99.9.9（一定比当前版本新），避免为了拼一个默认值写强制解包。
+        let trimmed = fakeTag?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let tag = trimmed.isEmpty ? "99.9.9" : trimmed
+
+        if ProcessInfo.processInfo.environment["SL_DEBUG_FORCE_PROGRESS_CARD"] != nil {
+            log("[Update] 调试：强制弹出下载进度卡片（50%）")
+            await shared.debugShowProgressCard(tag: tag, fraction: 0.5)
+            return
+        }
+
+        guard let downloadURL = URL(string: "https://apple.ct.ws/updates/qwq.dmg") else { return }
+        let release = AppUpdateService.AppRelease(
+            tagName: tag,
+            notes: "这是调试用的更新说明正文，用于验证提示卡片的排版与玻璃底材。\n第二行：正文较长时会自动换行，卡片宽度受 maxCardWidth 约束。",
+            downloadURL: downloadURL)
+        let notice = AppUpdateCoordinator.makeUpdateNotice(
+            release: release, current: AppUpdateService.currentVersion())
+        log("[Update] 调试：强制弹出更新提示（伪装版本 \(tag)）")
+        _ = await NoticeCenter.shared.presentAndWait(notice)
+    }
+
+    /// 调试专用：画一张下载进度卡片（50%）后停住，供 UI 验收。
+    private func debugShowProgressCard(tag: String, fraction: Double) async {
+        progressNoticeID = nil
+        updateProgressCard(title: "正在下载更新 \(tag)",
+                           message: "\(Int(fraction * 100))%",
+                           progress: fraction)
+        // 不返回，让卡片留在屏幕上等抓拍；进程被 SIGTERM 时自然退出。
+        try? await Task.sleep(nanoseconds: 600 * 1_000_000_000)
+    }
+
     /// 下载 → 解包 → 换装重启。任一步失败都以 error 提示收场，旧 App 原地不动。
     private func performUpdate(_ release: AppUpdateService.AppRelease) async {
         progressNoticeID = nil   // 新一轮下载用新卡片（重试时不会续用上一张已关闭的）

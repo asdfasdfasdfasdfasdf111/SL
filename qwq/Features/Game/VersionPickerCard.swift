@@ -159,9 +159,16 @@ struct VersionPickerCard: View {
                             .padding(.horizontal, 16)
                             .padding(.vertical, 6)
                             .background(
+                                // 白底与描边必须是**同一个**圆角矩形的 fill + overlay：
+                                // 旧写法把 `.stroke()` 当自身、再用 `.background()` 垫白底，
+                                // 而 `.background()` 画在被装饰视图的**后面**，白底因此不被圆角
+                                // 裁剪 —— 实测白底比描边大一圈溢出到框外（2026-10-12 用户截图）。
                                 RoundedRectangle(cornerRadius: 12)
-                                    .stroke(theme.accentColor, lineWidth: 1)
-                                    .background(Color.white.opacity(0.14))
+                                    .fill(Color.white.opacity(0.14))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(theme.accentColor, lineWidth: 1)
+                                    )
                             )
                     }
                     .buttonStyle(.plain)

@@ -62,5 +62,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 await AppUpdateCoordinator.checkOnLaunch()
             }
         }
+        // 调试钩子：强制弹一次「发现新版本」提示，用于 UI 验收（SnapshotHarness 抓拍
+        // 三个弹窗的玻璃底材）。不依赖网络、不触发下载，只把卡片画出来。
+        // 服务端版本由 SL_DEBUG_FAKE_TAG 指定，默认伪装成 99.9.9 保证「一定比当前新」。
+        if ProcessInfo.processInfo.environment["SL_DEBUG_FORCE_UPDATE_PROMPT"] != nil {
+            Task.detached(priority: .utility) {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                await AppUpdateCoordinator.debugShowUpdatePrompt(
+                    fakeTag: ProcessInfo.processInfo.environment["SL_DEBUG_FAKE_TAG"])
+            }
+        }
     }
 }

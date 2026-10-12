@@ -103,7 +103,12 @@ struct CategoryContentView: View {
         // 显式声明默认焦点为 false，让用户主动点击/按 Tab 才聚焦，而不是打开启动器就被选中。
         .defaultFocus($isUsernameFocused, false)
         // 启动页出现时恢复已选微软账号（AccountManager 有可用账号 → 账号行直接显示已登录）
-        .onAppear { microsoftLogin.loadStoredAccount() }
+        .onAppear {
+            microsoftLogin.loadStoredAccount()
+            // 调试钩子：仅在环境变量存在时伪造设备码相位，供 UI 验收抓拍登录卡片。
+            // 不并进 loadStoredAccount —— 那是生产路径，会被真实账号状态干扰。
+            microsoftLogin.debugShowDeviceCodeCard()
+        }
         // ⚠️ .defaultFocus(false) 只约束 SwiftUI 默认焦点，AppKit 仍会把窗口首个 TextField
         // 自动置为 firstResponder（表现为打开即聚焦/全选）。此处挂一个占位 NSView，
         // 在页面加入窗口、布局完成后主动 makeFirstResponder(nil) 清掉焦点，仅启动生效

@@ -194,26 +194,28 @@ private struct NoticeCard: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .background(
-            // 通知横幅压在**头部标题栏**上（本视图 padding(.top, 10)，见 body）。
-            // ⚠️ 这里不能用 FloatingGlass（单层玻璃规则的挖洞）：头部基底是
-            // HomeHeader 的 `BlurView` = AppKit 的 NSVisualEffectView，平台视图的图层
-            // 不参与 SwiftUI 合成组的栅格化，`destinationOut` 擦不掉它 ——
-            // 结果是本卡与头部那层玻璃叠影（用户 2026-10-10 报告：只有更新弹窗会重叠）。
-            // 改用「随主题实底 + 定稿 tint」：不依赖挖洞，下层无论是 SwiftUI 玻璃
-            // 还是 AppKit 玻璃都不会透出来。tint 数值仍为定稿的 0.14，未改观感基调。
-            ZStack {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.78))
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.white.opacity(0.14))
-            }
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(accent.opacity(0.35), lineWidth: 1)
+        // 通知卡片（更新提示 / 下载进度）的底材。
+        //
+        // 历史：这里原先是 `Color(nsColor: .windowBackgroundColor).opacity(0.78)` ——
+        // 一块**不透明深色实底**，用户实测「弹窗是深色的，跟页面上的薄玻璃完全两个物种」
+        // （2026-10-12 反馈）。
+        //
+        // 现在按用户定稿的规则做成**动态探测**：卡片出现的瞬间检测它背后有没有
+        // 毛玻璃（HomeHeader，全 App 唯一的 NSVisualEffectView），触碰面积 ≥5% 就垫
+        // 一块 FloatingGlass 把下面整块盖住 —— 这样既不会和头部玻璃叠影，卡片本身
+        // 又和其他浮层同款薄玻璃。探测不到（卡片在窗口中部、没压到玻璃）就不垫，
+        // 保持透明、让背景渐变透上来。
+        //
+        // ⚠️ 为什么不能直接用 `NSVisualEffectView(.behindWindow)` 采样：它会采样
+        // **整个窗口已渲染的全部内容**，连 HomeHeader 的玻璃一起采 → 两层玻璃叠影
+        // （2026-10-10 用户报告「只有更新弹窗会重叠」，就是这事）。
+        .modifier(GlassProbeModifier(
+            enabled: true,
+            backdrop: AnyView(
+                FloatingGlass(shape: RoundedRectangle(cornerRadius: 12),
+                              tint: Color.white.opacity(0.09))
             )
-            .shadow(color: .black.opacity(0.25), radius: 14, y: 6)
-        )
+        ))
         // 整张卡宽度上限：这是**卡片尺寸的唯一上限**（正文不再各自限宽，见上）。
         //
         // 为什么必须加这一条（2026-09-23 按用户截图实测，不是审美偏好）：

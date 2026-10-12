@@ -96,9 +96,16 @@ struct LaunchButton: View {
                         .frame(width: buttonWidth * CGFloat(darkProgress), height: 50)
                         .animation(.exaggeratedSpring, value: darkProgress)
                 }
+                // 白底与描边合并成同一个圆角矩形的 fill + overlay stroke：
+                // 旧写法 `.strokeBorder(...).background(白底)` 把白底垫在描边图层后面，
+                // 两层各自渲染、白底不被同一圆角裁剪（与 VersionPickerCard「添加文件夹」
+                // 同源的溢出 bug，2026-10-12 一并修）。
                 RoundedRectangle(cornerRadius: 25)
-                    .strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 1)
-                    .background(RoundedRectangle(cornerRadius: 25).fill(Color.white.opacity(0.14)))
+                    .fill(Color.white.opacity(0.14))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 25)
+                            .strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 1)
+                    )
                 ZStack {
                     // 文案用一串 if 而非 switch，每个相位一段独立文案；
                     // idle 那段还带「从下方进、向上出」的转场（见下面的 transition）。

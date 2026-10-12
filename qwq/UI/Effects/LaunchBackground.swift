@@ -33,10 +33,23 @@ struct LaunchBackground: View {
     /// 暖色系配色（日落 / 朝霞的调子）。只在这段里取色，天然和谐。
     static let palette: [Color] = [.orange, .pink, .purple, .orange, .red, .orange, .red]
 
+    // MARK: - 与 FloatingGlass 共享的参数（浮层背景副本必须逐项一致）
+    //
+    // 这三组参数是「窗口背景」与「浮层底部背景副本」的唯一真源。改背景观感时只改这里，
+    // 两处自动同步 —— 否则浮层底会出现和窗口不同源的色带（2026-10-12 实测踩过）。
+
+    /// 高斯模糊半径：把渐变糊成氛围光，色带边界消失只剩颜色在场内的缓慢过渡。
+    static let blurRadius: CGFloat = 220
+
+    /// backdrop 的渐变起终点（静态定稿值，不随流动动画变）。
+    /// 取动画中段的一组代表性方向，与真实背景的静态帧最接近。
+    static let backdropStart = UnitPoint(x: 2, y: -1)
+    static let backdropEnd = UnitPoint(x: -1, y: 1)
+
     var body: some View {
         LinearGradient(colors: Self.palette, startPoint: start, endPoint: end)
             // 超大模糊把渐变"糊"成氛围光：色带边界消失，只剩颜色在场内的缓慢过渡。
-            .blur(radius: 220)
+            .blur(radius: Self.blurRadius)
             .ignoresSafeArea()
             .onAppear {
                 guard !reduceMotion else { return }

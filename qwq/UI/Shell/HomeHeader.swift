@@ -70,5 +70,9 @@ struct HomeHeader: View {
         .padding(.horizontal, 13)
         .padding(.top, 10)
         .padding(.bottom, 12)
+        // 供浮层做「背后有没有毛玻璃」的几何探测（见 UI/Components/GlassProbe.swift）。
+        // HomeHeader 是全 App **唯一**的 NSVisualEffectView 真毛玻璃，所以探测它就够了；
+        // 其余「玻璃」都是 SwiftUI 半透明白，不参与本判定。
+        .coordinateSpace(name: GlassProbe.spaceName)
     }
 }
